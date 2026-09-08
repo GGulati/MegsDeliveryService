@@ -1,0 +1,24 @@
+Original prompt: Propose how to create a simple mobile game inspired by Kiki's Delivery Service, named "Meg's Delivery Service" about a young witch making deliveries on a broom with a cute sidekick cat. It should work on desktop & mobile web both.
+
+Approved implementation: illustrated 3D chase-camera flight; eight-minute risk/reward runs; all unbanked earnings lost at nightfall; permanent broom upgrades; walkable furnished home; landscape touch controls. Terra implementation agents coordinated by Astra.
+
+## Milestones
+1. Flight, tutorial, touch input, original Meg/Pip and town visual foundation.
+2. Delivery routes, deadline, banking and replay.
+3. Walkable home, purchases and resilient local saving.
+4. Polish and integrated browser verification.
+
+## Decisions
+- Design reviews passed; user accepted toggle-hover, clear banking choice, pacing targets, swept collisions, atomic saving and exclusive tab ownership.
+- No real phone hardware is attached; actual iPhone/Pixel performance must be reported unverified unless obtained.
+- Repository was empty at implementation start. Git initialized; scoped safe.directory option handles sandbox ownership.
+- Vite 6.4.3 selected for installed Node 22.16 compatibility.
+
+## Current work
+Milestone 1 underway. Five flight unit tests and typecheck/build passed. Chrome MCP verified desktop 1440x900 full canvas, mobile 844x390 full canvas, tutorial delivery, pause, pointer-handler cancellation and portrait pause. No console errors. First review: pass with optional visual-grain determinism suggestion (gameplay deterministic).
+
+User steering: use Chrome MCP for browser testing instead of Playwright. Browser verification now uses Chrome MCP snapshots, input, screenshots, emulation and console checks. User also highlighted desktop canvas sizing; full-viewport canvas fix in progress.
+
+User steering: redo broom to visibly read as a wooden broom with straw, seated Meg and Pip behind; pull camera back and put it behind her. Camera yaw sign corrected; broom mesh revision underway. Final M1 review will include these requested corrections.
+
+M1 final: renderer heading sign now matches simulation; camera trails broom with bounded heading lag and level horizon; broom shaft/reeds/binding and seated boots revised. Fixed outline transform inheritance. Eight unit tests/build pass. Independent final M1 review approves commit. Terra temporary usage error resolved by user; delegation resumes. Cosmetic random grain determinism suggestion deferred (no pixel-hash guarantee).
