@@ -9,6 +9,8 @@ const TURN_RATE = 2.2;
 const THROTTLE_RATE = 7;
 const ACCELERATION = 12;
 const HOVER_BRAKE = 18;
+const RUN_SECONDS = 480;
+const LANDING_SPEED = 3.5;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
@@ -51,7 +53,7 @@ export function setPaused(state: GameState, paused: boolean, reason = ''): void 
 
 export function nearestStop(state: GameState): Stop | undefined {
   const player = state.player;
-  if (player.speed >= 3.5) return undefined;
+  if (player.speed >= LANDING_SPEED) return undefined;
   return STOPS.find((stop) => {
     const dx = player.position.x - stop.position.x;
     const dz = player.position.z - stop.position.z;
@@ -60,10 +62,120 @@ export function nearestStop(state: GameState): Stop | undefined {
 }
 
 export function interact(state: GameState): void {
-  if (state.paused || state.mode !== 'tutorial' || state.tutorialStage !== 2 || nearestStop(state)?.id !== 'harbor-cafe') return;
-  state.profile.tutorialDone = true;
-  state.message = 'Practice complete';
-  state.mode = 'title'; state.tutorialStage = 3; state.revision++;
+  if (state.paused) return;
+  if (state.mode === 'tutorial') {
+    if (state.tutorialStage !== 2 || nearestStop(state)?.id !== 'harbor-cafe') return;
+    state.profile.tutorialDone = true;
+    state.message = 'Practice complete';
+    state.mode = 'title'; state.tutorialStage = 3; state.revision++;
+    return;
+  }
+  if (state.mode !== 'flight' || !state.run) return;
+  if (state.run.elapsed >= RUN_SECONDS) { settleRun(state, false); return; }
+  const stop = nearestStop(state);
+  if (!stop) return;
+  // Home is always a safe place to bank what has already been earned.
+  if (stop.id === 'home') { settleRun(state, true); return; }
+  if (state.run.job?.to !== stop.id) return;
+  state.run.earnings += state.run.job.payout;
+  state.run.deliveries++;
+  state.profile.deliveries++;
+  state.run.job = null;
+  state.run.lastStop = stop.id;
+  state.run.offers = makeOffers(state.run.seed, state.run.deliveries, stop.id);
+  state.run.returning = false;
+  state.mode = 'offers';
+  state.message = 'Delivered! Choose the next parcel or return home.';
+  state.revision++;
+}
+
+/** Starts a fresh shift. A supplied seed makes its offers reproducible for tests/replays. */
+export function startRun(state: GameState, seed = Date.now()): void {
+  if (state.paused || state.run || (state.mode !== 'title' && state.mode !== 'summary' && state.mode !== 'home')) return;
+  const safeSeed = Number.isFinite(seed) ? Math.floor(seed) : Date.now();
+  state.player = createPlayer();
+  state.run = {
+    seed: safeSeed, elapsed: 0, earnings: 0, deliveries: 0,
+    job: { from: 'home', to: 'harbor-cafe', payout: 20, label: 'Short hop', parcel: 'Cafe parcel' },
+    offers: [], returning: false, lastStop: 'home',
+  };
+  state.summary = null;
+  state.mode = 'flight';
+  state.message = 'First parcel: Harbor Cafe.';
+  state.revision++;
+}
+
+export function chooseJob(state: GameState, index: number): void {
+  if (state.paused || state.mode !== 'offers' || !state.run || !Number.isInteger(index)) return;
+  const job = state.run.offers[index];
+  if (!job) return;
+  state.run.job = job;
+  state.run.offers = [];
+  state.run.returning = false;
+  state.mode = 'flight';
+  state.message = `Delivery: ${stopName(job.to)}.`;
+  state.revision++;
+}
+
+export function returnHome(state: GameState): void {
+  if (state.paused || state.mode !== 'offers' || !state.run) return;
+  state.run.job = null;
+  state.run.offers = [];
+  state.run.returning = true;
+  state.mode = 'flight';
+  state.message = 'Return to Meg\'s Rooftop to bank your earnings.';
+  state.revision++;
+}
+
+/** Resolves a run once. Failed rescues discard only this run's unbanked earnings. */
+export function settleRun(state: GameState, success: boolean): void {
+  const run = state.run;
+  if (!run) return;
+  const earnings = success ? run.earnings : 0;
+  state.summary = { success, earnings, deliveries: run.deliveries };
+  if (success) state.profile.coins += earnings;
+  state.profile.runs++;
+  state.run = null;
+  state.mode = 'summary';
+  state.player.speed = 0;
+  state.player.throttle = 0;
+  state.player.hover = true;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  state.message = success ? 'Shift complete. Earnings banked!' : 'Rescue called. Unbanked earnings were lost.';
+  state.revision++;
+}
+
+export function getTarget(state: GameState): Stop | undefined {
+  if (state.mode === 'tutorial') return STOPS.find((stop) => stop.id === 'harbor-cafe');
+  if (!state.run) return undefined;
+  return STOPS.find((stop) => stop.id === (state.run!.returning ? 'home' : state.run!.job?.to));
+}
+
+function stopName(id: string): string { return STOPS.find((stop) => stop.id === id)?.name ?? id; }
+
+function hash(seed: number): number {
+  let value = seed | 0;
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  return (value ^ (value >>> 16)) >>> 0;
+}
+
+function makeOffers(seed: number, delivery: number, from: string): import('./types').Job[] {
+  let value = hash(seed ^ hash(delivery) ^ hash(from.length));
+  const origin = STOPS.find((item) => item.id === from)!;
+  const candidates = STOPS.filter((stop) => stop.id !== 'home' && stop.id !== from)
+    .map((stop) => ({ stop, distance: Math.hypot(stop.position.x - origin.position.x, stop.position.z - origin.position.z) }))
+    .sort((a, b) => a.distance - b.distance);
+  // One nearby and one distant choice makes the short/long decision legible, not cosmetic.
+  value = hash(value + 1);
+  const short = candidates[value % Math.min(2, candidates.length)];
+  const distant = candidates.slice(-Math.min(2, candidates.length));
+  value = hash(value + 2);
+  const long = distant[value % distant.length];
+  return [short, long].sort((a, b) => a.distance - b.distance).map(({ stop, distance }, index) => {
+    const payout = distance < 100 ? 20 : distance < 180 ? 35 : 50;
+    return { from, to: stop.id, payout, label: index === 0 ? 'Short hop' : 'Long haul', parcel: 'Delivery parcel' };
+  });
 }
 
 function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefined {
@@ -88,9 +200,18 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
 }
 
 export function step(state: GameState, input: FlightInput, dt: number): void {
-  if (state.paused || (state.mode !== 'tutorial' && state.mode !== 'flight') || dt <= 0) return;
+  if (state.paused || (state.mode !== 'tutorial' && state.mode !== 'flight' && state.mode !== 'offers') || !Number.isFinite(dt) || dt <= 0) return;
+  const seconds = Math.max(0, dt);
+  // The clock runs on the offer screen, but that screen intentionally freezes flight input.
+  if (state.run && (state.mode === 'flight' || state.mode === 'offers')) {
+    if (state.run.elapsed >= RUN_SECONDS - 1e-9) { state.run.elapsed = RUN_SECONDS; settleRun(state, false); return; }
+    const elapsedBefore = state.run.elapsed;
+    state.run.elapsed = Math.min(RUN_SECONDS, elapsedBefore + seconds);
+    if (state.run.elapsed >= RUN_SECONDS - 1e-9) { state.run.elapsed = RUN_SECONDS; settleRun(state, false); return; }
+    updateRunMessage(state, elapsedBefore);
+    if (state.mode === 'offers') { state.revision++; return; }
+  }
   const player = state.player;
-  const seconds = dt;
   const turn = clamp(input.turn, -1, 1);
   const climb = clamp(input.climb, -1, 1);
   player.yaw += turn * TURN_RATE * seconds;
@@ -120,4 +241,12 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     state.tutorialStage = 1; state.message = 'Press hover to slow and hold position.';
   }
   state.revision++;
+}
+
+function updateRunMessage(state: GameState, elapsedBefore: number): void {
+  const remaining = RUN_SECONDS - state.run!.elapsed;
+  const previous = RUN_SECONDS - elapsedBefore;
+  if (previous > 30 && remaining <= 30) state.message = '30 seconds left — return home before nightfall!';
+  else if (previous > 60 && remaining <= 60) state.message = 'One minute left — Meg needs to head home.';
+  else if (previous > 120 && remaining <= 120) state.message = 'Two minutes left — finish up before nightfall.';
 }

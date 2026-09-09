@@ -12,6 +12,10 @@ Reset with `window.__game.reset()` when running isolated scenarios. Advance inpu
 
 Press Escape, record JSON player state, advance 10000ms, verify unchanged. Resume by button. Emulate `844x390x1,mobile,touch,landscape`; inspect all controls for overlap. Exercise simultaneous stick and action pointer events, then pointercancel and verify zero further turn. Emulate `390x844x1,mobile,touch`; verify pause/rotate prompt. Restore landscape and explicitly resume. Inspect console errors after every scenario.
 
+## Delivery and deadline
+
+After completing practice, start a delivery day and repeat the Harbor Cafe route. Expect two job offers and 20 unbanked coins, with zero added to savings. Choose return home, turn around while hovering, resume flight, approach the home marker, hover and bank. Expect one successful summary and 20 added once. Start another run, make a delivery, then advance beyond 480 seconds; expect rescue with prior savings intact. Pause while selecting offers and verify the clock freezes; resume and verify it continues. Unit tests also check exact deadline boundaries and repeated settlement.
+
 ## Evidence
 
 `window.render_game_to_text()` reports authoritative state and coordinate conventions. Canvas CSS bounds must equal viewport bounds. Capture full screenshots including DOM overlays. An emulated phone is not a real-device performance measurement.

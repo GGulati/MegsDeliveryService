@@ -23,3 +23,9 @@ Actual iPhone 12 Safari and Pixel 6 Chrome performance are acceptance targets, n
 ## Current scope
 
 Implementation follows four reviewed milestones: flight/visual foundation; complete delivery runs; home/persistence; polish/integration. Weather, durability, multiplayer and free furniture placement are deferred.
+
+## Delivery days
+
+Each shift lasts eight minutes of active game time. Finish a parcel by hovering near its marked pad, then choose another offer or return home. The clock continues while choosing jobs. Banking at home ends the run; missing nightfall forfeits only the current run's earnings. Saved coins from earlier runs remain safe. The next-job menu offers two seeded routes, so the same test seed yields the same choices.
+
+Meg's model uses the inverse Three.js yaw sign to match her simulated flight vector. Camera heading follows with damping and bounded lag, remains behind her, and never rolls with flight controls.

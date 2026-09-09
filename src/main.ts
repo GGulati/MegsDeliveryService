@@ -1,5 +1,5 @@
 import './style.css';
-import { createState, startTutorial, step, toggleHover, interact, setPaused, nearestStop } from './simulation';
+import { createState, startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget } from './simulation';
 import { STOPS } from './world';
 import { GameRenderer } from './scene';
 import { UI } from './ui';
@@ -24,13 +24,16 @@ function isPortrait() { return matchMedia('(max-width: 700px) and (orientation: 
 function resume() { if (isPortrait() || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); draw(0); }
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
-  start() { startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); draw(0); },
+  start() { if (state.profile.tutorialDone) startRun(state, testing ? 42 : undefined); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); draw(0); },
   interact() { interact(state); draw(0); },
   hover() { toggleHover(state); draw(0); },
   pause: () => pause(), resume,
   mute() { muted = !muted; draw(0); },
   quality() { lowQuality = !lowQuality; draw(0); },
   motion() { reducedMotion = !reducedMotion; draw(0); }, fullscreen,
+  chooseJob(index) { chooseJob(state, index); input.clear(); draw(0); },
+  returnHome() { returnHome(state); input.clear(); draw(0); },
+  nextDay() { startRun(state, testing ? 42 : undefined); input.clear(); draw(0); },
 });
 
 try { renderer = new GameRenderer(canvas); }
@@ -40,10 +43,17 @@ input = new Input(canvas, { hover: () => { toggleHover(state); draw(0); }, inter
 function draw(dt: number) {
   if (!renderer || contextLost) return;
   renderer.render(state, dt, { reducedMotion, lowQuality });
-  const target = STOPS.find(s => s.id === state.run?.job?.to) ?? STOPS[1];
+  const target = getTarget(state) ?? STOPS[0];
+  const home = STOPS[0].position;
+  const dx = home.x - state.player.position.x, dz = home.z - state.player.position.z;
+  const homeDistance = Math.hypot(dx, dz);
+  const nearby = nearestStop(state);
+  const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
-    canInteract: !!nearestStop(state), speed: state.player.speed, status: '' });
+    canInteract: ready, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
+    homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
+    targetAltitude: target.position.y-state.player.position.y, interactionLabel: nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
 }
 function advance(ms: number) {
   if (state.paused || document.hidden || contextLost || isPortrait()) { accumulator = 0; draw(0); return; }

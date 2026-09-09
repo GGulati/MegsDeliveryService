@@ -82,7 +82,7 @@ export class GameRenderer {
     this.updateBeacon(this.destination(state), step);
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
     this.lastMode = state.mode;
-    const dusk = state.run ? Math.min(1, state.run.elapsed / 360) : .1;
+    const dusk = state.run ? Math.min(1, state.run.elapsed / 480) : .1;
     this.sun.color.setHSL(.095 - dusk * .08, .9, .78); this.sun.intensity = 2.5 - dusk * .45;
     (this.scene.fog as THREE.FogExp2).color.setHSL(.55 - dusk * .48, .42, .82 - dusk * .12);
     this.renderer.render(this.scene, this.camera);
@@ -186,7 +186,7 @@ export class GameRenderer {
   private animateSky(reduced: boolean): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.birds.children.forEach((b,i)=>{b.position.x+=.035;b.rotation.z=Math.sin(this.clock*5+i)*.18;}); }
   private destination(state: GameState): Stop | undefined {
     if(state.mode==='tutorial') return STOPS.find(s=>s.position.z===55) || STOPS[1];
-    const id=state.run?.returning ? state.run.job?.from : state.run?.job?.to;
+    const id=state.run?.returning ? 'home' : state.run?.job?.to;
     return STOPS.find(s=>s.id===id) || STOPS.find(s=>s.position.z===110) || STOPS[0];
   }
   private updateBeacon(stop: Stop | undefined, step:number): void { if(!stop)return; this.targetRing.position.set(stop.position.x, Math.max(3,stop.position.y+.6),stop.position.z);this.targetRing.rotation.y+=step*.8;if(!this.targetRing.children.length){const ring=new THREE.Mesh(new THREE.TorusGeometry(4.5,.25,8,28),toon(0xffe49b));ring.rotation.x=Math.PI/2;this.targetRing.add(ring);const beam=new THREE.Mesh(new THREE.CylinderGeometry(.08,.26,8,8,1,true),new THREE.MeshBasicMaterial({color:0xffe8a2,transparent:true,opacity:.16,depthWrite:false,side:THREE.DoubleSide}));beam.position.y=4;this.targetRing.add(beam);}}
