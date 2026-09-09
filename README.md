@@ -19,6 +19,7 @@ WASD/arrows steer and climb, Q/E change speed, Space toggles hover, Enter intera
 `npm.cmd run typecheck`, `npm.cmd test`, `npm.cmd run build`. Browser testing uses Chrome MCP as explicitly requested: inspect snapshots, operate controls, advance deterministic time, emulate landscape/portrait devices, inspect full-page screenshots and console errors. See `tests/chrome-scenarios.md`. Browser artifacts belong under ignored `output/`. This replaces the skill's default Playwright client.
 
 Actual iPhone 12 Safari and Pixel 6 Chrome performance are acceptance targets, not yet measured. Browser emulation does not establish real-device performance.
+The 4–6 deliveries per shift and 6–8 successful shifts to complete the home are tuning targets, not validated playtest results. The production build is about 617 KB uncompressed (164 KB gzip); Vite's single-chunk size advisory is expected for the bundled renderer.
 
 ## Current scope
 
@@ -29,6 +30,10 @@ Implementation follows four reviewed milestones: flight/visual foundation; compl
 Each shift lasts eight minutes of active game time. Finish a parcel by hovering near its marked pad, then choose another offer or return home. The clock continues while choosing jobs. Banking at home ends the run; missing nightfall forfeits only the current run's earnings. Saved coins from earlier runs remain safe. The next-job menu offers two seeded routes, so the same test seed yields the same choices.
 
 Meg's model uses the inverse Three.js yaw sign to match her simulated flight vector. Camera heading follows with damping and bounded lag, remains behind her, and never rolls with flight controls.
+
+## Sound and comfort
+
+Sound starts muted. The speaker button unlocks an original procedural melody, soft ambience, and delivery/purchase/cat cues. Pause, hidden pages, portrait mode, and graphics interruption silence audio. Quality reduces the render budget from two million to one million pixels; reduced motion disables decorative movement and UI animation. Settings apply to the current tab session.
 
 ## Home and saving
 

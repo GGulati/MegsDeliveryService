@@ -91,7 +91,7 @@ export class GameRenderer {
     const bob = settings.reducedMotion ? 0 : (state.mode === 'title' || state.mode === 'summary') ? Math.sin(this.clock * 1.5) * .35 : Math.sin(this.clock * 7) * .10;
     this.hero.position.y += bob;
     this.animateSky(settings.reducedMotion);
-    this.updateBeacon(this.destination(state), step);
+    this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
     this.lastMode = state.mode;
     const dusk = state.run ? Math.min(1, state.run.elapsed / 480) : .1;
@@ -144,7 +144,7 @@ export class GameRenderer {
          halfX, roofBase, -halfZ, halfX, roofBase,  halfZ, 0, sy*.5, 0,
          halfX, roofBase,  halfZ,-halfX, roofBase,  halfZ, 0, sy*.5, 0,
         -halfX, roofBase,  halfZ,-halfX, roofBase, -halfZ, 0, sy*.5, 0,
-      ], 3)); roofGeo.computeVertexNormals();
+      ], 3)); roofGeo.setIndex([0,2,1,3,5,4,6,8,7,9,11,10]); roofGeo.computeVertexNormals();
       const roof = new THREE.Mesh(roofGeo, toon(roofColors[i % roofColors.length]));
       roof.position.copy(center); roof.castShadow = true; g.add(roof);
       const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), doorMat = toon(0x704638);

@@ -1,4 +1,5 @@
 :root { color: #29251f; background:#adc9d1; font-family: ui-rounded, "Trebuchet MS", system-ui, sans-serif; }
+.reduced-motion *, .reduced-motion *::before, .reduced-motion *::after { animation:none!important; transition:none!important; }
 .meg-ui [hidden] { display: none !important; }
 .meg-ui .secondary-button { min-height:48px; }
 .home-interface .room-menu { pointer-events:auto; }

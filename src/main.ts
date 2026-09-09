@@ -7,6 +7,7 @@ import { Input } from './input';
 import { HomeUI } from './home-ui';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
 import { SaveStore, SAVE_KEY } from './storage';
+import { GameAudio } from './audio';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const root = document.querySelector<HTMLElement>('#app')!;
@@ -22,6 +23,7 @@ let accumulator = 0;
 let lastFrame = 0;
 let contextLost = false;
 const store = new SaveStore();
+const audio = new GameAudio();
 let bootReady=false;
 let saveKind='loading';
 let saveMessage='Opening your little world…';
@@ -33,15 +35,15 @@ function resume() { if (!bootReady || isPortrait() || document.hidden || context
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
-  interact() { interact(state); persist(); draw(0); },
-  hover() { toggleHover(state);persist(); draw(0); },
+  interact() { if(!bootReady)return; interact(state); persist(); draw(0); },
+  hover() { if(!bootReady)return; toggleHover(state);persist(); draw(0); },
   pause: () => pause(), resume,
-  mute() { muted = !muted; draw(0); },
+  mute() { muted = !muted; audio.setMuted(muted); draw(0); },
   quality() { lowQuality = !lowQuality; draw(0); },
   motion() { reducedMotion = !reducedMotion; draw(0); }, fullscreen,
-  chooseJob(index) { chooseJob(state, index); input.clear(); persist(); draw(0); },
-  returnHome() { returnHome(state); input.clear(); persist(); draw(0); },
-  nextDay() { enterHome(state); input.clear(); persist(); draw(0); },
+  chooseJob(index) { if(!bootReady)return; chooseJob(state, index); input.clear(); persist(); draw(0); },
+  returnHome() { if(!bootReady)return; returnHome(state); input.clear(); persist(); draw(0); },
+  nextDay() { if(!bootReady)return; enterHome(state); input.clear(); persist(); draw(0); },
 });
 const homeUI=new HomeUI(root,{
   interact(){if(!bootReady)return;interact(state);input.clear();persist();draw(0);},
@@ -60,12 +62,14 @@ saveBanner.addEventListener('click',event=>{
 
 try { renderer = new GameRenderer(canvas); }
 catch { root.innerHTML = '<main class="compatibility"><h1>A little more sky, please.</h1><p>Meg needs a browser with WebGL 2 and hardware acceleration. Try a current browser with graphics acceleration enabled.</p></main>'; throw new Error('WebGL 2 is unavailable.'); }
-input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); draw(0); }, interact: () => {if(!bootReady)return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen });
+input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady)return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen });
 
 function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){saveKind='session';saveMessage=store.message;}}
 async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
 
 function draw(dt: number) {
+  audio.update(state, !bootReady || contextLost || isPortrait());
+  document.body.classList.toggle('reduced-motion', reducedMotion);
   if (!renderer || contextLost) return;
   renderer.render(state, dt, { reducedMotion, lowQuality });
   const target = getTarget(state) ?? STOPS[0];
@@ -106,13 +110,13 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) pause
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); pause('The sky is taking a moment.'); contextLost = true; });
 canvas.addEventListener('webglcontextrestored', () => { contextLost = false; draw(0); });
-window.addEventListener('pagehide',()=>{persist();bootReady=false;store.release();});
+window.addEventListener('pagehide',()=>{persist();bootReady=false;audio.update(state,true);store.release();});
 window.addEventListener('pageshow',event=>{if(event.persisted)void boot();});
 Object.assign(window, {
   advanceTime: (ms: number) => advance(ms),
   render_game_to_text: () => JSON.stringify({ coordinates: 'x right/east, y up, z south; yaw 0 faces -z', mode: state.mode, paused: state.paused, player: state.player, tutorialStage: state.tutorialStage, message: state.message, run: state.run, profile: state.profile, stops: STOPS, nearby: nearestStop(state)?.id ?? null,homePosition:state.homePosition,homePanel:state.homePanel,station:nearbyStation(state)?.id,saveKind }),
 });
-if (testing) Object.assign(window, { __game: { get state() { return state; },get ready(){return bootReady;}, reset() { state = createState(); accumulator = 0; draw(0); }, draw: () => draw(0),persist } });
+if (testing) Object.assign(window, { __game: { get state() { return state; },get ready(){return bootReady;}, reset() { state = createState(); accumulator = 0; draw(0); }, draw: () => draw(0), audio: () => audio.debugState(), persist } });
 draw(0);
 requestAnimationFrame(frame);
 void boot();
