@@ -29,3 +29,9 @@ Implementation follows four reviewed milestones: flight/visual foundation; compl
 Each shift lasts eight minutes of active game time. Finish a parcel by hovering near its marked pad, then choose another offer or return home. The clock continues while choosing jobs. Banking at home ends the run; missing nightfall forfeits only the current run's earnings. Saved coins from earlier runs remain safe. The next-job menu offers two seeded routes, so the same test seed yields the same choices.
 
 Meg's model uses the inverse Three.js yaw sign to match her simulated flight vector. Camera heading follows with damping and bounded lag, remains behind her, and never rolls with flight controls.
+
+## Home and saving
+
+After practice, enter Meg's room. Walk with WASD/arrows to POST to start a delivery, BROOMS for permanent upgrades, HOME for furnishings, and the cat's corner for a cuddle. Purchases appear in fixed spots around the walking area. Each broom track has two levels (60 then 120 coins). Six furnishings cost 30–80 coins. Completing every purchase unlocks a home celebration while allowing replay.
+
+One v1 localStorage snapshot (`megs-delivery-save-v1`) contains wallet, upgrades, room and active run. Saves occur after meaningful actions, every five seconds of play and on leaving the page. Reloaded active runs are paused with no offline elapsed time. Web Locks allow only one shared-save writer. A second tab can retry after the owner leaves. Invalid saves remain untouched with download/session recovery; failed or unavailable storage explicitly uses session-only progress. Test save data in isolated Chrome contexts to avoid changing a player's save.

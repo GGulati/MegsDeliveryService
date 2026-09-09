@@ -7,5 +7,6 @@ export interface Profile { coins: number; upgrades: { speed: number; handling: n
 export interface Job { from: string; to: string; payout: number; label: string; parcel: string }
 export interface Run { seed: number; elapsed: number; earnings: number; deliveries: number; job: Job | null; offers: Job[]; returning: boolean; lastStop: string }
 export type Mode = 'title' | 'tutorial' | 'flight' | 'offers' | 'home' | 'summary';
-export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; homePosition: { x: number; z: number }; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number }
+export type HomePanel = 'none' | 'jobs' | 'brooms' | 'decor' | 'cat';
+export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number }
 export interface RenderSettings { reducedMotion: boolean; lowQuality: boolean }

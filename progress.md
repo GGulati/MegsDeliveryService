@@ -15,6 +15,7 @@ Approved implementation: illustrated 3D chase-camera flight; eight-minute risk/r
 - Vite 6.4.3 selected for installed Node 22.16 compatibility.
 
 ## Current work
+M3 final review passed functionally; documentation corrections completed. Cat display name is Pumpkin, matching the existing README. All 23 tests and production build pass. Isolated Chrome also verified all purchases (870 coins total), furnished-room completion, and retained progress on reload. Physical phone testing remains unavailable.
 Milestone 1 underway. Five flight unit tests and typecheck/build passed. Chrome MCP verified desktop 1440x900 full canvas, mobile 844x390 full canvas, tutorial delivery, pause, pointer-handler cancellation and portrait pause. No console errors. First review: pass with optional visual-grain determinism suggestion (gameplay deterministic).
 
 User steering: use Chrome MCP for browser testing instead of Playwright. Browser verification now uses Chrome MCP snapshots, input, screenshots, emulation and console checks. User also highlighted desktop canvas sizing; full-viewport canvas fix in progress.
@@ -26,3 +27,5 @@ M1 final: renderer heading sign now matches simulation; camera trails broom with
 M2 review initial: block on missing countdown input and unreachable Return Home button. Both are implementation gaps against approved behavior; fixing under implementation authorization. Immediate early home banking intentionally retained (safe optional early return, including zero earnings); it does not award free coins.14 core tests pass.
 
 M2 verification: Chrome MCP full input-driven tutorial then delivery/return/bank credited20once; another run's deadline rescue retained earlier20savings. Paused offers clock stays fixed. Desktop and844x390mobile screenshots inspected; both offers and48px Return button fit without scrolling. Console errors empty. Typecheck/build and14tests pass. Fixed countdown/return wiring and mobile hidden/control layout. Chrome MCP local screenshot saving denied by connector workspace policy; screenshots inspected inline.
+
+M3: Terra implemented room, home progression and save adapter; root integrated UI/lifecycle. Chrome isolated fixtures verified walking to decor, rug900->870, reloadretainedrug, walktoBroom upgrade870->810; real Chrome click plant810->770; secondtabreadonly then retryafterrelease restoreslatest; active6sec shiftreloadpaused; malformedjson sessionplaypreservesraw. Review requested bootguards/action saves/no-lockinvalidrecovery, implemented. Review pointer-events finding disproved with computedauto and realclick (menu-cardalreadyauto); explicit room-menuauto added for clarity. No outside player saves modified.

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
 import { followHeading, modelRotation } from './camera-motion';
+import { RoomView } from './room';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 export class GameRenderer {
@@ -25,6 +26,9 @@ export class GameRenderer {
   private lastHeight = -1;
   private lastPixelRatio = -1;
   private followYaw = 0;
+  private world!: THREE.Group;
+  private room = new RoomView();
+  private outdoorFog = new THREE.FogExp2(0xb9dce0,.0035);
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -40,7 +44,8 @@ export class GameRenderer {
     this.sun = new THREE.DirectionalLight(0xffd1a0, 2.5);
     this.sun.position.set(-80, 115, 48);
     this.scene.add(this.sun);
-    this.scene.add(this.makeWorld(), this.hero, this.targetRing, this.clouds, this.birds);
+    this.world=this.makeWorld();
+    this.scene.add(this.world, this.hero, this.targetRing, this.clouds, this.birds, this.room.group);
     this.makeHero(); this.makeSkyLife(); this.resize();
   }
 
@@ -65,6 +70,13 @@ export class GameRenderer {
     }
     this.renderer.shadowMap.enabled = !settings.lowQuality;
     this.outlines.forEach(outline => { outline.visible = !settings.lowQuality; });
+
+    const atHome=state.mode==='home';
+    [this.world,this.hero,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
+    this.room.update(state,step,settings.reducedMotion);
+    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();this.camera.position.set(13,14,18);this.camera.up.set(0,1,0);this.camera.lookAt(0,2,0);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
+    if(this.camera.fov!==62){this.camera.fov=62;this.camera.updateProjectionMatrix();}
+    this.scene.fog=this.outdoorFog;this.renderer.setClearColor(0xaed9e8);
 
     const p = state.player.position;
     const player = new THREE.Vector3(p.x, p.y, p.z);
@@ -112,22 +124,53 @@ export class GameRenderer {
 
   private makeBuildings(g: THREE.Group): void {
     const palette = [0xf8d8ad, 0x78b9ae, 0x80516c, 0xf3b16b, 0xdce2c5];
+    const roofColors = [0xb64d45, 0x3e6680, 0xc36a43, 0x6b507b];
     SOLIDS.forEach((s, i) => {
       const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
-      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), toon(palette[i % palette.length]));
-      body.position.set((s.min.x+s.max.x)/2, (s.min.y+s.max.y)/2, (s.min.z+s.max.z)/2); body.castShadow = true; body.receiveShadow = true;
-      g.add(body); this.blockers.push(body);
-      // Facade trim only protrudes a few centimetres and never changes collision silhouette meaningfully.
-      // Keep the charming roof profile inside the simulation's collision ceiling.
-      const roofHeight = Math.min(3, sy * .18);
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(sx, sz) * .76, roofHeight, 4), toon(i % 2 ? 0xbf694f : 0xa94d43));
-      roof.position.set(body.position.x, s.max.y - roofHeight / 2, body.position.z); roof.rotation.y = Math.PI / 4; g.add(roof);
-      const frontZ = s.min.z - .035;
-      for (let x = -.26; x <= .26; x += .52) {
-        const win = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(2.5, sx*.24), Math.min(2.5, sy*.22)), toon(0x4b8ca0));
-        win.position.set(body.position.x + sx*x, body.position.y + sy*.08, frontZ); g.add(win);
-        const awning = new THREE.Mesh(new THREE.BoxGeometry(Math.min(3, sx*.3), .28, .8), toon(0xf7d7a8)); awning.position.set(win.position.x, win.position.y + 1.5, frontZ-.32); g.add(awning);
-      }
+      const roofHeight = Math.min(4.2, sy * .28);
+      const center = new THREE.Vector3((s.min.x+s.max.x)/2, (s.min.y+s.max.y)/2, (s.min.z+s.max.z)/2);
+      // Keep a full-height invisible camera blocker while letting the painted roof replace
+      // the upper portion of the render box. Collision and camera clearance stay exact.
+      const blocker = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz)); blocker.position.copy(center); this.blockers.push(blocker);
+      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy-roofHeight, sz), toon(palette[i % palette.length]));
+      body.position.set(center.x, s.min.y + (sy-roofHeight)*.5, center.z); body.castShadow = true; body.receiveShadow = true;
+      g.add(body);
+      // These roofs replace the final few metres of each painted box, entirely within
+      // its collision footprint, so they read from the air without enlarging an obstacle.
+      const halfX = sx * .5, halfZ = sz * .5, roofBase = sy * .5 - roofHeight;
+      const roofGeo = new THREE.BufferGeometry();
+      roofGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+        -halfX, roofBase, -halfZ, halfX, roofBase, -halfZ, 0, sy*.5, 0,
+         halfX, roofBase, -halfZ, halfX, roofBase,  halfZ, 0, sy*.5, 0,
+         halfX, roofBase,  halfZ,-halfX, roofBase,  halfZ, 0, sy*.5, 0,
+        -halfX, roofBase,  halfZ,-halfX, roofBase, -halfZ, 0, sy*.5, 0,
+      ], 3)); roofGeo.computeVertexNormals();
+      const roof = new THREE.Mesh(roofGeo, toon(roofColors[i % roofColors.length]));
+      roof.position.copy(center); roof.castShadow = true; g.add(roof);
+      const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), doorMat = toon(0x704638);
+      const windowW = Math.min(2.6, sx * .18), windowH = Math.min(2.7, sy * .2);
+      const addFacade = (side: 'north'|'south'|'east'|'west') => {
+        const along = side==='north'||side==='south' ? sx : sz;
+        const positions = along > 29 ? [-.27, .27] : [-.2, .2];
+        const rot = side==='north' ? Math.PI : side==='south' ? 0 : side==='west' ? -Math.PI/2 : Math.PI/2;
+        const isZ = side==='north'||side==='south';
+        const outward = side==='north' ? -1 : side==='south' ? 1 : side==='west' ? -1 : 1;
+        const planeAt = (alongOffset: number, y: number, depth: number) => isZ
+          ? new THREE.Vector3(body.position.x + alongOffset, y, body.position.z + outward * (sz*.5 + depth))
+          : new THREE.Vector3(body.position.x + outward * (sx*.5 + depth), y, body.position.z + alongOffset);
+        positions.forEach(offset => {
+          const p = planeAt(along * offset, center.y + sy*.03, .055);
+          const win = new THREE.Mesh(new THREE.PlaneGeometry(windowW, windowH), glassMat); win.position.copy(p); win.rotation.y=rot; g.add(win);
+          const sill = new THREE.Mesh(new THREE.BoxGeometry(windowW + .38, .18, .16), trimMat); sill.position.copy(planeAt(along * offset, p.y-windowH*.5-.08, .1)); if(!isZ)sill.rotation.y=Math.PI/2; g.add(sill);
+          const canopy = new THREE.Mesh(new THREE.BoxGeometry(windowW + .42, .22, .5), trimMat); canopy.position.copy(planeAt(along * offset, p.y+windowH*.5+.18, .18)); if(!isZ)canopy.rotation.y=Math.PI/2; g.add(canopy);
+        });
+        // One strong, dark doorway per face gives the otherwise simple painted boxes a scale cue.
+        const door = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(2.5, along*.13), Math.min(3.7, sy*.3)), doorMat);
+        door.position.copy(planeAt(0, s.min.y + Math.min(3.7, sy*.3)*.5, .06)); door.rotation.y=rot; g.add(door);
+      };
+      addFacade('north'); addFacade('south'); addFacade('east'); addFacade('west');
+      const chimney = new THREE.Mesh(new THREE.BoxGeometry(1.35, Math.min(2.7, roofHeight*.7), 1.35), toon(0xe7c6a0));
+      chimney.position.set(center.x - sx*.18, s.max.y - Math.min(2.7, roofHeight*.7)*.5, center.z + sz*.12); g.add(chimney);
     });
   }
 
@@ -157,7 +200,7 @@ export class GameRenderer {
       const o=new THREE.Mesh(geo,outline);o.scale.setScalar(1.045);m.add(o); this.outlines.push(o); return m;
     };
     // An unmistakable side-saddle broom: a long warm wood shaft, handle curl, binding,
-    // and a broad straw fan behind Pip.  At yaw 0 Meg travels toward -Z.
+    // and a broad straw fan behind Pumpkin. At yaw 0 Meg travels toward -Z.
     const shaft=add(new THREE.CylinderGeometry(.16,.21,8.6,10),toon(0x855039),{x:0,y:.15,z:.35}); shaft.rotation.x=Math.PI/2;
     const handle=add(new THREE.TorusGeometry(.62,.105,7,14,Math.PI*1.25),toon(0x79422f),{x:0,y:.58,z:-4.05}); handle.rotation.z=Math.PI*.18;
     [3.0,3.3].forEach(z => add(new THREE.TorusGeometry(.34,.10,6,12),toon(0x55332e),{x:0,y:.15,z}));
@@ -175,6 +218,8 @@ export class GameRenderer {
     const cat=toon(0xf2d6af); add(new THREE.SphereGeometry(1.02,12,9),cat,{x:0,y:2.0,z:1.48}); add(new THREE.SphereGeometry(.78,12,9),cat,{x:0,y:2.78,z:2.08});
     [-.48,.48].forEach(x=>add(new THREE.ConeGeometry(.38,.78,3),toon(0xe0a36c),{x,y:3.55,z:2.2}));
     [-.26,.26].forEach(x=>add(new THREE.SphereGeometry(.12,7,6),toon(0x274151),{x,y:2.88,z:2.88}));
+    [-.42,.42].forEach(x=>add(new THREE.SphereGeometry(.19,7,6),cat,{x,y:1.27,z:2.12},{x:1,y:.7,z:1.15}));
+    const collar=add(new THREE.TorusGeometry(.79,.075,6,12),toon(0xc54b52),{x:0,y:2.45,z:2.06}); collar.rotation.x=Math.PI/2;
     const tail=add(new THREE.TorusGeometry(1.0,.17,7,12,Math.PI*.8),toon(0xf2d6af),{x:0,y:2,z:.95});tail.rotation.x=Math.PI/2;
   }
 

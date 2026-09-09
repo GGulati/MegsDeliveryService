@@ -1,4 +1,5 @@
 import type { FlightInput, GameState, Player, Stop, Vec3 } from './types';
+import { interactHome, stepHome } from './home';
 import { SOLIDS, STOPS, WORLD_LIMIT } from './world';
 
 const RADIUS = 1;
@@ -27,7 +28,7 @@ export function createState(): GameState {
     mode: 'title', player: createPlayer(),
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
     run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0,
-    homePosition: { x: STOPS[0].position.x, z: STOPS[0].position.z }, summary: null, revision: 0,
+    homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
   };
 }
 
@@ -63,6 +64,7 @@ export function nearestStop(state: GameState): Stop | undefined {
 
 export function interact(state: GameState): void {
   if (state.paused) return;
+  if (state.mode === 'home') { interactHome(state); return; }
   if (state.mode === 'tutorial') {
     if (state.tutorialStage !== 2 || nearestStop(state)?.id !== 'harbor-cafe') return;
     state.profile.tutorialDone = true;
@@ -100,6 +102,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
     offers: [], returning: false, lastStop: 'home',
   };
   state.summary = null;
+  state.homePanel = 'none';
   state.mode = 'flight';
   state.message = 'First parcel: Harbor Cafe.';
   state.revision++;
@@ -200,6 +203,7 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
 }
 
 export function step(state: GameState, input: FlightInput, dt: number): void {
+  if (state.mode === 'home') { stepHome(state, input, dt); return; }
   if (state.paused || (state.mode !== 'tutorial' && state.mode !== 'flight' && state.mode !== 'offers') || !Number.isFinite(dt) || dt <= 0) return;
   const seconds = Math.max(0, dt);
   // The clock runs on the offer screen, but that screen intentionally freezes flight input.
@@ -214,11 +218,14 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const player = state.player;
   const turn = clamp(input.turn, -1, 1);
   const climb = clamp(input.climb, -1, 1);
-  player.yaw += turn * TURN_RATE * seconds;
+  const maxSpeed = MAX_SPEED * (1 + state.profile.upgrades.speed * 0.1);
+  const turnRate = TURN_RATE * (1 + state.profile.upgrades.handling * 0.2);
+  const hoverBrake = HOVER_BRAKE * (1 + state.profile.upgrades.braking * 0.2);
+  player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
-  player.throttle = clamp(player.throttle + clamp(input.throttle, -1, 1) * THROTTLE_RATE * seconds, 0, MAX_SPEED);
+  player.throttle = clamp(player.throttle + clamp(input.throttle, -1, 1) * THROTTLE_RATE * seconds, 0, maxSpeed);
   const targetSpeed = player.hover ? 0 : player.throttle;
-  player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -HOVER_BRAKE * seconds, ACCELERATION * seconds), 0, MAX_SPEED);
+  player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -hoverBrake * seconds, ACCELERATION * seconds), 0, maxSpeed);
   if (Math.abs(player.speed) < 0.01) player.speed = 0;
   const horizontal = { x: Math.sin(player.yaw), z: -Math.cos(player.yaw) };
   const verticalSpeed = player.hover ? 0 : climb * Math.max(player.speed, 3) * 0.7;
