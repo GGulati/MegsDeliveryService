@@ -1,4 +1,8 @@
 :root { color: #29251f; background:#adc9d1; font-family: ui-rounded, "Trebuchet MS", system-ui, sans-serif; }
+.flight-effects{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden;opacity:var(--speed,0);backdrop-filter:blur(calc(var(--speed,0) * .7px));mask-image:radial-gradient(ellipse at center,transparent 42%,#000 85%)}
+.flight-effects[hidden]{display:none}.flight-effects.low-quality{backdrop-filter:none}.flight-effects.low-quality i:nth-child(even){display:none}
+.flight-effects i{position:absolute;width:calc(24px + var(--speed,0) * 65px);height:1px;background:linear-gradient(90deg,transparent,#fff9df99);transform-origin:left center;animation:wind-streak .65s linear infinite}
+@keyframes wind-streak{from{transform:rotate(var(--angle)) translateX(-45px);opacity:0}30%{opacity:.5}to{transform:rotate(var(--angle)) translateX(85px);opacity:0}}
 .reduced-motion *, .reduced-motion *::before, .reduced-motion *::after { animation:none!important; transition:none!important; }
 .meg-ui [hidden] { display: none !important; }
 .meg-ui .secondary-button { min-height:48px; }

@@ -3,12 +3,14 @@ import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
 import { followHeading, modelRotation } from './camera-motion';
 import { RoomView } from './room';
+import { FlightEffects, flightVisuals } from './flight-visuals';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 export class GameRenderer {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(62, 1, .1, 900);
   private renderer: THREE.WebGLRenderer;
+  private effects: FlightEffects;
   private hero = new THREE.Group();
   private targetRing = new THREE.Group();
   private clouds = new THREE.Group();
@@ -32,6 +34,7 @@ export class GameRenderer {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
+    this.effects = new FlightEffects(canvas);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.12;
@@ -56,7 +59,9 @@ export class GameRenderer {
 
   render(state: GameState, dt: number, settings: RenderSettings): void {
     if (this.disposed) return;
-    const step = Math.min(.05, Math.max(0, dt || .016)); this.clock += step;
+    const step = state.paused ? 0 : Math.min(.05, Math.max(0, dt)); this.clock += step;
+    const visual = flightVisuals(state, this.clock, settings.reducedMotion);
+    this.effects.update(visual.speed, settings.lowQuality);
     const canvas = this.renderer.domElement;
     const w = Math.max(1, canvas.clientWidth || canvas.width), h = Math.max(1, canvas.clientHeight || canvas.height);
     const maxPixels = settings.lowQuality ? 1_000_000 : 2_000_000;
@@ -81,15 +86,13 @@ export class GameRenderer {
     const p = state.player.position;
     const player = new THREE.Vector3(p.x, p.y, p.z);
     const snap = this.lastMode === undefined || this.lastMode !== state.mode;
-    if (snap) this.hero.position.copy(player);
-    else this.hero.position.lerp(player, 1 - Math.exp(-step * 13));
+    this.hero.position.copy(player);
     this.hero.rotation.order = 'YXZ';
     this.hero.rotation.y = modelRotation(state.player.yaw);
     this.hero.rotation.x = state.player.pitch * .4;
     this.hero.rotation.z = 0;
     this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .62);
-    const bob = settings.reducedMotion ? 0 : (state.mode === 'title' || state.mode === 'summary') ? Math.sin(this.clock * 1.5) * .35 : Math.sin(this.clock * 7) * .10;
-    this.hero.position.y += bob;
+    this.hero.position.y += visual.bob;
     this.animateSky(settings.reducedMotion);
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
@@ -101,6 +104,7 @@ export class GameRenderer {
   }
 
   dispose(): void {
+    this.effects.dispose();
     this.disposed = true;
     this.scene.traverse(o => { const m = o as THREE.Mesh; if (m.geometry) m.geometry.dispose(); const mat = m.material as THREE.Material | THREE.Material[]; (Array.isArray(mat) ? mat : [mat]).forEach(x => x?.dispose()); });
     this.renderer.dispose();
