@@ -1,0 +1,45 @@
+name: Build dist
+
+on:
+  workflow_call:
+    inputs:
+      base_env:
+        description: "Prefix before the build command to select the Vite base (e.g. 'GITHUB_PAGES=1')"
+        required: false
+        type: string
+        default: "GITHUB_PAGES=1"
+      pr_number:
+        description: "PR number for preview builds; empty for production"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      sha:
+        description: "Short SHA the dist was built from"
+        value: ${{ jobs.build.outputs.sha }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - id: meta
+        run: echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - run: ${{ inputs.base_env }} npm run build
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}-${{ github.run_id }}-${{ inputs.pr_number || 'prod' }}
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
