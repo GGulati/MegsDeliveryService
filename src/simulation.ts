@@ -194,6 +194,17 @@ export function getTarget(state: GameState): Stop | undefined {
 
 function stopName(id: string): string { return STOPS.find((stop) => stop.id === id)?.name ?? id; }
 
+/** The active destination the glow column should mark: the live delivery's
+ * drop target while a parcel is carried, or home when heading home.
+ * Undefined whenever there is no active destination (title/home/summary/
+ * offers modes, or a flight with no run), so the beacon renders only while
+ * a destination is live. It follows job changes, and hides the moment a
+ * delivery resolves because completeDrop clears the job or leaves flight mode. */
+export function glowColumnTarget(state: GameState): Stop | undefined {
+  if (state.mode !== 'tutorial' && state.mode !== 'flight') return undefined;
+  return getTarget(state);
+}
+
 function hash(seed: number): number {
   let value = seed | 0;
   value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
