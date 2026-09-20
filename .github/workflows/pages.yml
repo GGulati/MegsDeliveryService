@@ -7,11 +7,13 @@ on:
     types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
-# Push to the gh-pages branch (contents) and comment preview URLs (pull-requests).
+# Push to the gh-pages branch (contents), comment preview URLs
+# (pull-requests), and download build artifacts (actions: read).
 # No OIDC, no stored secrets: publishing is branch-based, not deploy-pages.
 permissions:
   contents: write
   pull-requests: write
+  actions: read
 
 # One group serializes prod and preview writers so concurrent
 # peaceiris force-pushes can never clobber each other's folders.
@@ -28,10 +30,12 @@ jobs:
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' &&
        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/rollback-')))
-    # Least privilege: the build job only reads the repo and runs
-    # npm ci (arbitrary install scripts), so it gets read-only here.
+    # Least privilege: the build job reads the repo and runs
+    # npm ci (arbitrary install scripts), so it gets read-only contents;
+    # actions: write is required for the dist artifact upload.
     permissions:
       contents: read
+      actions: write
     uses: ./.github/workflows/build-dist.yml
     with:
       base_env: "GITHUB_PAGES=1"
@@ -64,8 +68,10 @@ jobs:
     # dependency install scripts must not see a write-capable token.
     # Safe in practice anyway (the fork guard below means only
     # same-repo authors can trigger), but cheap to enforce.
+    # actions: write is required for the dist artifact upload.
     permissions:
       contents: read
+      actions: write
     uses: ./.github/workflows/build-dist.yml
     with:
       base_env: "GITHUB_PAGES=1"

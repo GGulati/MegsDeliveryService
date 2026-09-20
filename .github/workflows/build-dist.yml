@@ -43,3 +43,7 @@ jobs:
           path: dist
           if-no-files-found: error
           retention-days: 7
+          # run_id is stable across re-runs (run_attempt is the one that
+          # increments), so re-running all jobs of a green run would hit the
+          # immutable-name conflict without this.
+          overwrite: true
