@@ -37,3 +37,15 @@ body { min-width:0; min-height:0; }
    tutorial bubble stays suppressed below 650px width (its geometry assumes a
    wider viewport); it remains dismissible and non-blocking wherever shown. */
 @media (orientation:portrait) and (pointer:coarse){.destination-card{top:max(78px,calc(env(safe-area-inset-top) + 58px));bottom:auto;left:max(16px,env(safe-area-inset-left));width:205px;padding:12px 14px}.destination-card strong{font-size:20px;margin:5px 0 1px}.destination-card .context-button{margin-top:8px;min-height:44px}.home-compass{top:max(78px,calc(env(safe-area-inset-top) + 58px));right:max(16px,env(safe-area-inset-right));max-width:calc(100vw - 253px)}/* bottom:142px clears the 112px joystick + bottom inset (~127px top edge); keep in sync with .touch-controls geometry */.flight-readout{right:max(16px,env(safe-area-inset-right));bottom:142px}.home-interface .room-guide{left:16px;right:16px;width:auto;bottom:150px}}
+
+/* Home guide mockups for the UX rework (?homeGuide=corner|topbar). Default
+   (no param) keeps the long-standing guide layout untouched. Specificity
+   (0,3,0) beats the portrait/landscape .home-interface .room-guide rules. */
+.home-interface.guide-corner .room-guide{left:auto;right:max(16px,env(safe-area-inset-right));bottom:max(16px,env(safe-area-inset-bottom));width:225px;padding:14px}
+.home-interface.guide-corner .room-guide .eyebrow{font-size:8px}
+.home-interface.guide-corner .room-guide h2{font-size:19px;margin:6px 0}
+.home-interface.guide-corner .room-guide p{font-size:12px;margin:6px 0}
+.home-interface.guide-corner .room-guide .context-button{margin-top:8px;min-height:44px}
+.home-interface.guide-topbar .room-guide{left:max(16px,env(safe-area-inset-left));right:max(16px,env(safe-area-inset-right));top:max(12px,env(safe-area-inset-top));bottom:auto;width:auto;display:flex;align-items:center;gap:12px;padding:10px 14px}
+.home-interface.guide-topbar .room-guide p{margin:0;font-size:12px;flex:1 1 auto}
+.home-interface.guide-topbar .room-guide .context-button{margin-top:0;min-height:44px;width:auto;flex:0 0 auto;padding-left:14px;padding-right:14px;white-space:nowrap}
