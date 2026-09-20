@@ -83,9 +83,9 @@ function draw(dt: number) {
   const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
-    canInteract: ready, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
+    canInteract: ready && !state.drop, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
-    targetAltitude: target.position.y-state.player.position.y, interactionLabel: nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
+    targetAltitude: target.position.y-state.player.position.y, interactionLabel: state.drop ? 'Parcel away…' : nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;

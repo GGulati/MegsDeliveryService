@@ -69,6 +69,9 @@ export function decodeSave(raw: string): GameState | null {
   const player: Player = { position: { ...value.player.position } as Vec3, yaw: value.player.yaw as number, pitch: value.player.pitch as number, speed: value.player.speed as number, throttle: value.player.throttle as number, hover: value.player.hover, velocity: { ...value.player.velocity } as Vec3 };
   const state = { mode, player, profile, run, paused: value.paused, pauseReason: value.pauseReason as string, message: value.message as string, tutorialStage: value.tutorialStage as number, homePosition: { x: value.homePosition.x as number, z: value.homePosition.z as number }, homeFacing: homeFacing as number, homePanel, summary, revision: value.revision as number } as GameState;
   // A wall-clock gap must never advance a shift.  Resume interactive work explicitly.
+  // A mid-drop save never resumes mid-animation: the drop was committed before
+  // the save, so it simply restarts unfired on load.
+  state.drop = null;
   if (state.mode === 'tutorial' || state.mode === 'flight' || state.mode === 'offers') { state.paused = true; state.pauseReason = 'Welcome back'; }
   if (state.mode === 'title' || state.mode === 'home') { state.paused = false; state.pauseReason = ''; }
   return state;
