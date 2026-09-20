@@ -30,9 +30,7 @@ let saveMessage='Opening your little world…';
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function isPortrait() { return matchMedia('(max-width: 700px) and (orientation: portrait)').matches; }
-function canResume() { return bootReady && !isPortrait() && !document.hidden && !contextLost; }
-function resume() { if (!canResume()) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
+function resume() { if (!bootReady || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
@@ -69,7 +67,7 @@ function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){s
 async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
 
 function draw(dt: number) {
-  audio.update(state, !bootReady || contextLost || isPortrait());
+  audio.update(state, !bootReady || contextLost);
   document.body.classList.toggle('reduced-motion', reducedMotion);
   if (!renderer || contextLost) return;
   renderer.render(state, dt, { reducedMotion, lowQuality });
@@ -79,7 +77,7 @@ function draw(dt: number) {
   const homeDistance = Math.hypot(dx, dz);
   const nearby = nearestStop(state);
   const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
-  ui.render(state, { muted, canResume: canResume(), lowQuality, reducedMotion, targetName: target.name,
+  ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     canInteract: ready, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
@@ -98,7 +96,7 @@ function draw(dt: number) {
   if(saveBanner.dataset.key!==bannerKey){saveBanner.dataset.key=bannerKey;saveBanner.textContent=saveMessage;if(saveKind==='readonly')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="retry">Retry</button>');if(saveKind==='invalid')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="export">Download original save</button><button data-save="session">Play without saving</button>');}
 }
 function advance(ms: number) {
-  if (!bootReady||state.paused || document.hidden || contextLost || isPortrait()) { accumulator = 0; draw(0); return; }
+  if (!bootReady||state.paused || document.hidden || contextLost) { accumulator = 0; draw(0); return; }
   const oldMode=state.mode;
   accumulator += Math.max(0, ms) / 1000;
   while (accumulator + 1e-10 >= 1 / 60) { step(state, input.sample(), 1 / 60); accumulator -= 1 / 60; }
@@ -106,7 +104,7 @@ function advance(ms: number) {
   draw(Math.min(ms / 1000, .1));
 }
 function frame(now: number) { const dt = lastFrame ? Math.min(now - lastFrame, 100) : 0; lastFrame = now; if (!testing) advance(dt); requestAnimationFrame(frame); }
-window.addEventListener('resize', () => { renderer.resize(); if (isPortrait()) pause('Turn your phone sideways to fly.'); draw(0); });
+window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); pause('The sky is taking a moment.'); contextLost = true; });
