@@ -5,6 +5,7 @@ import { GameRenderer } from './scene';
 import { UI } from './ui';
 import { Input } from './input';
 import { HomeUI } from './home-ui';
+import { TouchControls } from './touch-controls';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
 import { SaveStore, SAVE_KEY } from './storage';
 import { GameAudio } from './audio';
@@ -51,6 +52,9 @@ const homeUI=new HomeUI(root,{
   upgrade(track){if(!bootReady)return;buyUpgrade(state,track);persist();draw(0);},
   furnish(id){if(!bootReady)return;buyFurniture(state,id);persist();draw(0);},
 });
+// The touch layer is constructed after every screen panel so it sits last in
+// DOM order (above the panels); see TouchControls for the stacking contract.
+const touchControls=new TouchControls(root);
 const saveBanner=document.createElement('aside');saveBanner.className='save-status';saveBanner.setAttribute('aria-live','polite');root.append(saveBanner);
 saveBanner.addEventListener('click',event=>{
   const button=(event.target as HTMLElement).closest('button');
@@ -83,10 +87,9 @@ function draw(dt: number) {
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
     targetAltitude: target.position.y-state.player.position.y, interactionLabel: nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
   homeUI.render(state);
+  touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
   if(state.mode==='home')document.querySelector<HTMLElement>('#flight-hud')!.hidden=true;
-  const touch=document.querySelector<HTMLElement>('#touch-controls')!;
-  touch.hidden=state.paused||!((state.mode==='home'&&state.homePanel==='none')||state.mode==='flight'||state.mode==='tutorial');
   (document.querySelector('#start-btn') as HTMLButtonElement).disabled=!bootReady;
   if(state.profile.tutorialDone)document.querySelector('#start-btn')!.innerHTML='Come on in <span>→</span>';
   document.querySelector('#next-day-btn')!.innerHTML='Back to your room <span>→</span>';

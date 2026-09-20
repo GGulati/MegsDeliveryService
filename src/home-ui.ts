@@ -18,7 +18,6 @@ export class HomeUI {
   }
   render(state:GameState) {
     this.root.hidden=state.mode!=='home'||state.paused;
-    document.body.classList.toggle('at-home',state.mode==='home');
     if(this.root.hidden)return;
     const station=nearbyStation(state);
     const key=JSON.stringify([state.homePanel,station?.id,state.profile.coins,state.profile.upgrades,state.profile.furniture,state.message]);
@@ -26,7 +25,7 @@ export class HomeUI {
     const p=state.profile;
     const wallet=`<div class="eyebrow">YOUR LITTLE CORNER OF THE WORLD</div><h2>Welcome home, Meg.</h2><p class="home-wallet">${p.coins} coins saved · ${p.furniture.length}/6 cozy touches</p>`;
     if(state.homePanel==='none') {
-      this.root.innerHTML=`<aside class="room-guide panel">${wallet}<p>Walk to the post desk, broom stand, or home catalogue. Pumpkin would love a hello.</p><button class="context-button" data-action="interact" ${station?'':'disabled'}>${station?`Visit ${station.name}`:'Explore your room'} <kbd>Enter</kbd></button></aside>${isComplete(p)?'<div class="completion-ribbon">✦ Every little corner feels like home. Keep flying, little witch.</div>':''}`;
+      this.root.innerHTML=`<aside class="room-guide panel">${wallet}<p>Walk to the Job Board, Broom Workshop, or Decor Corner. Pumpkin would love a hello.</p><button class="context-button" data-action="interact" ${station?'':'disabled'}>${station?`Visit ${station.name}`:'Explore your room'} <kbd>Enter</kbd></button></aside>${isComplete(p)?'<div class="completion-ribbon">✦ Every little corner feels like home. Keep flying, little witch.</div>':''}`;
       return;
     }
     let content='';
