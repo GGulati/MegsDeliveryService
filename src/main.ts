@@ -5,6 +5,7 @@ import { GameRenderer } from './scene';
 import { UI } from './ui';
 import { Input } from './input';
 import { HomeUI } from './home-ui';
+import { TouchControls } from './touch-controls';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
 import { SaveStore, SAVE_KEY } from './storage';
 import { GameAudio } from './audio';
@@ -30,8 +31,7 @@ let saveMessage='Opening your little world…';
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function isPortrait() { return matchMedia('(max-width: 700px) and (orientation: portrait)').matches; }
-function resume() { if (!bootReady || isPortrait() || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
+function resume() { if (!bootReady || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
@@ -52,6 +52,9 @@ const homeUI=new HomeUI(root,{
   upgrade(track){if(!bootReady)return;buyUpgrade(state,track);persist();draw(0);},
   furnish(id){if(!bootReady)return;buyFurniture(state,id);persist();draw(0);},
 });
+// The touch layer is constructed after every screen panel so it sits last in
+// DOM order (above the panels); see TouchControls for the stacking contract.
+const touchControls=new TouchControls(root);
 const saveBanner=document.createElement('aside');saveBanner.className='save-status';saveBanner.setAttribute('aria-live','polite');root.append(saveBanner);
 saveBanner.addEventListener('click',event=>{
   const button=(event.target as HTMLElement).closest('button');
@@ -68,7 +71,7 @@ function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){s
 async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
 
 function draw(dt: number) {
-  audio.update(state, !bootReady || contextLost || isPortrait());
+  audio.update(state, !bootReady || contextLost);
   document.body.classList.toggle('reduced-motion', reducedMotion);
   if (!renderer || contextLost) return;
   renderer.render(state, dt, { reducedMotion, lowQuality });
@@ -80,14 +83,13 @@ function draw(dt: number) {
   const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
-    canInteract: ready, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
+    canInteract: ready && !state.drop, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
-    targetAltitude: target.position.y-state.player.position.y, interactionLabel: nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
+    targetAltitude: target.position.y-state.player.position.y, interactionLabel: state.drop ? 'Parcel away…' : nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
   homeUI.render(state);
+  touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
   if(state.mode==='home')document.querySelector<HTMLElement>('#flight-hud')!.hidden=true;
-  const touch=document.querySelector<HTMLElement>('#touch-controls')!;
-  touch.hidden=state.paused||!((state.mode==='home'&&state.homePanel==='none')||state.mode==='flight'||state.mode==='tutorial');
   (document.querySelector('#start-btn') as HTMLButtonElement).disabled=!bootReady;
   if(state.profile.tutorialDone)document.querySelector('#start-btn')!.innerHTML='Come on in <span>→</span>';
   document.querySelector('#next-day-btn')!.innerHTML='Back to your room <span>→</span>';
@@ -97,7 +99,7 @@ function draw(dt: number) {
   if(saveBanner.dataset.key!==bannerKey){saveBanner.dataset.key=bannerKey;saveBanner.textContent=saveMessage;if(saveKind==='readonly')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="retry">Retry</button>');if(saveKind==='invalid')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="export">Download original save</button><button data-save="session">Play without saving</button>');}
 }
 function advance(ms: number) {
-  if (!bootReady||state.paused || document.hidden || contextLost || isPortrait()) { accumulator = 0; draw(0); return; }
+  if (!bootReady||state.paused || document.hidden || contextLost) { accumulator = 0; draw(0); return; }
   const oldMode=state.mode;
   accumulator += Math.max(0, ms) / 1000;
   while (accumulator + 1e-10 >= 1 / 60) { step(state, input.sample(), 1 / 60); accumulator -= 1 / 60; }
@@ -105,7 +107,7 @@ function advance(ms: number) {
   draw(Math.min(ms / 1000, .1));
 }
 function frame(now: number) { const dt = lastFrame ? Math.min(now - lastFrame, 100) : 0; lastFrame = now; if (!testing) advance(dt); requestAnimationFrame(frame); }
-window.addEventListener('resize', () => { renderer.resize(); if (isPortrait()) pause('Turn your phone sideways to fly.'); draw(0); });
+window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
 canvas.addEventListener('webglcontextlost', event => { event.preventDefault(); pause('The sky is taking a moment.'); contextLost = true; });

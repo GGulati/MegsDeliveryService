@@ -12,6 +12,10 @@ const ACCELERATION = 12;
 const HOVER_BRAKE = 18;
 const RUN_SECONDS = 480;
 const LANDING_SPEED = 3.5;
+/** How long a dropped parcel takes to reach the pad. The drop is committed
+ * when the player presses interact; the run clock and flight input freeze
+ * while the parcel lands, so pausing mid-drop simply pauses the animation. */
+export const DROP_ANIM_SECONDS = 0.9;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
@@ -27,14 +31,14 @@ export function createState(): GameState {
   return {
     mode: 'title', player: createPlayer(),
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
-    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0,
+    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
   };
 }
 
 export function startTutorial(state: GameState): void {
   state.mode = 'tutorial'; state.paused = false; state.pauseReason = '';
-  state.player = createPlayer(); state.tutorialStage = 0;
+  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null;
   state.message = 'Steer toward the glowing Harbor Cafe pad.'; state.revision++;
 }
 
@@ -58,34 +62,66 @@ export function nearestStop(state: GameState): Stop | undefined {
   return STOPS.find((stop) => {
     const dx = player.position.x - stop.position.x;
     const dz = player.position.z - stop.position.z;
-    return Math.hypot(dx, dz) <= 7 && Math.abs(player.position.y - stop.position.y) <= 4;
+    // The whole column above the pad is eligible: horizontal position is what
+    // matters, not precise altitude. Column is column — no height bonus.
+    return Math.hypot(dx, dz) <= 7 && player.position.y >= stop.position.y;
   });
 }
 
 export function interact(state: GameState): void {
   if (state.paused) return;
   if (state.mode === 'home') { interactHome(state); return; }
+  if (state.drop) return;
   if (state.mode === 'tutorial') {
     if (state.tutorialStage !== 2 || nearestStop(state)?.id !== 'harbor-cafe') return;
-    state.profile.tutorialDone = true;
-    state.message = 'Practice complete';
-    state.mode = 'title'; state.tutorialStage = 3; state.revision++;
+    // The practice drop lands like a real one, then practice completes.
+    state.drop = { stopId: 'harbor-cafe', t: 0, parcel: true };
+    freezeForDrop(state);
+    state.message = 'Parcel away!';
+    state.revision++;
     return;
   }
   if (state.mode !== 'flight' || !state.run) return;
   if (state.run.elapsed >= RUN_SECONDS) { settleRun(state, false); return; }
   const stop = nearestStop(state);
   if (!stop) return;
+  // The drop is committed here. The parcel lands during a short animation;
+  // the delivery (or banking) resolves when it reaches the pad.
+  state.drop = { stopId: stop.id, t: 0, parcel: stop.id !== 'home' };
+  freezeForDrop(state);
+  state.message = stop.id === 'home' ? 'Banking your earnings…' : 'Parcel away!';
+  state.revision++;
+}
+
+/** Holds Meg still while a committed drop lands. */
+function freezeForDrop(state: GameState): void {
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = true;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+}
+
+/** Resolves a committed drop once its landing animation finishes. Payout is
+ * the job's flat payout: height never feeds the rating. */
+function completeDrop(state: GameState, stopId: string): void {
+  if (state.mode === 'tutorial') {
+    state.profile.tutorialDone = true;
+    state.message = 'Practice complete';
+    state.mode = 'title'; state.tutorialStage = 3; state.revision++;
+    return;
+  }
+  const run = state.run;
+  if (!run || run.elapsed >= RUN_SECONDS) { settleRun(state, false); return; }
+  const stop = STOPS.find((item) => item.id === stopId);
+  if (!stop) return;
   // Home is always a safe place to bank what has already been earned.
   if (stop.id === 'home') { settleRun(state, true); return; }
-  if (state.run.job?.to !== stop.id) return;
-  state.run.earnings += state.run.job.payout;
-  state.run.deliveries++;
+  if (run.job?.to !== stop.id) return;
+  run.earnings += run.job.payout;
+  run.deliveries++;
   state.profile.deliveries++;
-  state.run.job = null;
-  state.run.lastStop = stop.id;
-  state.run.offers = makeOffers(state.run.seed, state.run.deliveries, stop.id);
-  state.run.returning = false;
+  run.job = null;
+  run.lastStop = stop.id;
+  run.offers = makeOffers(run.seed, run.deliveries, stop.id);
+  run.returning = false;
   state.mode = 'offers';
   state.message = 'Delivered! Choose the next parcel or return home.';
   state.revision++;
@@ -103,6 +139,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
   };
   state.summary = null;
   state.homePanel = 'none';
+  state.drop = null;
   state.mode = 'flight';
   state.message = 'First parcel: Harbor Cafe.';
   state.revision++;
@@ -134,6 +171,7 @@ export function returnHome(state: GameState): void {
 export function settleRun(state: GameState, success: boolean): void {
   const run = state.run;
   if (!run) return;
+  state.drop = null;
   const earnings = success ? run.earnings : 0;
   state.summary = { success, earnings, deliveries: run.deliveries };
   if (success) state.profile.coins += earnings;
@@ -205,6 +243,22 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
 export function step(state: GameState, input: FlightInput, dt: number): void {
   if (state.mode === 'home') { stepHome(state, input, dt); return; }
   if (state.paused || (state.mode !== 'tutorial' && state.mode !== 'flight' && state.mode !== 'offers') || !Number.isFinite(dt) || dt <= 0) return;
+  // A committed drop: the run clock and flight input freeze while the parcel
+  // lands. Pausing (or a hidden tab) freezes the animation too, so it can
+  // never be interrupted into a stuck state.
+  if (state.drop) {
+    if (state.mode !== 'flight' && state.mode !== 'tutorial') state.drop = null;
+    else {
+      state.drop.t += Math.max(0, dt);
+      if (state.drop.t >= DROP_ANIM_SECONDS) {
+        const stopId = state.drop.stopId;
+        state.drop = null;
+        completeDrop(state, stopId);
+      }
+      state.revision++;
+    }
+    return;
+  }
   const seconds = Math.max(0, dt);
   // The clock runs on the offer screen, but that screen intentionally freezes flight input.
   if (state.run && (state.mode === 'flight' || state.mode === 'offers')) {

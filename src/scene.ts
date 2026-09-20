@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
+import { DROP_ANIM_SECONDS } from './simulation';
 import { followHeading, modelRotation } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
@@ -12,6 +13,7 @@ export class GameRenderer {
   private renderer: THREE.WebGLRenderer;
   private effects: FlightEffects;
   private hero = new THREE.Group();
+  private dropParcel = new THREE.Group();
   private targetRing = new THREE.Group();
   private clouds = new THREE.Group();
   private birds = new THREE.Group();
@@ -48,8 +50,8 @@ export class GameRenderer {
     this.sun.position.set(-80, 115, 48);
     this.scene.add(this.sun);
     this.world=this.makeWorld();
-    this.scene.add(this.world, this.hero, this.targetRing, this.clouds, this.birds, this.room.group);
-    this.makeHero(); this.makeSkyLife(); this.resize();
+    this.scene.add(this.world, this.hero, this.dropParcel, this.targetRing, this.clouds, this.birds, this.room.group);
+    this.makeHero(); this.makeDropParcel(); this.makeSkyLife(); this.resize();
   }
 
   resize(): void {
@@ -77,7 +79,7 @@ export class GameRenderer {
     this.outlines.forEach(outline => { outline.visible = !settings.lowQuality; });
 
     const atHome=state.mode==='home';
-    [this.world,this.hero,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
+    [this.world,this.hero,this.dropParcel,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
     this.room.update(state,step,settings.reducedMotion);
     if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();this.camera.position.set(13,14,18);this.camera.up.set(0,1,0);this.camera.lookAt(0,2,0);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
     if(this.camera.fov!==62){this.camera.fov=62;this.camera.updateProjectionMatrix();}
@@ -95,6 +97,7 @@ export class GameRenderer {
     this.hero.position.y += visual.bob;
     this.animateSky(settings.reducedMotion);
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
+    this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
     this.lastMode = state.mode;
     const dusk = state.run ? Math.min(1, state.run.elapsed / 480) : .1;
@@ -239,6 +242,36 @@ export class GameRenderer {
     return STOPS.find(s=>s.id===id) || STOPS.find(s=>s.position.z===110) || STOPS[0];
   }
   private updateBeacon(stop: Stop | undefined, step:number): void { if(!stop)return; this.targetRing.position.set(stop.position.x, Math.max(3,stop.position.y+.6),stop.position.z);this.targetRing.rotation.y+=step*.8;if(!this.targetRing.children.length){const ring=new THREE.Mesh(new THREE.TorusGeometry(4.5,.25,8,28),toon(0xffe49b));ring.rotation.x=Math.PI/2;this.targetRing.add(ring);const beam=new THREE.Mesh(new THREE.CylinderGeometry(.08,.26,8,8,1,true),new THREE.MeshBasicMaterial({color:0xffe8a2,transparent:true,opacity:.16,depthWrite:false,side:THREE.DoubleSide}));beam.position.y=4;this.targetRing.add(beam);}}
+  /** A committed parcel drop: the box detaches from Meg and falls to the pad. */
+  private makeDropParcel(): void {
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 1.5), toon(0xc98d5f));
+    const ribbonMat = toon(0xc54b52);
+    const ribbonX = new THREE.Mesh(new THREE.BoxGeometry(1.56, 1.16, .34), ribbonMat);
+    const ribbonZ = new THREE.Mesh(new THREE.BoxGeometry(.34, 1.16, 1.56), ribbonMat);
+    const bow = new THREE.Mesh(new THREE.SphereGeometry(.3, 8, 6), ribbonMat);
+    bow.position.y = .68; bow.scale.set(1.4, .7, 1.4);
+    this.dropParcel.add(box, ribbonX, ribbonZ, bow);
+    this.dropParcel.visible = false;
+  }
+  private updateDropParcel(state: GameState, step: number, reduced: boolean): void {
+    const drop = state.drop;
+    const stop = drop ? STOPS.find((s) => s.id === drop.stopId) : undefined;
+    const show = !!drop && !!stop && drop.parcel;
+    this.dropParcel.visible = show;
+    if (!show || !drop || !stop) return;
+    // The player is frozen at the drop point, so the parcel falls from Meg's
+    // position straight to the pad, accelerating as it goes.
+    const k = reduced ? 1 : Math.min(1, drop.t / DROP_ANIM_SECONDS);
+    const ease = k * k;
+    const p = state.player.position;
+    const fromY = p.y - 1.4, toY = stop.position.y + .7;
+    this.dropParcel.position.set(
+      p.x + (stop.position.x - p.x) * ease,
+      fromY + (toY - fromY) * ease,
+      p.z + (stop.position.z - p.z) * ease,
+    );
+    if (!reduced) this.dropParcel.rotation.y += step * 4;
+  }
   private updateCamera(state: GameState, player: THREE.Vector3, step: number, reduced: boolean, snap: boolean): void {
     let wanted:THREE.Vector3, look:THREE.Vector3;
     if(state.mode==='title'||state.mode==='summary'){const a=reduced ? 0 : this.clock*.035;wanted=new THREE.Vector3(-92+Math.sin(a)*8,48,146+Math.cos(a)*7);look=new THREE.Vector3(18,13,65);}

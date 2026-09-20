@@ -44,5 +44,7 @@ test('tutorial completes by interacting on the first destination', () => {
   const state = createState(); startTutorial(state); step(state, { turn: 0, climb: 0, throttle: 0 }, .1); toggleHover(state);
   state.player.position = { ...STOPS[1].position }; state.player.speed = 0;
   assert.equal(nearestStop(state)?.id, 'harbor-cafe'); interact(state);
+  assert.ok(state.drop, 'practice drop is committed, not applied instantly');
+  for (let i = 0; i < 120 && state.drop; i++) step(state, { turn: 0, climb: 0, throttle: 0 }, 1 / 60);
   assert.equal(state.profile.tutorialDone, true); assert.equal(state.message, 'Practice complete');
 });
