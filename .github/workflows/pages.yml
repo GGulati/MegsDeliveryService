@@ -1,0 +1,154 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+
+# Push to the gh-pages branch (contents), comment preview URLs
+# (pull-requests), and download build artifacts (actions: read).
+# No OIDC, no stored secrets: publishing is branch-based, not deploy-pages.
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+# One group serializes prod and preview writers so concurrent
+# peaceiris force-pushes can never clobber each other's folders.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-prod:
+    # Manual dispatch exists only for tag-based rollbacks (see the rollback
+    # runbook in Task 7). The ref guard keeps prod from ever serving a
+    # non-main build; rollback-* tags are the single exception.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/rollback-')))
+    # Least privilege: the build job reads the repo and runs
+    # npm ci (arbitrary install scripts), so it gets read-only contents;
+    # actions: write is required for the dist artifact upload.
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/build-dist.yml
+    with:
+      base_env: "GITHUB_PAGES=1"
+
+  publish-prod:
+    needs: build-prod
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/rollback-')))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ github.sha }}-${{ github.run_id }}-prod
+          path: dist
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          keep_files: true
+          enable_jekyll: false
+
+  build-preview:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Same least-privilege reasoning as build-prod: PR-controlled
+    # dependency install scripts must not see a write-capable token.
+    # Safe in practice anyway (the fork guard below means only
+    # same-repo authors can trigger), but cheap to enforce.
+    # actions: write is required for the dist artifact upload.
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/build-dist.yml
+    with:
+      base_env: "GITHUB_PAGES=1"
+      pr_number: ${{ github.event.pull_request.number }}
+
+  publish-preview:
+    needs: build-preview
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ github.sha }}-${{ github.run_id }}-${{ github.event.pull_request.number }}
+          path: dist
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          destination_dir: pr-${{ github.event.pull_request.number }}
+          keep_files: true
+          enable_jekyll: false
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request.number;
+            // GITHUB_SHA for pull_request events is the ephemeral merge commit
+            // (refs/pull/N/merge), not the head SHA. Footer and comment show
+            // the same merge SHA, so they are consistent by construction.
+            const sha = '${{ needs.build-preview.outputs.sha }}';
+            const url = `https://ggulati.github.io/MegsDeliveryService/pr-${pr}/`;
+            const marker = '<!-- pr-phone-preview -->';
+            const body = `${marker}\n📱 **Phone preview:** ${url}\n\nBuilt from merge commit \`${sha}\` — open on your phone (any network) to playtest before merge. This comment updates on every push.`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: pr,
+              per_page: 100,
+            });
+            const existing = comments.find((c) => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: pr, body });
+            }
+
+  cleanup-preview:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove preview folder from gh-pages
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cd "$work"
+          git init -q -b main
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          if ! git fetch -q origin gh-pages 2>/dev/null; then
+            echo "gh-pages branch does not exist yet; nothing to clean."
+            exit 0
+          fi
+          git checkout -q gh-pages
+          dir="pr-${PR_NUMBER}"
+          if [ ! -d "$dir" ]; then
+            echo "No $dir folder; nothing to clean."
+            exit 0
+          fi
+          git rm -rq "$dir"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "chore: remove phone preview for PR #${PR_NUMBER}"
+          git push -q "https://x-access-token:${GITHUB_TOKEN}@${GITHUB_SERVER_URL#https://}/${GITHUB_REPOSITORY}.git" gh-pages
+          echo "Removed $dir."
