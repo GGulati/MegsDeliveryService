@@ -1,21 +1,11 @@
 import type { GameState } from './types';
 import { FURNITURE, nearbyStation, isComplete } from './home';
 interface HomeActions { interact():void; close():void; start():void; upgrade(track:'speed'|'handling'|'braking'):void; furnish(id:string):void }
-// Mockup switch for the Home UX rework, behind ?homeGuide=corner|topbar.
-// Default (no param): the long-standing guide layout, pixel-identical.
-type GuideVariant = 'corner'|'topbar'|null;
-function readGuideVariant(): GuideVariant {
-  const v = new URLSearchParams(location.search).get('homeGuide');
-  return v === 'corner' || v === 'topbar' ? v : null;
-}
 export class HomeUI {
   private root:HTMLElement;
   private key='';
-  private guideVariant: GuideVariant;
   constructor(parent:HTMLElement,private actions:HomeActions) {
     this.root=document.createElement('section');this.root.className='home-interface';parent.append(this.root);
-    this.guideVariant=readGuideVariant();
-    if(this.guideVariant)this.root.classList.add('guide-'+this.guideVariant);
     this.root.addEventListener('click',event=>{
       const b=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!b)return;
       if(b.dataset.action==='interact')actions.interact();
@@ -33,14 +23,10 @@ export class HomeUI {
     const key=JSON.stringify([state.homePanel,station?.id,state.profile.coins,state.profile.upgrades,state.profile.furniture,state.message]);
     if(key===this.key)return;this.key=key;
     const p=state.profile;
-    const wallet=`<div class="eyebrow">YOUR LITTLE CORNER OF THE WORLD</div><h2>Welcome home, Meg.</h2><p class="home-wallet">${p.coins} coins saved · ${p.furniture.length}/6 cozy touches</p>`;
-    const slimWallet=`<div class="eyebrow">MEG'S ROOM</div><h2>Welcome home, Meg.</h2><p class="home-wallet">${p.coins} coins saved · ${p.furniture.length}/6 cozy touches</p>`;
+    const wallet=`<div class="eyebrow">MEG'S ROOM</div><h2>Welcome home, Meg.</h2><p class="home-wallet">${p.coins} coins saved · ${p.furniture.length}/6 cozy touches</p>`;
     const actionBtn=`<button class="context-button" data-action="interact" ${station?'':'disabled'}>${station?`Visit ${station.name}`:'Explore your room'} <kbd>Enter</kbd></button>`;
     if(state.homePanel==='none') {
-      let guide='';
-      if(this.guideVariant==='corner') guide=`<aside class="room-guide panel">${slimWallet}<p>Walk to the Job Board, Broom Workshop, or Decor Corner.</p>${actionBtn}</aside>`;
-      else if(this.guideVariant==='topbar') guide=`<aside class="room-guide panel"><p>Walk to the <b>Job Board</b>, <b>Broom Workshop</b>, or <b>Decor Corner</b>.</p>${actionBtn}</aside>`;
-      else guide=`<aside class="room-guide panel">${wallet}<p>Walk to the Job Board, Broom Workshop, or Decor Corner. Pumpkin would love a hello.</p>${actionBtn}</aside>`;
+      const guide=`<aside class="room-guide panel">${wallet}<p>Walk to the Job Board, Broom Workshop, or Decor Corner.</p>${actionBtn}</aside>`;
       this.root.innerHTML=`${guide}${isComplete(p)?'<div class="completion-ribbon">✦ Every little corner feels like home. Keep flying, little witch.</div>':''}`;
       return;
     }
