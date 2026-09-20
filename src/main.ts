@@ -31,7 +31,8 @@ let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
 function isPortrait() { return matchMedia('(max-width: 700px) and (orientation: portrait)').matches; }
-function resume() { if (!bootReady || isPortrait() || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
+function canResume() { return bootReady && !isPortrait() && !document.hidden && !contextLost; }
+function resume() { if (!canResume()) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
@@ -78,7 +79,7 @@ function draw(dt: number) {
   const homeDistance = Math.hypot(dx, dz);
   const nearby = nearestStop(state);
   const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
-  ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
+  ui.render(state, { muted, canResume: canResume(), lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     canInteract: ready, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
