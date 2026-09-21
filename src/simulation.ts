@@ -146,6 +146,13 @@ function freezeForDrop(state: GameState): void {
 /** Resolves a committed drop once its landing animation finishes. Payout is
  * the job's flat payout: height never feeds the rating. */
 function completeDrop(state: GameState, stopId: string): void {
+  // The drop freeze is over the moment the parcel lands: release the hover
+  // pin that held the drone still during the animation. Without this the
+  // drone stays pinned at speed 0 after every delivery — the offers screen
+  // reuses the same player, so chooseJob/returnHome would inherit a stuck
+  // hover with no way to move. Touch players are hit hardest: there is no
+  // hover button anymore, so nothing can clear it.
+  state.player.hover = false;
   if (state.mode === 'tutorial') {
     state.profile.tutorialDone = true;
     state.message = 'Practice complete';

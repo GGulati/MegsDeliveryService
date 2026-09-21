@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, toggleHover, HALO_FADE_SECONDS, ARRIVAL_RADIUS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -413,6 +413,21 @@ test('second delivery auto-drops after choosing from offers', () => {
   assert.equal(state.run!.deliveries, 2, 'second delivery should complete hands-off');
 });
 
+test('drone can fly the second leg after a dropoff', () => {
+  const state = createState(); startRun(state, 7);
+  above(state, 'harbor-cafe', 10);
+  stepMany(state, 3);
+  finishDrop(state);
+  assert.equal(state.mode, 'offers', 'first delivery should complete');
+  assert.equal(state.player.hover, false, 'the drop freeze must release when the parcel lands');
+  chooseJob(state, 0);
+  assert.equal(state.mode, 'flight');
+  // Hold the stick forward: the drone must accelerate off the pad toward
+  // the second destination instead of sitting at speed 0.
+  stepMany(state, 3, { turn: 0, climb: 0, throttle: 1 });
+  assert.ok(state.player.speed > 1, `drone must fly after dropoff, speed=${state.player.speed}`);
+});
+
 test('auto-drop fires while descending through the pillar', () => {
   const state = createState(); startRun(state, 7);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
@@ -482,7 +497,6 @@ test('throttle trim survives the drop and restores speed on resume', () => {
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
   assert.equal(state.player.throttle, 14, 'trim should survive the drop');
   chooseJob(state, 0);
-  toggleHover(state); // resume flight
   stepMany(state, 3); // no throttle input held
   assert.ok(state.player.speed > 8, `speed should recover toward trim, got ${state.player.speed}`);
 });

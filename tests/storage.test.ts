@@ -10,6 +10,14 @@ test('save codec round trips and pauses an active shift on return', () => {
   assert.equal(loaded.paused, true); assert.equal(loaded.pauseReason, 'Welcome back');
 });
 
+test('a saved drop-freeze hover pin does not survive a reload', () => {
+  const state = createState(); startRun(state, 9);
+  state.player.hover = true; // e.g. saved mid drop-freeze before the fix
+  const loaded = decodeSave(encodeSave(state));
+  assert.ok(loaded);
+  assert.equal(loaded.player.hover, false, 'stuck hover must clear on load so the drone can move');
+});
+
 test('codec rejects malformed, wrong-version, invalid numeric and world references', () => {
   const raw = JSON.parse(encodeSave(createState()));
   assert.equal(decodeSave('{'), null);
