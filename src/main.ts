@@ -21,6 +21,7 @@ let lowQuality = matchMedia('(pointer: coarse)').matches;
 // stick must only spawn on coarse pointers too — otherwise a touch-laptop
 // finger drag would drive an invisible stick with no affordance.
 const coarsePointer = matchMedia('(pointer: coarse)').matches;
+state.coarsePointer = coarsePointer;
 let reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let renderer: GameRenderer;
 let input: Input;
@@ -61,7 +62,7 @@ const saveBanner=document.createElement('aside');saveBanner.className='save-stat
 saveBanner.addEventListener('click',event=>{
   const button=(event.target as HTMLElement).closest('button');
   if(button?.dataset.save==='retry')void boot();
-  if(button?.dataset.save==='session'){store.continueSession();state=createState();bootReady=true;saveKind='session';saveMessage='Playing without saving. Your existing save is untouched.';draw(0);}
+  if(button?.dataset.save==='session'){store.continueSession();state=createState();state.coarsePointer=coarsePointer;bootReady=true;saveKind='session';saveMessage='Playing without saving. Your existing save is untouched.';draw(0);}
   if(button?.dataset.save==='export'){const raw=localStorage.getItem(SAVE_KEY);if(raw){const link=document.createElement('a');const url=URL.createObjectURL(new Blob([raw],{type:'application/json'}));link.href=url;link.download='megs-save-recovery.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}
 });
 

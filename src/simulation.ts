@@ -60,6 +60,11 @@ export function createState(): GameState {
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
     run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, haloFade: 0, fadeSnap: null, fadeCooldown: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
+    // Set once at boot by main.ts from matchMedia('(pointer: coarse)').
+    // Lives on state (not read from window inside the simulation) so the
+    // simulation stays pure and unit tests need no DOM stubs. Used for
+    // device-specific tutorial copy.
+    coarsePointer: false,
   };
 }
 
@@ -76,14 +81,6 @@ export function toggleHover(state: GameState): void {
   // moving confirms the stop on both touch (release the stick) and desktop
   // (Space), so the hover button's removal needs no special-casing here.
   state.revision++;
-}
-
-// Touch players steer with the floating stick and have no hover button;
-// desktop players use Space. Match the tutorial copy to the device so the
-// "slow down" lesson teaches the control the player actually has. Guarded
-// for node (unit tests), where window is undefined.
-function isCoarsePointer(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
 }
 
 export function setPaused(state: GameState, paused: boolean, reason = ''): void {
@@ -496,7 +493,10 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     // the stop, and its gate (speed near zero) must not fire on the same
     // frame the player first twitches the stick.
     state.tutorialStage = 1;
-    state.message = isCoarsePointer()
+    // Touch players release the stick (release-to-brake); desktop players
+    // use Space. Match the tutorial copy to the device so the "slow down"
+    // lesson teaches the control the player actually has.
+    state.message = state.coarsePointer
       ? 'Release the stick to slow down and hover.'
       : 'Press Space to slow down and hover.';
   } else if (state.mode === 'tutorial' && state.tutorialStage === 1 && Math.abs(player.speed) < 0.5) {

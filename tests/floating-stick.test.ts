@@ -57,6 +57,15 @@ test('tutorial stage 0 needs real motion, not turning in place', () => {
   assert.equal(state.message, 'Press Space to slow down and hover.');
 });
 
+test('tutorial stage 1 copy is device-specific: coarse pointers release the stick', () => {
+  const state = createState(); startTutorial(state);
+  state.coarsePointer = true;
+  state.player.speed = 0; state.player.throttle = 0; state.player.velocity = { x: 0, y: 0, z: 0 };
+  stepMany(state, 120, drive);
+  assert.equal(state.tutorialStage, 1, 'real motion advances to the stopping lesson');
+  assert.equal(state.message, 'Release the stick to slow down and hover.');
+});
+
 test('tutorial stage 1 completes when the drone holds still', () => {
   const state = createState(); startTutorial(state); faceAway(state);
   stepMany(state, 30, drive);

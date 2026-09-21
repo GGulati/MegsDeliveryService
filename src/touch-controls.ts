@@ -5,21 +5,14 @@ import type { GameState, HomePanel, Mode } from './types';
 // Input owns the floating-stick behavior itself (spawn position under the
 // finger, drag tracking, release-to-brake).
 
-export type TouchControl = 'joystick';
-
-// Per-screen configuration, as data. Every touch screen gets the floating
-// stick; the stick is the only touch flight control (it steers, climbs, and
-// drives — releasing it brakes), so there is nothing per-screen to vary
-// beyond visibility, which touchControlsVisible owns.
-const CONTROLS_BY_MODE: Record<Mode, readonly TouchControl[]> = {
-  title: [],
-  tutorial: ['joystick'],
-  flight: ['joystick'],
-  offers: [],
-  home: ['joystick'],
-  summary: [],
-};
-export function touchControlsFor(mode: Mode): readonly TouchControl[] { return CONTROLS_BY_MODE[mode]; }
+// Whether the floating stick exists on a given screen. The stick is the
+// only touch flight control (it steers, climbs, and drives — releasing it
+// brakes), so there is nothing per-screen to configure beyond this on/off;
+// whether it is shown at a given moment (unpaused, no panel open) is owned
+// by touchControlsVisible below.
+export function touchJoystickEnabled(mode: Mode): boolean {
+  return mode === 'tutorial' || mode === 'flight' || mode === 'home';
+}
 
 // Single source of truth for touch-layer visibility. Pure, so it is covered
 // by unit tests (tests/touch-controls.test.ts) instead of ad-hoc hidden

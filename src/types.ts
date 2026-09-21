@@ -20,5 +20,5 @@ export type HomePanel = 'none' | 'jobs' | 'brooms' | 'decor' | 'cat';
 /** Seconds left on the pre-drop halo fade-out; 0 when no auto-drop is pending.
  * While fading, the run clock and flight physics freeze, and only a fresh
  * maneuver (not a steadily held stick) cancels the pending drop. */
-export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; drop: DeliveryDrop | null; haloFade: number; fadeSnap: { turn: number; throttle: number } | null; fadeCooldown: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number }
+export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; drop: DeliveryDrop | null; haloFade: number; fadeSnap: { turn: number; throttle: number } | null; fadeCooldown: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number; coarsePointer: boolean }
 export interface RenderSettings { reducedMotion: boolean; lowQuality: boolean }
