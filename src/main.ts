@@ -7,7 +7,7 @@ import { Input } from './input';
 import { HomeUI } from './home-ui';
 import { TouchControls, touchControlsVisible } from './touch-controls';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
-import { SaveStore, SAVE_KEY } from './storage';
+import { SaveStore } from './storage';
 import { GameAudio } from './audio';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -33,6 +33,14 @@ const audio = new GameAudio();
 let bootReady=false;
 let saveKind='loading';
 let saveMessage='Opening your little world…';
+let saveFyi: string | null = null;
+let fyiTimer: ReturnType<typeof setTimeout> | undefined;
+/** Shows a short-lived FYI in the save banner, then hides it again. */
+function flashSaveFyi(message: string, ms = 8000): void {
+  saveFyi = message;
+  clearTimeout(fyiTimer);
+  fyiTimer = setTimeout(() => { saveFyi = null; draw(0); }, ms);
+}
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
@@ -62,8 +70,6 @@ const saveBanner=document.createElement('aside');saveBanner.className='save-stat
 saveBanner.addEventListener('click',event=>{
   const button=(event.target as HTMLElement).closest('button');
   if(button?.dataset.save==='retry')void boot();
-  if(button?.dataset.save==='session'){store.continueSession();state=createState();state.coarsePointer=coarsePointer;bootReady=true;saveKind='session';saveMessage='Playing without saving. Your existing save is untouched.';draw(0);}
-  if(button?.dataset.save==='export'){const raw=localStorage.getItem(SAVE_KEY);if(raw){const link=document.createElement('a');const url=URL.createObjectURL(new Blob([raw],{type:'application/json'}));link.href=url;link.download='megs-save-recovery.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}
 });
 
 try { renderer = new GameRenderer(canvas); }
@@ -71,7 +77,19 @@ catch { root.innerHTML = '<main class="compatibility"><h1>A little more sky, ple
 input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen }, () => coarsePointer && touchControlsVisible(state.mode, state.paused, state.homePanel));
 
 function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){saveKind='session';saveMessage=store.message;}}
-async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
+async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();
+  if(result.kind==='invalid'){
+    // No valid save to load: discard the unreadable bytes and start a new
+    // game with saving on. A brief banner says what happened; no decisions.
+    store.discardUnreadable();
+    state=createState();state.coarsePointer=coarsePointer;
+    bootReady=true;saveKind='ready';saveMessage='';
+    persist();
+    flashSaveFyi('Your saved game could not be read, so it was discarded and a new game was started.');
+    input?.clear();accumulator=0;draw(0);
+    return;
+  }
+  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
 
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);
@@ -95,9 +113,9 @@ function draw(dt: number) {
   if(state.profile.tutorialDone)document.querySelector('#start-btn')!.innerHTML='Come on in <span>→</span>';
   document.querySelector('#next-day-btn')!.innerHTML='Back to your room <span>→</span>';
   document.querySelector<HTMLElement>('.sun-pill')!.hidden=!state.run;
-  saveBanner.hidden=saveKind==='ready';
-  const bannerKey=saveKind+saveMessage;
-  if(saveBanner.dataset.key!==bannerKey){saveBanner.dataset.key=bannerKey;saveBanner.textContent=saveMessage;if(saveKind==='readonly')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="retry">Retry</button>');if(saveKind==='invalid')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="export">Download original save</button><button data-save="session">Play without saving</button>');}
+  saveBanner.hidden=saveKind==='ready'&&saveFyi===null;
+  const bannerKey=saveKind+saveMessage+(saveFyi??'');
+  if(saveBanner.dataset.key!==bannerKey){saveBanner.dataset.key=bannerKey;saveBanner.textContent=saveKind==='ready'?(saveFyi??''):saveMessage;if(saveKind==='readonly')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="retry">Retry</button>');}
 }
 function advance(ms: number) {
   if (!bootReady||state.paused || document.hidden || contextLost) { accumulator = 0; draw(0); return; }
