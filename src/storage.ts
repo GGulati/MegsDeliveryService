@@ -136,6 +136,18 @@ export class SaveStore {
 
   release(): void { this.generation++; this.releaseLock?.(); this.writable = false; }
   continueSession(): void { this.release(); this.memory = undefined; this.status = 'Continuing with a fresh session.'; }
+  /** Discards an unreadable save so a new game can start with saving on.
+   * The key is re-read first: a save that now decodes (another tab may have
+   * written one) is never deleted. Safe to call after an 'invalid' acquire. */
+  discardUnreadable(): void {
+    try {
+      const storage = this.storage();
+      const raw = storage?.getItem(SAVE_KEY);
+      if (raw !== null && raw !== undefined && !decodeSave(raw)) storage?.removeItem(SAVE_KEY);
+    } catch { /* a stale key is harmless; the next save overwrites it */ }
+    this.writable = true; this.memory = undefined;
+    this.status = 'Discarded the unreadable save.';
+  }
 
   private storage(): Storage | undefined { try { return typeof localStorage === 'undefined' ? undefined : localStorage; } catch { return undefined; } }
   private session(message: string, state?: GameState): SaveResult { this.writable = false; this.memory = state; this.status = message; return { kind: 'session', state, message }; }

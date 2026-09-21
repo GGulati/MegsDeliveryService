@@ -46,6 +46,53 @@ test('SaveStore makes one atomic write and leaves old storage untouched on failu
   }
 });
 
+test('an unreadable save can be discarded to start a new game with saving on', async () => {
+  const storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),nav=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+  const backing=new Map<string,string>(); let writes=0;
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
+    getItem:(key:string)=>backing.get(key)??null,
+    setItem:(key:string,value:string)=>{writes++;backing.set(key,value);},
+    removeItem:(key:string)=>{backing.delete(key);},
+  }});
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
+  try {
+    backing.set(SAVE_KEY,'{broken');
+    const store=new SaveStore();
+    assert.equal((await store.acquire()).kind,'invalid');
+    assert.equal(backing.get(SAVE_KEY),'{broken','acquire must leave the corrupt save untouched');
+    assert.equal(store.canSave,false);
+    store.discardUnreadable();
+    assert.equal(backing.has(SAVE_KEY),false,'discard removes the corrupt save');
+    assert.equal(store.save(createState()),true,'saving works again after discard');
+    assert.equal(writes,1,'the fresh state is written');
+    const loaded=decodeSave(backing.get(SAVE_KEY)!);
+    assert.ok(loaded,'the new save reads back');
+  }
+  finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
+});
+
+test('discardUnreadable never deletes a save that now decodes', async () => {
+  const storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),nav=Object.getOwnPropertyDescriptor(globalThis,'navigator');
+  const backing=new Map<string,string>();
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
+    getItem:(key:string)=>backing.get(key)??null,
+    setItem:(key:string,value:string)=>{backing.set(key,value);},
+    removeItem:(key:string)=>{backing.delete(key);},
+  }});
+  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
+  try {
+    // A valid save lands in the key after the corrupt one was seen (e.g.
+    // another tab wrote one): discarding must leave it alone.
+    backing.set(SAVE_KEY,encodeSave(createState()));
+    const before=backing.get(SAVE_KEY);
+    const store=new SaveStore();
+    store.discardUnreadable();
+    assert.equal(backing.get(SAVE_KEY),before,'a decodable save must survive discardUnreadable');
+    assert.ok(decodeSave(backing.get(SAVE_KEY)!),'the surviving save still reads back');
+  }
+  finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
+});
+
 test('malformed saves remain recoverable without Web Locks', async () => {
   const storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),nav=Object.getOwnPropertyDescriptor(globalThis,'navigator');
   let writes=0;
