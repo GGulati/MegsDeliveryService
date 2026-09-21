@@ -95,7 +95,7 @@ export function interact(state: GameState): void {
   if (state.mode === 'home') { interactHome(state); return; }
   if (state.drop || state.haloFade > 0) return;
   if (state.mode === 'tutorial') {
-    if (state.tutorialStage !== 2 || nearestStop(state)?.id !== 'harbor-cafe') return;
+    if (nearestStop(state)?.id !== 'harbor-cafe') return;
     // The practice drop lands like a real one, then practice completes.
     beginDrop(state, STOPS.find((stop) => stop.id === 'harbor-cafe')!);
     return;
@@ -311,11 +311,13 @@ function freshManeuver(input: FlightInput, snap: { turn: number; throttle: numbe
       || (Math.abs(thr) > INPUT_DEADZONE && Math.abs(thr - s.throttle) > 0.35);
 }
 
-/** Whether the drone is carrying a parcel it could drop at this stop. */
+/** Whether the drone is carrying a parcel it could drop at this stop.
+ * The practice parcel is droppable at Harbor Cafe at any tutorial stage —
+ * the hover lesson is guidance, not a gate: flying straight to the pad (as
+ * the opening message instructs) must complete the delivery, not strand the
+ * drone at 0 m waiting for a button press. */
 function carryingParcel(state: GameState, stop: Stop): boolean {
-  // The tutorial's practice parcel only becomes droppable once the hover
-  // lesson is done, mirroring the manual interact gate.
-  if (state.mode === 'tutorial') return state.tutorialStage === 2 && stop.id === 'harbor-cafe';
+  if (state.mode === 'tutorial') return stop.id === 'harbor-cafe';
   return state.run?.job?.to === stop.id;
 }
 

@@ -155,16 +155,23 @@ test('player input during the halo fade cancels the auto-drop', () => {
   assert.equal(state.drop, null, 'cancelled fade must not commit a drop');
 });
 
-test('tutorial auto-drop waits for the hover lesson', () => {
+test('tutorial auto-drop does not wait for the hover lesson', () => {
   const state = createState(); startTutorial(state);
   state.tutorialStage = 1;
   above(state, 'harbor-cafe', 40);
   stepMany(state, 1);
-  assert.equal(state.haloFade, 0, 'stage 1: no auto-drop yet');
-  assert.equal(state.drop, null);
-  state.tutorialStage = 2;
-  step(state, idle, 0.1);
-  assert.ok(state.haloFade > 0, 'stage 2: auto-drop may fire');
+  assert.ok(state.haloFade > 0 || state.drop, 'stage 1: auto-drop fires without pressing hover');
+  finishDrop(state);
+  assert.equal(state.tutorialStage, 3, 'practice completes');
+  assert.equal(state.profile.tutorialDone, true);
+});
+
+test('tutorial manual deliver works before the hover lesson', () => {
+  const state = createState(); startTutorial(state);
+  state.tutorialStage = 1;
+  above(state, 'harbor-cafe', 40);
+  interact(state);
+  assert.ok(state.drop, 'stage 1: manual deliver commits at the cafe');
 });
 
 test('pause freezes the halo fade', () => {

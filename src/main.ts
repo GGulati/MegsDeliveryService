@@ -80,7 +80,7 @@ function draw(dt: number) {
   const dx = home.x - state.player.position.x, dz = home.z - state.player.position.z;
   const homeDistance = Math.hypot(dx, dz);
   const nearby = nearestStop(state);
-  const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
+  const ready = !!nearby && (state.mode === 'tutorial' ? nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     canInteract: ready && !state.drop, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
