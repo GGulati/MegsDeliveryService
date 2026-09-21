@@ -370,6 +370,9 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // Arrival auto-brake: with hands off the stick and a live destination, cap
   // speed to the braking profile v = sqrt(2·a·d) so the drone glides to rest
   // at the pad instead of overshooting it. Any stick input overrides it.
+  // When the throttle is released (the touch slider snaps back to 0), the
+  // drone rides the profile down from its current speed instead of parking
+  // mid-air — a released throttle never accelerates it.
   let brakeCap: number | undefined;
   if (!stickActive(input) && !player.hover) {
     const target = glowColumnTarget(state);
@@ -384,7 +387,8 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
       }
     }
   }
-  const targetSpeed = player.hover ? 0 : brakeCap === undefined ? player.throttle : Math.min(player.throttle, brakeCap);
+  const held = player.throttle > INPUT_DEADZONE ? player.throttle : player.speed;
+  const targetSpeed = player.hover ? 0 : brakeCap === undefined ? player.throttle : Math.min(brakeCap, held);
   player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -hoverBrake * seconds, ACCELERATION * seconds), 0, maxSpeed);
   if (Math.abs(player.speed) < 0.01) player.speed = 0;
   const horizontal = { x: Math.sin(player.yaw), z: -Math.cos(player.yaw) };

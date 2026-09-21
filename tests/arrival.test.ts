@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -200,4 +200,66 @@ test('manual drop button still commits immediately', () => {
   assert.equal(state.haloFade, 0, 'manual drop skips the fade');
   assert.ok(state.drop, 'manual drop commits at press');
   assert.equal(glowColumnTarget(state), undefined, 'halo hides as soon as the drop commits');
+});
+
+test('released throttle (touch slider) still glides hands-off into the column', () => {
+  const state = createState(); startRun(state, 7);
+  // Touch slider snaps back to 0 on release: throttle 0, still moving at the pad.
+  approach(state, CAFE, 40, 14);
+  state.player.throttle = 0;
+  stepMany(state, 14);
+  assert.ok(horizontalTo(state, CAFE) <= 7,
+    `should glide into the column after release, dist=${horizontalTo(state, CAFE)}`);
+  finishDrop(state);
+  assert.equal(state.mode, 'offers', 'delivery should complete fully hands-off');
+});
+
+test('released throttle never accelerates the drone beyond its current speed', () => {
+  const state = createState(); startRun(state, 7);
+  approach(state, CAFE, 60, 10);
+  state.player.throttle = 0;
+  stepMany(state, 2);
+  assert.ok(state.player.speed <= 10 + 1e-9, `must not speed up hands-off, speed=${state.player.speed}`);
+});
+
+test('parked drone does not auto-fly to the destination', () => {
+  const state = createState(); startRun(state, 7);
+  state.player.position = { x: CAFE.position.x, y: 40, z: CAFE.position.z + 40 };
+  state.player.yaw = 0;
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  const before = horizontalTo(state, CAFE);
+  stepMany(state, 5);
+  assert.ok(Math.abs(horizontalTo(state, CAFE) - before) < 0.01, 'parked drone must stay parked');
+  assert.equal(state.drop, null, 'no drop without an arrival');
+});
+
+test('no auto-approach when flying away with throttle released', () => {
+  const state = createState(); startRun(state, 7);
+  state.player.position = { x: CAFE.position.x, y: 30, z: CAFE.position.z + 20 };
+  state.player.yaw = Math.PI; // faces +z, away from the pad
+  state.player.speed = 14; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 14 };
+  stepMany(state, 2);
+  assert.ok(horizontalTo(state, CAFE) > 20, 'departing drone must not be pulled back to the pad');
+});
+
+test('second delivery auto-drops after choosing from offers', () => {
+  const state = createState(); startRun(state, 7);
+  above(state, 'harbor-cafe', 10);
+  stepMany(state, 3);
+  finishDrop(state);
+  assert.equal(state.mode, 'offers', 'first delivery should complete');
+  assert.ok(state.run!.offers.length > 0, 'offers should be generated');
+  chooseJob(state, 0);
+  const to = state.run!.job!.to;
+  assert.equal(state.mode, 'flight');
+  assert.equal(glowColumnTarget(state)?.id, to, 'halo should mark the second destination');
+  // Touch-style: release the throttle while closing on the second pad.
+  const stop = STOPS.find((s) => s.id === to)!;
+  approach(state, stop, 40, 14);
+  state.player.throttle = 0;
+  stepMany(state, 14);
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 2, 'second delivery should complete hands-off');
 });
