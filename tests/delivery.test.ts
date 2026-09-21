@@ -56,7 +56,7 @@ test('offers advance clock while paused clock does not', () => {
 
 test('deadline allows banking at 479.99 but rescues at 480', () => {
   const early = createState(); startRun(early); early.run!.earnings = 20; early.run!.elapsed = 479.99; land(early, 'home'); interact(early); finishDrop(early);
-  assert.equal(early.summary?.success, true); assert.equal(early.profile.coins, 20);
+  assert.equal(early.mode, 'home', 'banking just before the deadline lands at home'); assert.equal(early.summary, null); assert.equal(early.profile.coins, 20);
   const late = createState(); startRun(late); late.profile.coins = 17; late.run!.earnings = 20; late.run!.elapsed = 480; land(late, 'home'); interact(late);
   assert.equal(late.summary?.success, false); assert.equal(late.profile.coins, 17);
 });

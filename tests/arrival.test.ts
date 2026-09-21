@@ -182,17 +182,39 @@ test('no auto-brake when flying away from the destination', () => {
   assert.equal(state.player.speed, 14, 'departing flight must not be braked');
 });
 
-test('home arrival auto-brakes to a stop', () => {
+test('returning home auto-lands, banks, and transitions to home', () => {
   const state = createState(); startRun(state, 7);
   above(state, 'harbor-cafe', 40); interact(state); finishDrop(state);
+  assert.equal(state.run!.earnings, 20);
   returnHome(state);
   assert.equal(glowColumnTarget(state)?.id, 'home');
   approach(state, HOME, 40, 18);
-  stepMany(state, 10);
+  // No button press anywhere in this flow: the drone brakes to a stop, the
+  // halo fades, and the landing commits on its own.
+  let guard = 0;
+  while (guard++ < 60 * 30 && !state.drop && state.mode === 'flight') {
+    step(state, idle, 1 / 60);
+  }
   assert.equal(state.player.speed, 0, 'drone should stop at home');
-  assert.ok(horizontalTo(state, HOME) <= 7, `should rest at the home pad, dist=${horizontalTo(state, HOME)}`);
-  assert.equal(state.drop, null, 'arriving home must not auto-drop anything');
-  assert.equal(state.mode, 'flight', 'banking at home stays manual');
+  assert.ok(horizontalTo(state, HOME) <= ARRIVAL_RADIUS, `should rest inside the column, dist=${horizontalTo(state, HOME)}`);
+  assert.ok(state.drop, 'the landing should commit on its own — no button press');
+  finishDrop(state);
+  assert.equal(state.mode, 'home', 'should transition straight to the home room');
+  assert.equal(state.run, null, 'the run is over');
+  assert.equal(state.profile.coins, 20, 'earnings banked');
+  assert.ok(state.message.includes('20'), `home message reports the banked shift, got: ${state.message}`);
+});
+
+test('manual bank at home still works without waiting for the fade', () => {
+  const state = createState(); startRun(state, 7);
+  above(state, 'harbor-cafe', 40); interact(state); finishDrop(state);
+  returnHome(state);
+  above(state, 'home', 40);
+  interact(state);
+  assert.ok(state.drop, 'pressing the button banks immediately');
+  finishDrop(state);
+  assert.equal(state.mode, 'home');
+  assert.equal(state.profile.coins, 20);
 });
 
 test('auto-drop fires when stopped in the column with a parcel', () => {
@@ -229,14 +251,16 @@ test('no auto-drop on a fast flyover with the stick held', () => {
   assert.equal(state.run!.earnings, 0);
 });
 
-test('no auto-drop when arriving home empty-handed', () => {
+test('no auto-landing when flying over home mid-run', () => {
   const state = createState(); startRun(state, 7);
-  above(state, 'harbor-cafe', 40); interact(state); finishDrop(state);
-  returnHome(state);
+  // Not returning (job still active): a stop over the rooftop must not
+  // trigger a landing or end the run.
   above(state, 'home', 40);
   stepMany(state, 2);
-  assert.equal(state.haloFade, 0, 'no parcel: no halo fade');
-  assert.equal(state.drop, null, 'no parcel: no auto-drop');
+  assert.equal(state.haloFade, 0, 'no landing fade when not returning');
+  assert.equal(state.drop, null, 'no landing when not returning');
+  assert.equal(state.mode, 'flight');
+  assert.ok(state.run);
 });
 
 test('player input during the halo fade cancels the auto-drop', () => {

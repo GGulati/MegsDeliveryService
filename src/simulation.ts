@@ -1,5 +1,5 @@
 import type { FlightInput, GameState, Player, Stop, Vec3 } from './types';
-import { interactHome, stepHome } from './home';
+import { enterHome, interactHome, stepHome } from './home';
 import { SOLIDS, STOPS, WORLD_LIMIT } from './world';
 
 const RADIUS = 1;
@@ -152,8 +152,17 @@ function completeDrop(state: GameState, stopId: string): void {
   if (!run || run.elapsed >= RUN_SECONDS) { settleRun(state, false); return; }
   const stop = STOPS.find((item) => item.id === stopId);
   if (!stop) return;
-  // Home is always a safe place to bank what has already been earned.
-  if (stop.id === 'home') { settleRun(state, true); return; }
+  // Home is always a safe place to bank what has already been earned. A
+  // flown-home landing goes straight to the home room — no button presses:
+  // the landing animation plays, earnings bank, and Meg is home.
+  if (stop.id === 'home') {
+    const earnings = run.earnings, deliveries = run.deliveries;
+    settleRun(state, true);
+    state.summary = null;
+    enterHome(state);
+    state.message = `Shift complete — banked ${earnings} coins after ${deliveries} ${deliveries === 1 ? 'delivery' : 'deliveries'}.`;
+    return;
+  }
   if (run.job?.to !== stop.id) return;
   run.earnings += run.job.payout;
   run.deliveries++;
@@ -318,14 +327,15 @@ function freshManeuver(input: FlightInput, snap: { turn: number; throttle: numbe
       || (Math.abs(thr) > INPUT_DEADZONE && Math.abs(thr - s.throttle) > 0.35);
 }
 
-/** Whether the drone is carrying a parcel it could drop at this stop.
- * The practice parcel is droppable at Harbor Cafe at any tutorial stage —
- * the hover lesson is guidance, not a gate: flying straight to the pad (as
- * the opening message instructs) must complete the delivery, not strand the
- * drone at 0 m waiting for a button press. */
-function carryingParcel(state: GameState, stop: Stop): boolean {
+/** Whether the drone should auto-drop/land at this stop right now, no button
+ * needed: the practice parcel at Harbor Cafe (any tutorial stage — the hover
+ * lesson is guidance, not a gate), a live job's destination, or a flown-home
+ * return at the rooftop, which auto-lands and banks the earnings. */
+function autoDropEligible(state: GameState, stop: Stop): boolean {
   if (state.mode === 'tutorial') return stop.id === 'harbor-cafe';
-  return state.run?.job?.to === stop.id;
+  if (state.mode !== 'flight' || !state.run) return false;
+  if (stop.id === 'home') return state.run.returning && !state.run.job;
+  return state.run.job?.to === stop.id;
 }
 
 /** Starts the pre-drop halo fade once the drone is slow inside the active
@@ -339,7 +349,7 @@ function maybeAutoDrop(state: GameState, input: FlightInput): void {
   if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
   const target = glowColumnTarget(state);
   const stop = target ? nearestStop(state) : undefined;
-  if (!stop || stop.id !== target!.id || !carryingParcel(state, stop)) return;
+  if (!stop || stop.id !== target!.id || !autoDropEligible(state, stop)) return;
   state.haloFade = HALO_FADE_SECONDS;
   state.fadeSnap = { turn: clamp(input.turn, -1, 1), throttle: clamp(input.throttle, -1, 1) };
 }
@@ -349,7 +359,7 @@ function maybeAutoDrop(state: GameState, input: FlightInput): void {
 function commitAutoDrop(state: GameState): boolean {
   const target = glowColumnTarget(state);
   const stop = target ? nearestStop(state) : undefined;
-  if (!stop || stop.id !== target!.id || !carryingParcel(state, stop)) return false;
+  if (!stop || stop.id !== target!.id || !autoDropEligible(state, stop)) return false;
   if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return false;
   beginDrop(state, stop);
   return true;
