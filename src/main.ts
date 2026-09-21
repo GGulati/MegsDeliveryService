@@ -35,7 +35,6 @@ function resume() { if (!bootReady || document.hidden || contextLost) return; se
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
-  interact() { if(!bootReady)return; interact(state); persist(); draw(0); },
   hover() { if(!bootReady)return; toggleHover(state);persist(); draw(0); },
   pause: () => pause(), resume,
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
@@ -79,13 +78,11 @@ function draw(dt: number) {
   const home = STOPS[0].position;
   const dx = home.x - state.player.position.x, dz = home.z - state.player.position.z;
   const homeDistance = Math.hypot(dx, dz);
-  const nearby = nearestStop(state);
-  const ready = !!nearby && (state.mode === 'tutorial' ? nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
-    canInteract: ready && !state.drop, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
+    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
-    targetAltitude: target.position.y-state.player.position.y, interactionLabel: state.drop ? 'Parcel away…' : nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
+    targetAltitude: target.position.y-state.player.position.y });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
