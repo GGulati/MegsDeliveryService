@@ -24,9 +24,10 @@ export const HALO_FADE_SECONDS = 0.45;
  * so it rides under the curve and comes to rest at the destination instead
  * of overshooting it. */
 const AUTO_BRAKE_DECEL = 6;
-/** Inside this horizontal distance (m) of the destination with hands off the
- * stick, the brake holds the drone at rest: without it the drone can straddle
- * the pad center, flip to "flying away", and launch off at full throttle. */
+/** Inside this horizontal distance (m) of the destination, the brake holds the
+ * drone at rest: without it the drone can straddle the pad center, flip to
+ * "flying away", and launch off at full throttle. Suspended during the
+ * wave-off window so a held throttle can power out of the column. */
 const AUTO_BRAKE_HOLD_RADIUS = 2;
 /** The sticky transit hold never extends past this distance (m) from the pad:
  * a too-fast transit always stops well inside it, so a stale hold can never
@@ -407,28 +408,33 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
   player.throttle = clamp(player.throttle + clamp(input.throttle, -1, 1) * THROTTLE_RATE * seconds, 0, maxSpeed);
-  // Arrival auto-brake: while closing on a live destination without demanding
-  // speed on the throttle, cap speed to the braking profile v = sqrt(2·a·d) so
-  // the drone glides to rest at the pad instead of overshooting it. Steering
-  // (turn/climb) never defeats the brake — only the throttle does — so the
-  // drone can never arrive faster than the stopping profile allows and the
-  // stop inside the column is guaranteed by construction. Once the drone
-  // enters the pad's hold zone under braking, the hold is sticky: a too-fast
-  // transit keeps full braking until the drone actually stops, instead of
-  // releasing it to a stale throttle setting. A transit that carries past the
-  // pad kills the stale throttle trim so the drone parks; a clean stop inside
-  // the hold zone preserves the trim for the next leg.
+  // Arrival auto-brake: whenever closing on a live destination, cap speed to
+  // the braking profile v = sqrt(2·a·d) so the drone glides to rest at the pad
+  // instead of overshooting it. The brake is authoritative: holding the
+  // throttle is how you fly, so it only sets speed up to the cap — it can
+  // never defeat the stop. Steering (turn/climb) never defeats it either. The
+  // stop inside the column is therefore guaranteed no matter how the pilot
+  // arrives, hands-off or flat-out. Once the drone enters the pad's hold zone
+  // under braking, the hold is sticky: a too-fast transit keeps full braking
+  // until the drone actually stops, instead of releasing it to a stale
+  // throttle setting. A transit that carries past the pad kills the stale
+  // throttle trim so the drone parks; a clean stop inside the hold zone
+  // preserves the trim for the next leg. The single exception is the wave-off
+  // window: for the 2 s after a fresh maneuver aborts a pending drop, a held
+  // throttle suspends the hold-zone pin so the pilot can actually power out of
+  // the column instead of being pinned to a drop they just cancelled.
   let brakeCap: number | undefined;
   let distH = Infinity;
-  const brakeTarget = !throttleHeld(input) && !player.hover ? glowColumnTarget(state) : undefined;
+  const brakeTarget = !player.hover ? glowColumnTarget(state) : undefined;
+  const waveOff = state.fadeCooldown > 0 && throttleHeld(input);
   if (brakeTarget) {
     const dx = brakeTarget.position.x - player.position.x;
     const dz = brakeTarget.position.z - player.position.z;
     distH = Math.hypot(dx, dz);
-    if (distH < AUTO_BRAKE_HOLD_RADIUS) {
+    if (distH < AUTO_BRAKE_HOLD_RADIUS && !waveOff) {
       brakeCap = 0;
       player.brakeHold = true;
-    } else if (player.brakeHold && distH < BRAKE_TRANSIT_RADIUS) {
+    } else if (!waveOff && player.brakeHold && distH < BRAKE_TRANSIT_RADIUS) {
       brakeCap = 0;
     } else if (distH > 1e-6) {
       const closing = (player.velocity.x * dx + player.velocity.z * dz) / distH;

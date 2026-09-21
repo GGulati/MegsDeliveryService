@@ -58,15 +58,39 @@ test('auto-brake brings the drone to rest inside the arrival zone', () => {
   assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS, `should rest inside the column, dist=${horizontalTo(state, CAFE)}`);
 });
 
-test('throttle input overrides the auto-brake', () => {
-  const braked = createState(); startRun(braked, 7);
-  approach(braked, CAFE, 15, 14);
-  stepMany(braked, 1);
-  const overridden = createState(); startRun(overridden, 7);
-  approach(overridden, CAFE, 15, 14);
-  stepMany(overridden, 1, { turn: 0, climb: 0, throttle: 1 });
-  assert.ok(overridden.player.speed > braked.player.speed,
-    `throttle must disengage the brake: overridden=${overridden.player.speed} braked=${braked.player.speed}`);
+test('holding the throttle cannot defeat the auto-brake', () => {
+  const state = createState(); startRun(state, 7);
+  approach(state, CAFE, 40, 18);
+  // Flat-out toward the pad with the throttle pinned, the way a real flight
+  // goes: the brake cap still governs, so the drone must slow and end inside
+  // the column instead of blowing through it.
+  let guard = 0;
+  while (guard++ < 60 * 30 && !state.drop && state.haloFade === 0) {
+    step(state, { turn: 0, climb: 0, throttle: 1 }, 1 / 60);
+  }
+  assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS,
+    `throttle-held approach must end inside the column, dist=${horizontalTo(state, CAFE)}`);
+  assert.ok(state.player.speed <= 0.5 || state.drop,
+    `must be slow enough to drop, speed=${state.player.speed}`);
+});
+
+test('throttle-held first delivery still auto-drops at the pad', () => {
+  // The reported bug: holding the throttle (E / touch slider) all the way to
+  // Harbor Cafe used to disable braking entirely, so the drone flew through
+  // the pad forever and the parcel never dropped.
+  const state = createState(); startTutorial(state);
+  let guard = 0;
+  while (guard++ < 60 * 60 && state.tutorialStage !== 3) {
+    const dx = CAFE.position.x - state.player.position.x;
+    const dz = CAFE.position.z - state.player.position.z;
+    const want = Math.atan2(dx, -dz);
+    let err = want - state.player.yaw;
+    while (err > Math.PI) err -= 2 * Math.PI;
+    while (err < -Math.PI) err += 2 * Math.PI;
+    step(state, { turn: Math.max(-1, Math.min(1, err * 2)), climb: 0, throttle: 1 }, 1 / 60);
+  }
+  assert.equal(state.tutorialStage, 3, 'practice delivery must complete with throttle held');
+  assert.equal(state.mode, 'title');
 });
 
 test('steering toward the destination does not defeat the auto-brake', () => {
@@ -99,17 +123,44 @@ test('fast steered approach still stops inside the column', () => {
     `steered fast approach must stop inside the column, dist=${horizontalTo(state, CAFE)}`);
 });
 
-test('a late throttle release cannot relaunch the drone past the pad', () => {
+test('a late throttle release still stops inside the column', () => {
   const state = createState(); startRun(state, 7);
   approach(state, CAFE, 150, 18);
-  // hold the throttle (override: no braking) until 5m out, then let go entirely
+  // hold the throttle until 5m out, then let go entirely: the brake was
+  // already governing the approach, so the drone must stop inside the column
+  // and the delivery must proceed — no more 3.85 m near-miss.
   let guard = 0;
   while (horizontalTo(state, CAFE) > 5 && guard++ < 3600) step(state, { turn: 0, climb: 0, throttle: 1 }, 1 / 60);
-  stepMany(state, 6);
-  assert.ok(state.player.speed < 12,
-    `stale throttle must not relaunch the drone, speed=${state.player.speed}`);
-  assert.ok(state.player.throttle < 12,
-    `stale throttle must be cleared after a transit stop, throttle=${state.player.throttle}`);
+  let minDist = horizontalTo(state, CAFE);
+  guard = 0;
+  while (guard++ < 600 && !state.drop) {
+    step(state, idle, 1 / 60);
+    minDist = Math.min(minDist, horizontalTo(state, CAFE));
+  }
+  assert.ok(minDist <= ARRIVAL_RADIUS,
+    `late release must still stop inside the column, minDist=${minDist}`);
+  assert.ok(state.drop || state.haloFade > 0, 'delivery should proceed after the stop');
+});
+
+test('wave-off during the fade lets a held throttle power out of the column', () => {
+  const state = createState(); startRun(state, 5);
+  // parked in the column at rest with a hot throttle trim, as after a fast arrival
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z };
+  state.player.yaw = 0;
+  state.player.speed = 0; state.player.throttle = 18; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  step(state, idle, 0.1);
+  assert.ok(state.haloFade > 0, 'fade should be in progress');
+  // fresh maneuver aborts the pending drop while the throttle stays held
+  step(state, { turn: 1, climb: 0, throttle: 1 }, 0.1);
+  assert.equal(state.haloFade, 0, 'fade aborted');
+  assert.ok(state.fadeCooldown > 0, 're-arm cooldown set');
+  // keep holding the throttle through the wave-off window: the hold-zone pin
+  // is suspended, so the drone must actually leave the column
+  stepMany(state, 1.5, { turn: 0, climb: 0, throttle: 1 });
+  assert.ok(horizontalTo(state, CAFE) > ARRIVAL_RADIUS,
+    `wave-off must escape the column, dist=${horizontalTo(state, CAFE)}`);
+  assert.equal(state.drop, null, 'aborted drop must not commit');
 });
 
 test('no auto-brake without an active destination', () => {
