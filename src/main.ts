@@ -35,7 +35,6 @@ function resume() { if (!bootReady || document.hidden || contextLost) return; se
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
-  interact() { if(!bootReady)return; interact(state); persist(); draw(0); },
   hover() { if(!bootReady)return; toggleHover(state);persist(); draw(0); },
   pause: () => pause(), resume,
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
@@ -65,7 +64,7 @@ saveBanner.addEventListener('click',event=>{
 
 try { renderer = new GameRenderer(canvas); }
 catch { root.innerHTML = '<main class="compatibility"><h1>A little more sky, please.</h1><p>Meg needs a browser with WebGL 2 and hardware acceleration. Try a current browser with graphics acceleration enabled.</p></main>'; throw new Error('WebGL 2 is unavailable.'); }
-input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady)return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen });
+input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen });
 
 function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){saveKind='session';saveMessage=store.message;}}
 async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
@@ -79,13 +78,11 @@ function draw(dt: number) {
   const home = STOPS[0].position;
   const dx = home.x - state.player.position.x, dz = home.z - state.player.position.z;
   const homeDistance = Math.hypot(dx, dz);
-  const nearby = nearestStop(state);
-  const ready = !!nearby && (state.mode === 'tutorial' ? state.tutorialStage === 2 && nearby.id === STOPS[1].id : state.mode === 'flight' && (nearby.id === 'home' || nearby.id === state.run?.job?.to));
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
-    canInteract: ready && !state.drop, speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
+    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
     homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
-    targetAltitude: target.position.y-state.player.position.y, interactionLabel: state.drop ? 'Parcel away…' : nearby?.id === 'home' && state.mode === 'flight' ? 'Bank earnings' : 'Deliver parcel' });
+    targetAltitude: target.position.y-state.player.position.y });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
@@ -118,7 +115,7 @@ Object.assign(window, {
   advanceTime: (ms: number) => advance(ms),
   render_game_to_text: () => JSON.stringify({ coordinates: 'x right/east, y up, z south; yaw 0 faces -z', mode: state.mode, paused: state.paused, player: state.player, tutorialStage: state.tutorialStage, message: state.message, run: state.run, profile: state.profile, stops: STOPS, nearby: nearestStop(state)?.id ?? null,homePosition:state.homePosition,homePanel:state.homePanel,station:nearbyStation(state)?.id,saveKind }),
 });
-if (testing) Object.assign(window, { __game: { get state() { return state; },get ready(){return bootReady;}, reset() { state = createState(); accumulator = 0; draw(0); }, draw: () => draw(0), audio: () => audio.debugState(), persist } });
+if (testing) Object.assign(window, { __game: { get state() { return state; },get ready(){return bootReady;}, reset() { state = createState(); accumulator = 0; draw(0); }, draw: () => draw(0), audio: () => audio.debugState(), persist, renderer: () => renderer } });
 draw(0);
 requestAnimationFrame(frame);
 void boot();

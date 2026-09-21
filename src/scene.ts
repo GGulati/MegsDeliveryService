@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
-import { DROP_ANIM_SECONDS } from './simulation';
+import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
@@ -14,6 +14,9 @@ export class GameRenderer {
   private effects: FlightEffects;
   private hero = new THREE.Group();
   private dropParcel = new THREE.Group();
+  private glowColumn = new THREE.Group();
+  private glowMats: THREE.ShaderMaterial[] = [];
+  private lastGlowStopId: string | undefined;
   private targetRing = new THREE.Group();
   private clouds = new THREE.Group();
   private birds = new THREE.Group();
@@ -50,8 +53,8 @@ export class GameRenderer {
     this.sun.position.set(-80, 115, 48);
     this.scene.add(this.sun);
     this.world=this.makeWorld();
-    this.scene.add(this.world, this.hero, this.dropParcel, this.targetRing, this.clouds, this.birds, this.room.group);
-    this.makeHero(); this.makeDropParcel(); this.makeSkyLife(); this.resize();
+    this.scene.add(this.world, this.hero, this.dropParcel, this.glowColumn, this.targetRing, this.clouds, this.birds, this.room.group);
+    this.makeHero(); this.makeDropParcel(); this.makeGlowColumn(); this.makeSkyLife(); this.resize();
   }
 
   resize(): void {
@@ -79,7 +82,7 @@ export class GameRenderer {
     this.outlines.forEach(outline => { outline.visible = !settings.lowQuality; });
 
     const atHome=state.mode==='home';
-    [this.world,this.hero,this.dropParcel,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
+    [this.world,this.hero,this.dropParcel,this.glowColumn,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
     this.room.update(state,step,settings.reducedMotion);
     if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();this.camera.position.set(13,14,18);this.camera.up.set(0,1,0);this.camera.lookAt(0,2,0);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
     if(this.camera.fov!==62){this.camera.fov=62;this.camera.updateProjectionMatrix();}
@@ -97,6 +100,7 @@ export class GameRenderer {
     this.hero.position.y += visual.bob;
     this.animateSky(settings.reducedMotion);
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
+    this.updateGlowColumn(state, settings.reducedMotion);
     this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
     this.lastMode = state.mode;
@@ -242,6 +246,60 @@ export class GameRenderer {
     return STOPS.find(s=>s.id===id) || STOPS.find(s=>s.position.z===110) || STOPS[0];
   }
   private updateBeacon(stop: Stop | undefined, step:number): void { if(!stop)return; this.targetRing.position.set(stop.position.x, Math.max(3,stop.position.y+.6),stop.position.z);this.targetRing.rotation.y+=step*.8;if(!this.targetRing.children.length){const ring=new THREE.Mesh(new THREE.TorusGeometry(4.5,.25,8,28),toon(0xffe49b));ring.rotation.x=Math.PI/2;this.targetRing.add(ring);const beam=new THREE.Mesh(new THREE.CylinderGeometry(.08,.26,8,8,1,true),new THREE.MeshBasicMaterial({color:0xffe8a2,transparent:true,opacity:.16,depthWrite:false,side:THREE.DoubleSide}));beam.position.y=4;this.targetRing.add(beam);}}
+  /** A tall beacon over the active drop pad so it reads at distance: two nested
+   * open cylinders with a vertical gradient (bright at the pad, fading with
+   * altitude), warm additive light, no lighting cost. Static geometry built
+   * once — per-frame work is a visibility flag and one uniform. */
+  private makeGlowColumn(): void {
+    const height = 90;
+    // The outer layer's widest point is the shared arrival radius: the
+    // visible halo width and the simulation's eligible zone are one value.
+    const layers = [
+      { rTop: ARRIVAL_RADIUS, rBottom: 2.4, opacity: .2 },
+      { rTop: 1.7, rBottom: 1.1, opacity: .32 },
+    ];
+    for (const layer of layers) {
+      const geo = new THREE.CylinderGeometry(layer.rTop, layer.rBottom, height, 24, 1, true);
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        uniforms: { uHeight: { value: height }, uOpacity: { value: layer.opacity }, uPulse: { value: 1 } },
+        vertexShader: 'varying float vH; uniform float uHeight;\n' +
+          'void main(){ vH = position.y / uHeight + .5; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
+        fragmentShader: 'varying float vH; uniform float uOpacity; uniform float uPulse;\n' +
+          'void main(){ float a = pow(clamp(1. - vH, 0., 1.), 1.7) * uOpacity * uPulse;\n' +
+          '  gl_FragColor = vec4(1., .62, .22, a); }',
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.y = height / 2;
+      this.glowColumn.add(mesh);
+      this.glowMats.push(mat);
+    }
+    this.glowColumn.visible = false;
+  }
+  /** Shows the column at the active destination: the live drop pad while the
+   * player carries a parcel, or home when heading home. It tracks destination
+   * changes and hides the moment a delivery resolves. The pad ring stays the
+   * near-field marker, so the column is narrow at its base and never
+   * obscures it. Before an auto-drop the column fades out first (driven by
+   * state.haloFade); once the drop commits it hides immediately. */
+  private updateGlowColumn(state: GameState, reduced: boolean): void {
+    const stop = glowColumnTarget(state);
+    const show = !!stop;
+    this.glowColumn.visible = show;
+    if (!show || !stop) { this.lastGlowStopId = undefined; return; }
+    if (this.lastGlowStopId !== stop.id) {
+      this.lastGlowStopId = stop.id;
+      this.glowColumn.position.set(stop.position.x, stop.position.y, stop.position.z);
+    }
+    // Reduced motion renders the glow static; otherwise it breathes gently.
+    // The pre-drop fade multiplies the glow to zero before the parcel leaves.
+    const fade = state.haloFade > 0 ? Math.max(0, Math.min(1, state.haloFade / HALO_FADE_SECONDS)) : 1;
+    const pulse = (reduced ? 1 : .86 + .14 * Math.sin(this.clock * 2.4)) * fade;
+    for (const mat of this.glowMats) mat.uniforms.uPulse.value = pulse;
+  }
   /** A committed parcel drop: the box detaches from Meg and falls to the pad. */
   private makeDropParcel(): void {
     const box = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.1, 1.5), toon(0xc98d5f));
