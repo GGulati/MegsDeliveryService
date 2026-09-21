@@ -72,6 +72,7 @@ export function decodeSave(raw: string): GameState | null {
   // A mid-drop save never resumes mid-animation: the drop was committed before
   // the save, so it simply restarts unfired on load.
   state.drop = null;
+  state.haloFade = 0;
   if (state.mode === 'tutorial' || state.mode === 'flight' || state.mode === 'offers') { state.paused = true; state.pauseReason = 'Welcome back'; }
   if (state.mode === 'title' || state.mode === 'home') { state.paused = false; state.pauseReason = ''; }
   return state;

@@ -16,6 +16,22 @@ const LANDING_SPEED = 3.5;
  * when the player presses interact; the run clock and flight input freeze
  * while the parcel lands, so pausing mid-drop simply pauses the animation. */
 export const DROP_ANIM_SECONDS = 0.9;
+/** How long the glow column takes to fade out before an auto-committed drop.
+ * The halo goes away first; only then does the parcel leave Meg's hands. */
+export const HALO_FADE_SECONDS = 0.45;
+/** Arrival auto-brake profile (m/s^2): shapes the sqrt(2·a·d) speed-cap curve
+ * on approach. The drone decelerates toward the cap at the hover-brake rate,
+ * so it rides under the curve and comes to rest at the destination instead
+ * of overshooting it. */
+const AUTO_BRAKE_DECEL = 6;
+/** Inside this horizontal distance (m) of the destination with hands off the
+ * stick, the brake holds the drone at rest: without it the drone can straddle
+ * the pad center, flip to "flying away", and launch off at full throttle. */
+const AUTO_BRAKE_HOLD_RADIUS = 2;
+/** Stick/throttle deflection below this counts as hands-off. */
+const INPUT_DEADZONE = 0.05;
+/** The drone must be at most this slow (m/s) for the auto-drop to fire. */
+const AUTO_DROP_MAX_SPEED = 0.5;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
@@ -31,14 +47,14 @@ export function createState(): GameState {
   return {
     mode: 'title', player: createPlayer(),
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
-    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null,
+    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, haloFade: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
   };
 }
 
 export function startTutorial(state: GameState): void {
   state.mode = 'tutorial'; state.paused = false; state.pauseReason = '';
-  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null;
+  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.haloFade = 0;
   state.message = 'Steer toward the glowing Harbor Cafe pad.'; state.revision++;
 }
 
@@ -47,7 +63,7 @@ export function toggleHover(state: GameState): void {
   state.player.hover = !state.player.hover;
   if (state.mode === 'tutorial' && state.player.hover && state.tutorialStage === 1) {
     state.tutorialStage = 2;
-    state.message = 'Hover confirmed. Land on Harbor Cafe and interact to deliver.';
+    state.message = 'Hover confirmed. Drift over the glowing Harbor Cafe pad — the parcel drops itself.';
   }
   state.revision++;
 }
@@ -71,22 +87,28 @@ export function nearestStop(state: GameState): Stop | undefined {
 export function interact(state: GameState): void {
   if (state.paused) return;
   if (state.mode === 'home') { interactHome(state); return; }
-  if (state.drop) return;
+  if (state.drop || state.haloFade > 0) return;
   if (state.mode === 'tutorial') {
     if (state.tutorialStage !== 2 || nearestStop(state)?.id !== 'harbor-cafe') return;
     // The practice drop lands like a real one, then practice completes.
-    state.drop = { stopId: 'harbor-cafe', t: 0, parcel: true };
-    freezeForDrop(state);
-    state.message = 'Parcel away!';
-    state.revision++;
+    beginDrop(state, STOPS.find((stop) => stop.id === 'harbor-cafe')!);
     return;
   }
   if (state.mode !== 'flight' || !state.run) return;
   if (state.run.elapsed >= RUN_SECONDS) { settleRun(state, false); return; }
   const stop = nearestStop(state);
   if (!stop) return;
-  // The drop is committed here. The parcel lands during a short animation;
-  // the delivery (or banking) resolves when it reaches the pad.
+  beginDrop(state, stop);
+}
+
+/** Commits a parcel drop right now: the manual path. The halo hides the
+ * moment the drop commits; the parcel lands during the 0.9 s animation and
+ * the delivery (or banking) resolves when it reaches the pad. */
+function beginDrop(state: GameState, stop: Stop): void {
+  // Reset fade state for safety. A manual press can't actually reach here
+  // mid-fade — interact() returns early while haloFade > 0 — but the reset
+  // is harmless if that ever changes.
+  state.haloFade = 0;
   state.drop = { stopId: stop.id, t: 0, parcel: stop.id !== 'home' };
   freezeForDrop(state);
   state.message = stop.id === 'home' ? 'Banking your earnings…' : 'Parcel away!';
@@ -140,6 +162,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
   state.summary = null;
   state.homePanel = 'none';
   state.drop = null;
+  state.haloFade = 0;
   state.mode = 'flight';
   state.message = 'First parcel: Harbor Cafe.';
   state.revision++;
@@ -172,6 +195,7 @@ export function settleRun(state: GameState, success: boolean): void {
   const run = state.run;
   if (!run) return;
   state.drop = null;
+  state.haloFade = 0;
   const earnings = success ? run.earnings : 0;
   state.summary = { success, earnings, deliveries: run.deliveries };
   if (success) state.profile.coins += earnings;
@@ -199,8 +223,11 @@ function stopName(id: string): string { return STOPS.find((stop) => stop.id === 
  * Undefined whenever there is no active destination (title/home/summary/
  * offers modes, or a flight with no run), so the beacon renders only while
  * a destination is live. It follows job changes, and hides the moment a
- * delivery resolves because completeDrop clears the job or leaves flight mode. */
+ * delivery resolves because completeDrop clears the job or leaves flight mode.
+ * It also hides the moment any drop commits, so the halo is gone before the
+ * parcel's landing animation starts. */
 export function glowColumnTarget(state: GameState): Stop | undefined {
+  if (state.drop) return undefined;
   if (state.mode !== 'tutorial' && state.mode !== 'flight') return undefined;
   return getTarget(state);
 }
@@ -251,6 +278,46 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
   return hit;
 }
 
+/** True when the player is actively flying the broom (beyond a small deadzone). */
+function stickActive(input: FlightInput): boolean {
+  return Math.abs(clamp(input.turn, -1, 1)) > INPUT_DEADZONE
+    || Math.abs(clamp(input.climb, -1, 1)) > INPUT_DEADZONE
+    || Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
+}
+
+/** Whether the drone is carrying a parcel it could drop at this stop. */
+function carryingParcel(state: GameState, stop: Stop): boolean {
+  // The tutorial's practice parcel only becomes droppable once the hover
+  // lesson is done, mirroring the manual interact gate.
+  if (state.mode === 'tutorial') return state.tutorialStage === 2 && stop.id === 'harbor-cafe';
+  return state.run?.job?.to === stop.id;
+}
+
+/** Starts the pre-drop halo fade once the drone is at rest in the active
+ * destination's column with a parcel aboard. Fires only with hands off the
+ * stick, so a fast flyover never triggers it. */
+function maybeAutoDrop(state: GameState, input: FlightInput): void {
+  if (state.drop || state.haloFade > 0) return;
+  if (state.mode !== 'tutorial' && state.mode !== 'flight') return;
+  if (stickActive(input)) return;
+  if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
+  const target = glowColumnTarget(state);
+  const stop = target ? nearestStop(state) : undefined;
+  if (!stop || stop.id !== target!.id || !carryingParcel(state, stop)) return;
+  state.haloFade = HALO_FADE_SECONDS;
+}
+
+/** Commits the pending auto-drop once the halo has faded, re-verifying the
+ * drone is still eligible. Returns whether a drop was committed. */
+function commitAutoDrop(state: GameState): boolean {
+  const target = glowColumnTarget(state);
+  const stop = target ? nearestStop(state) : undefined;
+  if (!stop || stop.id !== target!.id || !carryingParcel(state, stop)) return false;
+  if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return false;
+  beginDrop(state, stop);
+  return true;
+}
+
 export function step(state: GameState, input: FlightInput, dt: number): void {
   if (state.mode === 'home') { stepHome(state, input, dt); return; }
   if (state.paused || (state.mode !== 'tutorial' && state.mode !== 'flight' && state.mode !== 'offers') || !Number.isFinite(dt) || dt <= 0) return;
@@ -271,6 +338,17 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     return;
   }
   const seconds = Math.max(0, dt);
+  // An auto-drop pending: the halo fades out first, and only then does the
+  // parcel commit. The run clock and flight physics freeze mid-fade — pausing
+  // freezes it too, since step returns early while paused — and any stick
+  // input cancels the pending drop.
+  if (state.haloFade > 0) {
+    state.haloFade = Math.max(0, state.haloFade - seconds);
+    if (stickActive(input)) state.haloFade = 0;
+    else if (state.haloFade === 0) commitAutoDrop(state);
+    state.revision++;
+    if (state.haloFade > 0 || state.drop) return;
+  }
   // The clock runs on the offer screen, but that screen intentionally freezes flight input.
   if (state.run && (state.mode === 'flight' || state.mode === 'offers')) {
     if (state.run.elapsed >= RUN_SECONDS - 1e-9) { state.run.elapsed = RUN_SECONDS; settleRun(state, false); return; }
@@ -289,7 +367,24 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
   player.throttle = clamp(player.throttle + clamp(input.throttle, -1, 1) * THROTTLE_RATE * seconds, 0, maxSpeed);
-  const targetSpeed = player.hover ? 0 : player.throttle;
+  // Arrival auto-brake: with hands off the stick and a live destination, cap
+  // speed to the braking profile v = sqrt(2·a·d) so the drone glides to rest
+  // at the pad instead of overshooting it. Any stick input overrides it.
+  let brakeCap: number | undefined;
+  if (!stickActive(input) && !player.hover) {
+    const target = glowColumnTarget(state);
+    if (target) {
+      const dx = target.position.x - player.position.x;
+      const dz = target.position.z - player.position.z;
+      const distH = Math.hypot(dx, dz);
+      if (distH < AUTO_BRAKE_HOLD_RADIUS) brakeCap = 0;
+      else if (distH > 1e-6) {
+        const closing = (player.velocity.x * dx + player.velocity.z * dz) / distH;
+        if (closing > 0.5) brakeCap = Math.sqrt(2 * AUTO_BRAKE_DECEL * distH);
+      }
+    }
+  }
+  const targetSpeed = player.hover ? 0 : brakeCap === undefined ? player.throttle : Math.min(player.throttle, brakeCap);
   player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -hoverBrake * seconds, ACCELERATION * seconds), 0, maxSpeed);
   if (Math.abs(player.speed) < 0.01) player.speed = 0;
   const horizontal = { x: Math.sin(player.yaw), z: -Math.cos(player.yaw) };
@@ -312,6 +407,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   if (state.mode === 'tutorial' && state.tutorialStage === 0 && (Math.abs(turn) > 0.05 || length(delta) > 0.1)) {
     state.tutorialStage = 1; state.message = 'Press hover to slow and hold position.';
   }
+  maybeAutoDrop(state, input);
   state.revision++;
 }
 

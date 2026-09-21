@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
-import { DROP_ANIM_SECONDS, glowColumnTarget } from './simulation';
+import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
@@ -281,7 +281,8 @@ export class GameRenderer {
    * player carries a parcel, or home when heading home. It tracks destination
    * changes and hides the moment a delivery resolves. The pad ring stays the
    * near-field marker, so the column is narrow at its base and never
-   * obscures it. */
+   * obscures it. Before an auto-drop the column fades out first (driven by
+   * state.haloFade); once the drop commits it hides immediately. */
   private updateGlowColumn(state: GameState, reduced: boolean): void {
     const stop = glowColumnTarget(state);
     const show = !!stop;
@@ -292,7 +293,9 @@ export class GameRenderer {
       this.glowColumn.position.set(stop.position.x, stop.position.y, stop.position.z);
     }
     // Reduced motion renders the glow static; otherwise it breathes gently.
-    const pulse = reduced ? 1 : .86 + .14 * Math.sin(this.clock * 2.4);
+    // The pre-drop fade multiplies the glow to zero before the parcel leaves.
+    const fade = state.haloFade > 0 ? Math.max(0, Math.min(1, state.haloFade / HALO_FADE_SECONDS)) : 1;
+    const pulse = (reduced ? 1 : .86 + .14 * Math.sin(this.clock * 2.4)) * fade;
     for (const mat of this.glowMats) mat.uniforms.uPulse.value = pulse;
   }
   /** A committed parcel drop: the box detaches from Meg and falls to the pad. */
