@@ -5,7 +5,7 @@ import { GameRenderer } from './scene';
 import { UI } from './ui';
 import { Input } from './input';
 import { HomeUI } from './home-ui';
-import { TouchControls } from './touch-controls';
+import { TouchControls, touchControlsVisible } from './touch-controls';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
 import { SaveStore, SAVE_KEY } from './storage';
 import { GameAudio } from './audio';
@@ -35,7 +35,6 @@ function resume() { if (!bootReady || document.hidden || contextLost) return; se
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
-  hover() { if(!bootReady)return; toggleHover(state);persist(); draw(0); },
   pause: () => pause(), resume,
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
   quality() { lowQuality = !lowQuality; draw(0); },
@@ -51,8 +50,8 @@ const homeUI=new HomeUI(root,{
   upgrade(track){if(!bootReady)return;buyUpgrade(state,track);persist();draw(0);},
   furnish(id){if(!bootReady)return;buyFurniture(state,id);persist();draw(0);},
 });
-// The touch layer is constructed after every screen panel so it sits last in
-// DOM order (above the panels); see TouchControls for the stacking contract.
+// The touch layer carries the floating-stick visual; the stick itself spawns
+// on the canvas below the panels (see Input.bindTouch).
 const touchControls=new TouchControls(root);
 const saveBanner=document.createElement('aside');saveBanner.className='save-status';saveBanner.setAttribute('aria-live','polite');root.append(saveBanner);
 saveBanner.addEventListener('click',event=>{
@@ -64,7 +63,7 @@ saveBanner.addEventListener('click',event=>{
 
 try { renderer = new GameRenderer(canvas); }
 catch { root.innerHTML = '<main class="compatibility"><h1>A little more sky, please.</h1><p>Meg needs a browser with WebGL 2 and hardware acceleration. Try a current browser with graphics acceleration enabled.</p></main>'; throw new Error('WebGL 2 is unavailable.'); }
-input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen });
+input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen }, () => touchControlsVisible(state.mode, state.paused, state.homePanel));
 
 function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){saveKind='session';saveMessage=store.message;}}
 async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}

@@ -29,9 +29,9 @@ test('touch layer hides on title, offers, and summary', () => {
   }
 });
 
-test('per-screen control sets: flight/tutorial get both, home gets joystick only', () => {
-  assert.deepEqual([...touchControlsFor('flight')], ['joystick', 'throttle']);
-  assert.deepEqual([...touchControlsFor('tutorial')], ['joystick', 'throttle']);
+test('per-screen control sets: every touch screen gets the floating stick only', () => {
+  assert.deepEqual([...touchControlsFor('flight')], ['joystick']);
+  assert.deepEqual([...touchControlsFor('tutorial')], ['joystick']);
   assert.deepEqual([...touchControlsFor('home')], ['joystick']);
   for (const mode of ['title', 'offers', 'summary'] as Mode[]) {
     assert.deepEqual([...touchControlsFor(mode)], [], mode);

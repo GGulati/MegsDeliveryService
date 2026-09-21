@@ -75,7 +75,7 @@ test('holding the throttle cannot defeat the auto-brake', () => {
 });
 
 test('throttle-held first delivery still auto-drops at the pad', () => {
-  // The reported bug: holding the throttle (E / touch slider) all the way to
+  // The reported bug: holding the throttle (E / touch stick) all the way to
   // Harbor Cafe used to disable braking entirely, so the drone flew through
   // the pad forever and the parcel never dropped.
   const state = createState(); startTutorial(state);

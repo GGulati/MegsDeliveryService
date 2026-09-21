@@ -1,7 +1,12 @@
 export interface Vec3 { x: number; y: number; z: number }
 export interface Stop { id: string; name: string; subtitle: string; position: Vec3; color: string }
 export interface Solid { min: Vec3; max: Vec3 }
-export interface FlightInput { turn: number; climb: number; throttle: number }
+export interface FlightInput {
+  turn: number; climb: number; throttle: number;
+  // One-shot: the touch stick was just released, so the cruise trim the stick
+  // was driving collapses and the drone brakes instead of flying on.
+  cutThrottle?: boolean;
+}
 export interface Player { position: Vec3; yaw: number; pitch: number; speed: number; throttle: number; hover: boolean; velocity: Vec3; brakeHold: boolean }
 export interface Profile { coins: number; upgrades: { speed: number; handling: number; braking: number }; furniture: string[]; tutorialDone: boolean; runs: number; deliveries: number }
 export interface Job { from: string; to: string; payout: number; label: string; parcel: string }
