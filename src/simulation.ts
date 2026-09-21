@@ -47,14 +47,14 @@ export function createState(): GameState {
   return {
     mode: 'title', player: createPlayer(),
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
-    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, haloFade: 0,
+    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, haloFade: 0, fadeSnap: null, fadeCooldown: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
   };
 }
 
 export function startTutorial(state: GameState): void {
   state.mode = 'tutorial'; state.paused = false; state.pauseReason = '';
-  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.haloFade = 0;
+  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   state.message = 'Steer toward the glowing Harbor Cafe pad.'; state.revision++;
 }
 
@@ -108,7 +108,7 @@ function beginDrop(state: GameState, stop: Stop): void {
   // Reset fade state for safety. A manual press can't actually reach here
   // mid-fade — interact() returns early while haloFade > 0 — but the reset
   // is harmless if that ever changes.
-  state.haloFade = 0;
+  state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   state.drop = { stopId: stop.id, t: 0, parcel: stop.id !== 'home' };
   freezeForDrop(state);
   state.message = stop.id === 'home' ? 'Banking your earnings…' : 'Parcel away!';
@@ -165,7 +165,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
   state.summary = null;
   state.homePanel = 'none';
   state.drop = null;
-  state.haloFade = 0;
+  state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   state.mode = 'flight';
   state.message = 'First parcel: Harbor Cafe.';
   state.revision++;
@@ -198,7 +198,7 @@ export function settleRun(state: GameState, success: boolean): void {
   const run = state.run;
   if (!run) return;
   state.drop = null;
-  state.haloFade = 0;
+  state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   const earnings = success ? run.earnings : 0;
   state.summary = { success, earnings, deliveries: run.deliveries };
   if (success) state.profile.coins += earnings;
@@ -288,13 +288,21 @@ function stickActive(input: FlightInput): boolean {
     || Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
 }
 
-/** Stick input that blocks or cancels the auto-drop: horizontal maneuvering
- * (turn or throttle trim). Climb never blocks it — riding the pillar up or
- * down at low horizontal speed is exactly when the drop should happen, at
- * any height. Fast flyovers are still excluded by the speed gate. */
-function dropInputBlocked(input: FlightInput): boolean {
-  return Math.abs(clamp(input.turn, -1, 1)) > INPUT_DEADZONE
-    || Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
+/** A deliberate new maneuver during the halo fade aborts the pending drop.
+ * Input that was already held when the fade started doesn't count — arriving
+ * with the stick held is normal, and the drop should proceed automatically.
+ * Only a fresh deflection (or a much stronger one) cancels; letting go never
+ * does. Climb is never a cancel. */
+/** Re-arm delay after the pilot aborts a pending auto-drop: the wave-off
+ * has to mean something, so the fade can't restart on the very next frame
+ * (the aborting jab would just become the new "steady held" baseline). */
+const FADE_REARM_SECONDS = 2;
+
+function freshManeuver(input: FlightInput, snap: { turn: number; throttle: number } | null): boolean {
+  const s = snap ?? { turn: 0, throttle: 0 };
+  const turn = clamp(input.turn, -1, 1), thr = clamp(input.throttle, -1, 1);
+  return (Math.abs(turn) > INPUT_DEADZONE && Math.abs(turn - s.turn) > 0.35)
+      || (Math.abs(thr) > INPUT_DEADZONE && Math.abs(thr - s.throttle) > 0.35);
 }
 
 /** Whether the drone is carrying a parcel it could drop at this stop. */
@@ -306,19 +314,19 @@ function carryingParcel(state: GameState, stop: Stop): boolean {
 }
 
 /** Starts the pre-drop halo fade once the drone is slow inside the active
- * destination's column with a parcel aboard. Climb input never blocks it —
- * descending or ascending through the pillar is when the drop should happen,
- * at any height — but horizontal stick input does, and fast flyovers never
- * trigger it via the speed gate. */
+ * destination's column with a parcel aboard — stick held or not. Arriving
+ * with the stick held is the normal case, and the delivery should complete
+ * automatically; only a fresh maneuver during the fade aborts it. Fast
+ * flyovers never trigger it via the speed gate. */
 function maybeAutoDrop(state: GameState, input: FlightInput): void {
-  if (state.drop || state.haloFade > 0) return;
+  if (state.drop || state.haloFade > 0 || state.fadeCooldown > 0) return;
   if (state.mode !== 'tutorial' && state.mode !== 'flight') return;
-  if (dropInputBlocked(input)) return;
   if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
   const target = glowColumnTarget(state);
   const stop = target ? nearestStop(state) : undefined;
   if (!stop || stop.id !== target!.id || !carryingParcel(state, stop)) return;
   state.haloFade = HALO_FADE_SECONDS;
+  state.fadeSnap = { turn: clamp(input.turn, -1, 1), throttle: clamp(input.throttle, -1, 1) };
 }
 
 /** Commits the pending auto-drop once the halo has faded, re-verifying the
@@ -352,14 +360,18 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     return;
   }
   const seconds = Math.max(0, dt);
+  if (state.fadeCooldown > 0) state.fadeCooldown = Math.max(0, state.fadeCooldown - seconds);
   // An auto-drop pending: the halo fades out first, and only then does the
   // parcel commit. The run clock and flight physics freeze mid-fade — pausing
-  // freezes it too, since step returns early while paused — and horizontal
-  // stick input cancels the pending drop (climb never does).
+  // freezes it too, since step returns early while paused — and only a fresh
+  // maneuver cancels the pending drop (steady-held input and climb never do).
+  // A cancel starts a short re-arm cooldown so the wave-off sticks.
   if (state.haloFade > 0) {
     state.haloFade = Math.max(0, state.haloFade - seconds);
-    if (dropInputBlocked(input)) state.haloFade = 0;
-    else if (state.haloFade === 0) commitAutoDrop(state);
+    if (freshManeuver(input, state.fadeSnap)) {
+      state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = FADE_REARM_SECONDS;
+    }
+    else if (state.haloFade === 0) { state.fadeSnap = null; commitAutoDrop(state); }
     state.revision++;
     if (state.haloFade > 0 || state.drop) return;
   }
