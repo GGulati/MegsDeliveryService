@@ -135,9 +135,9 @@ function beginDrop(state: GameState, stop: Stop): void {
 }
 
 /** Holds Meg still while a committed drop lands. The throttle trim is a pilot
- * setting, not motion state, so the drop leaves it alone — resuming flight
- * afterwards restores the pre-drop cruise speed instead of stranding the
- * drone at zero. */
+ * setting, not motion state, so the freeze leaves it alone through the
+ * animation; completeDrop clears it when the delivery resolves so the next
+ * leg starts parked. */
 function freezeForDrop(state: GameState): void {
   state.player.speed = 0; state.player.hover = true;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -153,6 +153,10 @@ function completeDrop(state: GameState, stopId: string): void {
   // hover with no way to move. Touch players are hit hardest: there is no
   // hover button anymore, so nothing can clear it.
   state.player.hover = false;
+  // The next leg starts parked: clear the throttle trim so the drone does
+  // not auto-fly when the next job is chosen. Holding the stick (or keys)
+  // afterwards builds speed back up normally.
+  state.player.throttle = 0;
   if (state.mode === 'tutorial') {
     state.profile.tutorialDone = true;
     state.message = 'Practice complete';

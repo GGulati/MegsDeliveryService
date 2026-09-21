@@ -489,16 +489,18 @@ test('climb input does not cancel a pending drop', () => {
   assert.equal(state.run!.deliveries, 1, 'holding descend should not cancel the pending drop');
 });
 
-test('throttle trim survives the drop and restores speed on resume', () => {
+test('drone starts parked after a drop and flies on input', () => {
   const state = createState(); startRun(state, 7);
   approach(state, CAFE, 40, 14);
   stepMany(state, 12);
   for (let i = 0; i < 200 && (state.haloFade > 0 || state.drop); i++) step(state, idle, 1 / 60);
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
-  assert.equal(state.player.throttle, 14, 'trim should survive the drop');
+  assert.equal(state.player.throttle, 0, 'trim should reset so the next leg starts parked');
   chooseJob(state, 0);
   stepMany(state, 3); // no throttle input held
-  assert.ok(state.player.speed > 8, `speed should recover toward trim, got ${state.player.speed}`);
+  assert.equal(state.player.speed, 0, 'parked drone must not auto-fly');
+  stepMany(state, 3, { turn: 0, climb: 0, throttle: 1 });
+  assert.ok(state.player.speed > 1, `drone must fly on input, speed=${state.player.speed}`);
 });
 
 test('no auto-drop on a fast flyover with only climb held', () => {
