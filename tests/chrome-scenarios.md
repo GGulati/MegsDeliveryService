@@ -4,7 +4,7 @@ Start `npm.cmd run dev -- --port 5174 --strictPort`, open `http://127.0.0.1:5174
 
 ## Flight
 
-Click Learn to fly. Advance 330 frames of `window.advanceTime(1000/60)`, click Hover, then advance 60 more frames. Expect hover, speed zero, Harbor Cafe within 7m, ready to deliver. Click Deliver parcel. Expect practice complete. Inspect a full-page screenshot before delivery to verify broom, cat, destination and HUD. Small frame bursts also allow visual interpolation to settle.
+Click Learn to fly. Advance 330 frames of `window.advanceTime(1000/60)`, press Space for hover, then advance 60 more frames. Expect hover, speed zero, Harbor Cafe within 7m, ready to deliver. The practice parcel auto-drops once the drone holds still in the column — no button. Expect practice complete. Inspect a full-page screenshot before delivery to verify broom, cat, destination and HUD. Small frame bursts also allow visual interpolation to settle.
 
 Reset with `window.__game.reset()` when running isolated scenarios. Advance input bursts through `window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))`, `window.advanceTime(400)`, corresponding keyup. Assert heading changes clockwise. Repeat climb, throttle and hover. These are browser event-handler tests; also use Chrome's real key/click tools.
 

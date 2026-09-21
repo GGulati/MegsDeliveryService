@@ -163,6 +163,28 @@ test('wave-off during the fade lets a held throttle power out of the column', ()
   assert.equal(state.drop, null, 'aborted drop must not commit');
 });
 
+test('releasing the stick during the wave-off window re-pins the hold', () => {
+  const state = createState(); startRun(state, 5);
+  // parked in the column at rest with a hot throttle trim, as after a fast arrival
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z };
+  state.player.yaw = 0;
+  state.player.speed = 0; state.player.throttle = 18; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  step(state, idle, 0.1);
+  assert.ok(state.haloFade > 0, 'fade should be in progress');
+  // fresh maneuver aborts the pending drop while the throttle stays held
+  step(state, { turn: 1, climb: 0, throttle: 1 }, 0.1);
+  assert.ok(state.fadeCooldown > 0, 're-arm cooldown set');
+  // release the stick instead of powering out: cutThrottle collapses the trim,
+  // so the wave-off escape no longer applies and the hold re-pins
+  step(state, { turn: 0, climb: 0, throttle: 0, cutThrottle: true }, 1 / 60);
+  assert.equal(state.player.throttle, 0, 'release zeroes the trim');
+  stepMany(state, 2.5, idle);
+  assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS,
+    `released drone must stay pinned in the column, dist=${horizontalTo(state, CAFE)}`);
+  assert.ok(state.haloFade > 0 || state.drop, 'delivery should re-arm after the wave-off window');
+});
+
 test('no auto-brake without an active destination', () => {
   const state = createState(); startRun(state, 7);
   state.run!.job = null; // no parcel, not returning: no active destination

@@ -89,5 +89,9 @@ export class Input {
     this.canvas.addEventListener('pointermove', move);
     this.canvas.addEventListener('pointerup', end);
     this.canvas.addEventListener('pointercancel', end);
+    // If capture is revoked without a pointerup/cancel (e.g. setPointerCapture
+    // threw and the finger lifted over a panel), the stick must still end —
+    // otherwise touch input soft-locks at full trim with no way to re-grab.
+    this.canvas.addEventListener('lostpointercapture', end);
   }
 }
