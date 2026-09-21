@@ -55,18 +55,61 @@ test('auto-brake brings the drone to rest inside the arrival zone', () => {
   approach(state, CAFE, 40, 18);
   stepMany(state, 10);
   assert.equal(state.player.speed, 0, 'drone should come to rest');
-  assert.ok(horizontalTo(state, CAFE) <= 7, `should rest inside the column, dist=${horizontalTo(state, CAFE)}`);
+  assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS, `should rest inside the column, dist=${horizontalTo(state, CAFE)}`);
 });
 
-test('stick input overrides the auto-brake', () => {
+test('throttle input overrides the auto-brake', () => {
   const braked = createState(); startRun(braked, 7);
   approach(braked, CAFE, 15, 14);
   stepMany(braked, 1);
   const overridden = createState(); startRun(overridden, 7);
   approach(overridden, CAFE, 15, 14);
-  stepMany(overridden, 1, { turn: 1, climb: 0, throttle: 0 });
+  stepMany(overridden, 1, { turn: 0, climb: 0, throttle: 1 });
   assert.ok(overridden.player.speed > braked.player.speed,
-    `input must disengage the brake: overridden=${overridden.player.speed} braked=${braked.player.speed}`);
+    `throttle must disengage the brake: overridden=${overridden.player.speed} braked=${braked.player.speed}`);
+});
+
+test('steering toward the destination does not defeat the auto-brake', () => {
+  const state = createState(); startRun(state, 7);
+  approach(state, CAFE, 25, 18);
+  stepMany(state, 1, { turn: 0.2, climb: 0, throttle: 0 });
+  assert.ok(state.player.speed < 18, `brake should engage while steering, speed=${state.player.speed}`);
+});
+
+test('fast steered approach still stops inside the column', () => {
+  const state = createState(); startRun(state, 7);
+  // start off-axis so reaching the pad requires active steering the whole way
+  state.player.position = { x: CAFE.position.x + 25, y: 30, z: CAFE.position.z + 60 };
+  state.player.yaw = 0;
+  state.player.speed = 18; state.player.throttle = 18; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: -18 };
+  // simple pilot: keep steering toward the pad, never touching the throttle
+  for (let i = 0; i < 60 * 25; i++) {
+    const dx = CAFE.position.x - state.player.position.x;
+    const dz = CAFE.position.z - state.player.position.z;
+    const want = Math.atan2(dx, -dz);
+    let err = want - state.player.yaw;
+    while (err > Math.PI) err -= 2 * Math.PI;
+    while (err < -Math.PI) err += 2 * Math.PI;
+    step(state, { turn: Math.max(-1, Math.min(1, err * 2)), climb: 0, throttle: 0 }, 1 / 60);
+    if (state.player.speed === 0 && horizontalTo(state, CAFE) < 2) break;
+  }
+  assert.equal(state.player.speed, 0, 'drone should come to rest');
+  assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS,
+    `steered fast approach must stop inside the column, dist=${horizontalTo(state, CAFE)}`);
+});
+
+test('a late throttle release cannot relaunch the drone past the pad', () => {
+  const state = createState(); startRun(state, 7);
+  approach(state, CAFE, 150, 18);
+  // hold the throttle (override: no braking) until 5m out, then let go entirely
+  let guard = 0;
+  while (horizontalTo(state, CAFE) > 5 && guard++ < 3600) step(state, { turn: 0, climb: 0, throttle: 1 }, 1 / 60);
+  stepMany(state, 6);
+  assert.ok(state.player.speed < 12,
+    `stale throttle must not relaunch the drone, speed=${state.player.speed}`);
+  assert.ok(state.player.throttle < 12,
+    `stale throttle must be cleared after a transit stop, throttle=${state.player.throttle}`);
 });
 
 test('no auto-brake without an active destination', () => {

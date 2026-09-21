@@ -28,6 +28,10 @@ const AUTO_BRAKE_DECEL = 6;
  * stick, the brake holds the drone at rest: without it the drone can straddle
  * the pad center, flip to "flying away", and launch off at full throttle. */
 const AUTO_BRAKE_HOLD_RADIUS = 2;
+/** The sticky transit hold never extends past this distance (m) from the pad:
+ * a too-fast transit always stops well inside it, so a stale hold can never
+ * pin the drone far from its destination. */
+const BRAKE_TRANSIT_RADIUS = 20;
 /** Stick/throttle deflection below this counts as hands-off. */
 const INPUT_DEADZONE = 0.05;
 /** The drone must be at most this slow (m/s) for the auto-drop to fire. */
@@ -45,7 +49,7 @@ const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
 export function createPlayer(position: Vec3 = STOPS[0].position): Player {
   return {
     position: { ...position }, yaw: 0, pitch: 0, speed: 9, throttle: 9,
-    hover: false, velocity: { x: 0, y: 0, z: -9 },
+    hover: false, velocity: { x: 0, y: 0, z: -9 }, brakeHold: false,
   };
 }
 
@@ -111,6 +115,10 @@ export function interact(state: GameState): void {
  * moment the drop commits; the parcel lands during the 0.9 s animation and
  * the delivery (or banking) resolves when it reaches the pad. */
 function beginDrop(state: GameState, stop: Stop): void {
+  // The approach is over once the drop commits: release the sticky brake hold
+  // (flight physics freezes during the drop animation, so the step logic that
+  // normally clears it will not run).
+  state.player.brakeHold = false;
   // Reset fade state for safety. A manual press can't actually reach here
   // mid-fade — interact() returns early while haloFade > 0 — but the reset
   // is harmless if that ever changes.
@@ -287,11 +295,9 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
   return hit;
 }
 
-/** True when the player is actively flying the broom (beyond a small deadzone). */
-function stickActive(input: FlightInput): boolean {
-  return Math.abs(clamp(input.turn, -1, 1)) > INPUT_DEADZONE
-    || Math.abs(clamp(input.climb, -1, 1)) > INPUT_DEADZONE
-    || Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
+/** True when the player is demanding speed on the throttle (beyond a small deadzone). */
+function throttleHeld(input: FlightInput): boolean {
+  return Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
 }
 
 /** A deliberate new maneuver during the halo fade aborts the pending drop.
@@ -401,30 +407,45 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
   player.throttle = clamp(player.throttle + clamp(input.throttle, -1, 1) * THROTTLE_RATE * seconds, 0, maxSpeed);
-  // Arrival auto-brake: with hands off the stick and a live destination, cap
-  // speed to the braking profile v = sqrt(2·a·d) so the drone glides to rest
-  // at the pad instead of overshooting it. Any stick input overrides it.
-  // When the throttle is released (the touch slider snaps back to 0), the
-  // drone rides the profile down from its current speed instead of parking
-  // mid-air — a released throttle never accelerates it.
+  // Arrival auto-brake: while closing on a live destination without demanding
+  // speed on the throttle, cap speed to the braking profile v = sqrt(2·a·d) so
+  // the drone glides to rest at the pad instead of overshooting it. Steering
+  // (turn/climb) never defeats the brake — only the throttle does — so the
+  // drone can never arrive faster than the stopping profile allows and the
+  // stop inside the column is guaranteed by construction. Once the drone
+  // enters the pad's hold zone under braking, the hold is sticky: a too-fast
+  // transit keeps full braking until the drone actually stops, instead of
+  // releasing it to a stale throttle setting. A transit that carries past the
+  // pad kills the stale throttle trim so the drone parks; a clean stop inside
+  // the hold zone preserves the trim for the next leg.
   let brakeCap: number | undefined;
-  if (!stickActive(input) && !player.hover) {
-    const target = glowColumnTarget(state);
-    if (target) {
-      const dx = target.position.x - player.position.x;
-      const dz = target.position.z - player.position.z;
-      const distH = Math.hypot(dx, dz);
-      if (distH < AUTO_BRAKE_HOLD_RADIUS) brakeCap = 0;
-      else if (distH > 1e-6) {
-        const closing = (player.velocity.x * dx + player.velocity.z * dz) / distH;
-        if (closing > 0.5) brakeCap = Math.sqrt(2 * AUTO_BRAKE_DECEL * distH);
-      }
+  let distH = Infinity;
+  const brakeTarget = !throttleHeld(input) && !player.hover ? glowColumnTarget(state) : undefined;
+  if (brakeTarget) {
+    const dx = brakeTarget.position.x - player.position.x;
+    const dz = brakeTarget.position.z - player.position.z;
+    distH = Math.hypot(dx, dz);
+    if (distH < AUTO_BRAKE_HOLD_RADIUS) {
+      brakeCap = 0;
+      player.brakeHold = true;
+    } else if (player.brakeHold && distH < BRAKE_TRANSIT_RADIUS) {
+      brakeCap = 0;
+    } else if (distH > 1e-6) {
+      const closing = (player.velocity.x * dx + player.velocity.z * dz) / distH;
+      if (closing > 0.5) brakeCap = Math.sqrt(2 * AUTO_BRAKE_DECEL * distH);
     }
+    if (brakeCap === undefined) player.brakeHold = false;
+  } else {
+    player.brakeHold = false;
   }
   const held = player.throttle > INPUT_DEADZONE ? player.throttle : player.speed;
   const targetSpeed = player.hover ? 0 : brakeCap === undefined ? player.throttle : Math.min(brakeCap, held);
   player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -hoverBrake * seconds, ACCELERATION * seconds), 0, maxSpeed);
   if (Math.abs(player.speed) < 0.01) player.speed = 0;
+  if (player.brakeHold && player.speed === 0) {
+    player.brakeHold = false;
+    if (distH >= AUTO_BRAKE_HOLD_RADIUS) player.throttle = 0;
+  }
   const horizontal = { x: Math.sin(player.yaw), z: -Math.cos(player.yaw) };
   const verticalSpeed = player.hover ? 0 : climb * Math.max(player.speed, 3) * 0.7;
   const delta = { x: horizontal.x * player.speed * seconds, y: verticalSpeed * seconds, z: horizontal.z * player.speed * seconds };
