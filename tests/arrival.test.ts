@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, toggleHover, HALO_FADE_SECONDS, ARRIVAL_RADIUS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -75,7 +75,7 @@ test('holding the throttle cannot defeat the auto-brake', () => {
 });
 
 test('throttle-held first delivery still auto-drops at the pad', () => {
-  // The reported bug: holding the throttle (E / touch slider) all the way to
+  // The reported bug: holding the throttle (E / touch stick) all the way to
   // Harbor Cafe used to disable braking entirely, so the drone flew through
   // the pad forever and the parcel never dropped.
   const state = createState(); startTutorial(state);
@@ -161,6 +161,28 @@ test('wave-off during the fade lets a held throttle power out of the column', ()
   assert.ok(horizontalTo(state, CAFE) > ARRIVAL_RADIUS,
     `wave-off must escape the column, dist=${horizontalTo(state, CAFE)}`);
   assert.equal(state.drop, null, 'aborted drop must not commit');
+});
+
+test('releasing the stick during the wave-off window re-pins the hold', () => {
+  const state = createState(); startRun(state, 5);
+  // parked in the column at rest with a hot throttle trim, as after a fast arrival
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z };
+  state.player.yaw = 0;
+  state.player.speed = 0; state.player.throttle = 18; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  step(state, idle, 0.1);
+  assert.ok(state.haloFade > 0, 'fade should be in progress');
+  // fresh maneuver aborts the pending drop while the throttle stays held
+  step(state, { turn: 1, climb: 0, throttle: 1 }, 0.1);
+  assert.ok(state.fadeCooldown > 0, 're-arm cooldown set');
+  // release the stick instead of powering out: cutThrottle collapses the trim,
+  // so the wave-off escape no longer applies and the hold re-pins
+  step(state, { turn: 0, climb: 0, throttle: 0, cutThrottle: true }, 1 / 60);
+  assert.equal(state.player.throttle, 0, 'release zeroes the trim');
+  stepMany(state, 2.5, idle);
+  assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS,
+    `released drone must stay pinned in the column, dist=${horizontalTo(state, CAFE)}`);
+  assert.ok(state.haloFade > 0 || state.drop, 'delivery should re-arm after the wave-off window');
 });
 
 test('no auto-brake without an active destination', () => {
@@ -391,6 +413,21 @@ test('second delivery auto-drops after choosing from offers', () => {
   assert.equal(state.run!.deliveries, 2, 'second delivery should complete hands-off');
 });
 
+test('drone can fly the second leg after a dropoff', () => {
+  const state = createState(); startRun(state, 7);
+  above(state, 'harbor-cafe', 10);
+  stepMany(state, 3);
+  finishDrop(state);
+  assert.equal(state.mode, 'offers', 'first delivery should complete');
+  assert.equal(state.player.hover, false, 'the drop freeze must release when the parcel lands');
+  chooseJob(state, 0);
+  assert.equal(state.mode, 'flight');
+  // Hold the stick forward: the drone must accelerate off the pad toward
+  // the second destination instead of sitting at speed 0.
+  stepMany(state, 3, { turn: 0, climb: 0, throttle: 1 });
+  assert.ok(state.player.speed > 1, `drone must fly after dropoff, speed=${state.player.speed}`);
+});
+
 test('auto-drop fires while descending through the pillar', () => {
   const state = createState(); startRun(state, 7);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
@@ -452,17 +489,18 @@ test('climb input does not cancel a pending drop', () => {
   assert.equal(state.run!.deliveries, 1, 'holding descend should not cancel the pending drop');
 });
 
-test('throttle trim survives the drop and restores speed on resume', () => {
+test('drone starts parked after a drop and flies on input', () => {
   const state = createState(); startRun(state, 7);
   approach(state, CAFE, 40, 14);
   stepMany(state, 12);
   for (let i = 0; i < 200 && (state.haloFade > 0 || state.drop); i++) step(state, idle, 1 / 60);
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
-  assert.equal(state.player.throttle, 14, 'trim should survive the drop');
+  assert.equal(state.player.throttle, 0, 'trim should reset so the next leg starts parked');
   chooseJob(state, 0);
-  toggleHover(state); // resume flight
   stepMany(state, 3); // no throttle input held
-  assert.ok(state.player.speed > 8, `speed should recover toward trim, got ${state.player.speed}`);
+  assert.equal(state.player.speed, 0, 'parked drone must not auto-fly');
+  stepMany(state, 3, { turn: 0, climb: 0, throttle: 1 });
+  assert.ok(state.player.speed > 1, `drone must fly on input, speed=${state.player.speed}`);
 });
 
 test('no auto-drop on a fast flyover with only climb held', () => {

@@ -60,6 +60,11 @@ export function createState(): GameState {
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
     run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, haloFade: 0, fadeSnap: null, fadeCooldown: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
+    // Set once at boot by main.ts from matchMedia('(pointer: coarse)').
+    // Lives on state (not read from window inside the simulation) so the
+    // simulation stays pure and unit tests need no DOM stubs. Used for
+    // device-specific tutorial copy.
+    coarsePointer: false,
   };
 }
 
@@ -72,10 +77,9 @@ export function startTutorial(state: GameState): void {
 export function toggleHover(state: GameState): void {
   if (state.paused || (state.mode !== 'tutorial' && state.mode !== 'flight')) return;
   state.player.hover = !state.player.hover;
-  if (state.mode === 'tutorial' && state.player.hover && state.tutorialStage === 1) {
-    state.tutorialStage = 2;
-    state.message = 'Hover confirmed. Drift over the glowing Harbor Cafe pad — the parcel drops itself.';
-  }
+  // Tutorial advancement is speed-based (see step()): holding still after
+  // moving confirms the stop on both touch (release the stick) and desktop
+  // (Space), so the hover button's removal needs no special-casing here.
   state.revision++;
 }
 
@@ -131,9 +135,9 @@ function beginDrop(state: GameState, stop: Stop): void {
 }
 
 /** Holds Meg still while a committed drop lands. The throttle trim is a pilot
- * setting, not motion state, so the drop leaves it alone — resuming flight
- * afterwards restores the pre-drop cruise speed instead of stranding the
- * drone at zero. */
+ * setting, not motion state, so the freeze leaves it alone through the
+ * animation; completeDrop clears it when the delivery resolves so the next
+ * leg starts parked. */
 function freezeForDrop(state: GameState): void {
   state.player.speed = 0; state.player.hover = true;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -142,6 +146,17 @@ function freezeForDrop(state: GameState): void {
 /** Resolves a committed drop once its landing animation finishes. Payout is
  * the job's flat payout: height never feeds the rating. */
 function completeDrop(state: GameState, stopId: string): void {
+  // The drop freeze is over the moment the parcel lands: release the hover
+  // pin that held the drone still during the animation. Without this the
+  // drone stays pinned at speed 0 after every delivery — the offers screen
+  // reuses the same player, so chooseJob/returnHome would inherit a stuck
+  // hover with no way to move. Touch players are hit hardest: there is no
+  // hover button anymore, so nothing can clear it.
+  state.player.hover = false;
+  // The next leg starts parked: clear the throttle trim so the drone does
+  // not auto-fly when the next job is chosen. Holding the stick (or keys)
+  // afterwards builds speed back up normally.
+  state.player.throttle = 0;
   if (state.mode === 'tutorial') {
     state.profile.tutorialDone = true;
     state.message = 'Practice complete';
@@ -417,6 +432,11 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const hoverBrake = HOVER_BRAKE * (1 + state.profile.upgrades.braking * 0.2);
   player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
+  // Release-to-brake (touch stick): releasing the stick collapses the cruise
+  // trim it was driving, so the drone brakes to a stop instead of flying on
+  // at the old trim. Keyboard trim (Q/E) never emits cutThrottle, so desktop
+  // cruise behavior is unchanged.
+  if (input.cutThrottle) player.throttle = 0;
   player.throttle = clamp(player.throttle + clamp(input.throttle, -1, 1) * THROTTLE_RATE * seconds, 0, maxSpeed);
   // Arrival auto-brake: whenever closing on a live destination, cap speed to
   // the braking profile v = sqrt(2·a·d) so the drone glides to rest at the pad
@@ -479,8 +499,23 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   player.position.y = clamp(player.position.y, MIN_ALTITUDE, MAX_ALTITUDE);
   player.position.z = clamp(player.position.z, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   player.velocity = { x: delta.x / seconds, y: delta.y / seconds, z: delta.z / seconds };
-  if (state.mode === 'tutorial' && state.tutorialStage === 0 && (Math.abs(turn) > 0.05 || length(delta) > 0.1)) {
-    state.tutorialStage = 1; state.message = 'Press hover to slow and hold position.';
+  if (state.mode === 'tutorial' && state.tutorialStage === 0 && length(delta) > 0.1) {
+    // Stage 0 needs real motion, not turning in place: stage 1's lesson is
+    // the stop, and its gate (speed near zero) must not fire on the same
+    // frame the player first twitches the stick.
+    state.tutorialStage = 1;
+    // Touch players release the stick (release-to-brake); desktop players
+    // use Space. Match the tutorial copy to the device so the "slow down"
+    // lesson teaches the control the player actually has.
+    state.message = state.coarsePointer
+      ? 'Release the stick to slow down and hover.'
+      : 'Press Space to slow down and hover.';
+  } else if (state.mode === 'tutorial' && state.tutorialStage === 1 && Math.abs(player.speed) < 0.5) {
+    // The stop itself is the lesson: touch players release the stick
+    // (release-to-brake), desktop players press Space (hover). Either way
+    // the drone is holding still, which is what stage 2 builds on.
+    state.tutorialStage = 2;
+    state.message = 'Nice and steady. Drift over the glowing Harbor Cafe pad — the parcel drops itself.';
   }
   maybeAutoDrop(state, input);
   state.revision++;

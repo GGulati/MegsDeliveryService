@@ -5,7 +5,7 @@ import { GameRenderer } from './scene';
 import { UI } from './ui';
 import { Input } from './input';
 import { HomeUI } from './home-ui';
-import { TouchControls } from './touch-controls';
+import { TouchControls, touchControlsVisible } from './touch-controls';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
 import { SaveStore, SAVE_KEY } from './storage';
 import { GameAudio } from './audio';
@@ -17,6 +17,11 @@ const testing = params.get('test') === '1';
 let state = createState();
 let muted = true;
 let lowQuality = matchMedia('(pointer: coarse)').matches;
+// The stick visual lives inside the coarse-pointer-gated touch layer, so the
+// stick must only spawn on coarse pointers too — otherwise a touch-laptop
+// finger drag would drive an invisible stick with no affordance.
+const coarsePointer = matchMedia('(pointer: coarse)').matches;
+state.coarsePointer = coarsePointer;
 let reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let renderer: GameRenderer;
 let input: Input;
@@ -35,7 +40,6 @@ function resume() { if (!bootReady || document.hidden || contextLost) return; se
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
-  hover() { if(!bootReady)return; toggleHover(state);persist(); draw(0); },
   pause: () => pause(), resume,
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
   quality() { lowQuality = !lowQuality; draw(0); },
@@ -51,20 +55,20 @@ const homeUI=new HomeUI(root,{
   upgrade(track){if(!bootReady)return;buyUpgrade(state,track);persist();draw(0);},
   furnish(id){if(!bootReady)return;buyFurniture(state,id);persist();draw(0);},
 });
-// The touch layer is constructed after every screen panel so it sits last in
-// DOM order (above the panels); see TouchControls for the stacking contract.
+// The touch layer carries the floating-stick visual; the stick itself spawns
+// on the canvas below the panels (see Input.bindTouch).
 const touchControls=new TouchControls(root);
 const saveBanner=document.createElement('aside');saveBanner.className='save-status';saveBanner.setAttribute('aria-live','polite');root.append(saveBanner);
 saveBanner.addEventListener('click',event=>{
   const button=(event.target as HTMLElement).closest('button');
   if(button?.dataset.save==='retry')void boot();
-  if(button?.dataset.save==='session'){store.continueSession();state=createState();bootReady=true;saveKind='session';saveMessage='Playing without saving. Your existing save is untouched.';draw(0);}
+  if(button?.dataset.save==='session'){store.continueSession();state=createState();state.coarsePointer=coarsePointer;bootReady=true;saveKind='session';saveMessage='Playing without saving. Your existing save is untouched.';draw(0);}
   if(button?.dataset.save==='export'){const raw=localStorage.getItem(SAVE_KEY);if(raw){const link=document.createElement('a');const url=URL.createObjectURL(new Blob([raw],{type:'application/json'}));link.href=url;link.download='megs-save-recovery.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}
 });
 
 try { renderer = new GameRenderer(canvas); }
 catch { root.innerHTML = '<main class="compatibility"><h1>A little more sky, please.</h1><p>Meg needs a browser with WebGL 2 and hardware acceleration. Try a current browser with graphics acceleration enabled.</p></main>'; throw new Error('WebGL 2 is unavailable.'); }
-input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen });
+input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen }, () => coarsePointer && touchControlsVisible(state.mode, state.paused, state.homePanel));
 
 function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){saveKind='session';saveMessage=store.message;}}
 async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}

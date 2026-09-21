@@ -66,7 +66,10 @@ export function decodeSave(raw: string): GameState | null {
   if (mode === 'summary' && !summary) return null;
   if (mode !== 'summary' && summary) return null;
   if (mode === 'home' && (Math.abs(value.homePosition.x as number) > 8 || Math.abs(value.homePosition.z as number) > 6)) return null;
-  const player: Player = { position: { ...value.player.position } as Vec3, yaw: value.player.yaw as number, pitch: value.player.pitch as number, speed: value.player.speed as number, throttle: value.player.throttle as number, hover: value.player.hover, velocity: { ...value.player.velocity } as Vec3, brakeHold: value.player.brakeHold === true };
+  const player: Player = { position: { ...value.player.position } as Vec3, yaw: value.player.yaw as number, pitch: value.player.pitch as number, speed: value.player.speed as number, throttle: value.player.throttle as number, hover: false, velocity: { ...value.player.velocity } as Vec3, brakeHold: value.player.brakeHold === true };
+  // A drop-freeze hover pin must never survive a reload: it held the drone
+  // still during the 0.9 s landing animation, and a save taken with it set
+  // would otherwise restore a drone pinned at speed 0 with no way to move.
   const state = { mode, player, profile, run, paused: value.paused, pauseReason: value.pauseReason as string, message: value.message as string, tutorialStage: value.tutorialStage as number, homePosition: { x: value.homePosition.x as number, z: value.homePosition.z as number }, homeFacing: homeFacing as number, homePanel, summary, revision: value.revision as number } as GameState;
   // A wall-clock gap must never advance a shift.  Resume interactive work explicitly.
   // A mid-drop save never resumes mid-animation: the drop was committed before

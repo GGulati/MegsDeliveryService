@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { touchControlsFor, touchControlsVisible } from '../src/touch-controls';
+import { touchJoystickEnabled, touchControlsVisible } from '../src/touch-controls';
 import type { HomePanel, Mode } from '../src/types';
 
 const panels: HomePanel[] = ['none', 'jobs', 'brooms', 'decor', 'cat'];
@@ -29,11 +29,11 @@ test('touch layer hides on title, offers, and summary', () => {
   }
 });
 
-test('per-screen control sets: flight/tutorial get both, home gets joystick only', () => {
-  assert.deepEqual([...touchControlsFor('flight')], ['joystick', 'throttle']);
-  assert.deepEqual([...touchControlsFor('tutorial')], ['joystick', 'throttle']);
-  assert.deepEqual([...touchControlsFor('home')], ['joystick']);
+test('floating stick exists on the touch flight screens, nowhere else', () => {
+  for (const mode of ['flight', 'tutorial', 'home'] as Mode[]) {
+    assert.equal(touchJoystickEnabled(mode), true, mode);
+  }
   for (const mode of ['title', 'offers', 'summary'] as Mode[]) {
-    assert.deepEqual([...touchControlsFor(mode)], [], mode);
+    assert.equal(touchJoystickEnabled(mode), false, mode);
   }
 });

@@ -1,24 +1,18 @@
 import type { GameState, HomePanel, Mode } from './types';
 
-// The touch layer (joystick + throttle) as a shared component, owned in one
-// place and usable by every game screen. It owns its DOM, its visibility, and
-// which physical controls each screen gets. Input keeps sampling the same
-// #joystick / #throttle elements, so its public API is unchanged.
+// The touch layer (floating joystick) as a shared component, owned in one
+// place and usable by every game screen. It owns its DOM and its visibility;
+// Input owns the floating-stick behavior itself (spawn position under the
+// finger, drag tracking, release-to-brake).
 
-export type TouchControl = 'joystick' | 'throttle';
-
-// Per-screen configuration, as data. The home room is joystick-only: the
-// throttle slider drives flight speed and does nothing while walking, so a
-// visible-but-dead slider there would be worse than none.
-const CONTROLS_BY_MODE: Record<Mode, readonly TouchControl[]> = {
-  title: [],
-  tutorial: ['joystick', 'throttle'],
-  flight: ['joystick', 'throttle'],
-  offers: [],
-  home: ['joystick'],
-  summary: [],
-};
-export function touchControlsFor(mode: Mode): readonly TouchControl[] { return CONTROLS_BY_MODE[mode]; }
+// Whether the floating stick exists on a given screen. The stick is the
+// only touch flight control (it steers, climbs, and drives — releasing it
+// brakes), so there is nothing per-screen to configure beyond this on/off;
+// whether it is shown at a given moment (unpaused, no panel open) is owned
+// by touchControlsVisible below.
+export function touchJoystickEnabled(mode: Mode): boolean {
+  return mode === 'tutorial' || mode === 'flight' || mode === 'home';
+}
 
 // Single source of truth for touch-layer visibility. Pure, so it is covered
 // by unit tests (tests/touch-controls.test.ts) instead of ad-hoc hidden
@@ -31,25 +25,21 @@ export function touchControlsVisible(mode: Mode, paused: boolean, homePanel: Hom
 
 export class TouchControls {
   private root: HTMLElement;
-  private joystick: HTMLElement;
-  private throttleLabel: HTMLElement;
   constructor(parent: HTMLElement) {
     this.root = document.createElement('div');
     this.root.className = 'touch-controls';
     this.root.id = 'touch-controls';
-    this.root.innerHTML = `<div id="joystick" class="joystick"><i></i><span>steer</span></div><label class="throttle-label" id="throttle-label">Speed <input id="throttle" type="range" min="-1" max="1" value="0" step=".05"></label>`;
+    this.root.innerHTML = '<div id="joystick" class="joystick" hidden><i></i></div>';
     // Structural stacking: construct this component after every screen panel
-    // (see main.ts) so it is last in DOM order, and it carries its own
-    // z-index in style.css — no panel can sit on top of the joystick and
-    // swallow its touches again.
+    // (see main.ts) so it is last in DOM order. The stick itself floats on
+    // the canvas below the panels (see Input.bindTouch); this layer only
+    // carries the stick visual.
     parent.append(this.root);
-    this.joystick = this.root.querySelector<HTMLElement>('#joystick')!;
-    this.throttleLabel = this.root.querySelector<HTMLElement>('#throttle-label')!;
   }
   render(state: GameState): void {
     this.root.hidden = !touchControlsVisible(state.mode, state.paused, state.homePanel);
-    const set = touchControlsFor(state.mode);
-    this.joystick.hidden = !set.includes('joystick');
-    this.throttleLabel.hidden = !set.includes('throttle');
+    // The joystick floats: Input shows it at the touch point while the stick
+    // is held and hides it on release, so render() leaves its own visibility
+    // alone and only gates the layer.
   }
 }
