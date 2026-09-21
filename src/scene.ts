@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
-import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, glowColumnTarget } from './simulation';
+import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
@@ -252,8 +252,10 @@ export class GameRenderer {
    * once — per-frame work is a visibility flag and one uniform. */
   private makeGlowColumn(): void {
     const height = 90;
+    // The outer layer's widest point is the shared arrival radius: the
+    // visible halo width and the simulation's eligible zone are one value.
     const layers = [
-      { rTop: 3.6, rBottom: 2.4, opacity: .2 },
+      { rTop: ARRIVAL_RADIUS, rBottom: 2.4, opacity: .2 },
       { rTop: 1.7, rBottom: 1.1, opacity: .32 },
     ];
     for (const layer of layers) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, toggleHover, HALO_FADE_SECONDS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, toggleHover, HALO_FADE_SECONDS, ARRIVAL_RADIUS } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -370,6 +370,40 @@ test('throttle input during the halo fade cancels the auto-drop', () => {
   step(state, { turn: 0, climb: 0, throttle: 1 }, 0.1);
   assert.equal(state.haloFade, 0, 'throttle input cancels the pending auto-drop');
   assert.equal(state.drop, null, 'cancelled fade must not commit a drop');
+});
+
+test('auto-drop fires near the visible halo edge at high altitude', () => {
+  const state = createState(); startRun(state, 5);
+  state.player.position = { x: CAFE.position.x + (ARRIVAL_RADIUS - 0.2), y: CAFE.position.y + 80, z: CAFE.position.z };
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  stepMany(state, HALO_FADE_SECONDS + 0.5);
+  assert.ok(state.drop, 'just inside the halo circle should auto-drop even at high altitude');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
+});
+
+test('no auto-drop just outside the visible halo circle', () => {
+  const state = createState(); startRun(state, 5);
+  state.player.position = { x: CAFE.position.x + (ARRIVAL_RADIUS + 0.2), y: CAFE.position.y + 40, z: CAFE.position.z };
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  stepMany(state, 3);
+  assert.equal(state.haloFade, 0, 'no halo fade just outside the halo circle');
+  assert.equal(state.drop, null, 'no drop just outside the halo circle');
+});
+
+test('payout is the same at any altitude', () => {
+  for (const height of [30, 80]) {
+    const state = createState(); startRun(state, 5);
+    above(state, 'harbor-cafe', height);
+    state.player.hover = false; state.player.throttle = 0;
+    const payout = state.run!.job!.payout;
+    stepMany(state, HALO_FADE_SECONDS + 2);
+    finishDrop(state);
+    assert.equal(state.run!.deliveries, 1, `delivery at ${height}m should complete`);
+    assert.equal(state.run!.earnings, payout, `earnings at ${height}m should equal the flat payout`);
+  }
 });
 
 test('aborting the fade buys a re-arm delay before it can restart', () => {

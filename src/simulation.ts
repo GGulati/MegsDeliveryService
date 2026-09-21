@@ -32,6 +32,12 @@ const AUTO_BRAKE_HOLD_RADIUS = 2;
 const INPUT_DEADZONE = 0.05;
 /** The drone must be at most this slow (m/s) for the auto-drop to fire. */
 const AUTO_DROP_MAX_SPEED = 0.5;
+/** The eligible drop zone is the full visible halo circle: the delivery
+ * column's horizontal radius in meters. The glow column is rendered with
+ * this same value as its widest point, so what the player sees as the
+ * halo's width is exactly what the simulation accepts — the whole halo
+ * circle counts, not just the thin beam, and not a wider invisible area. */
+export const ARRIVAL_RADIUS = 3.6;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
@@ -80,7 +86,7 @@ export function nearestStop(state: GameState): Stop | undefined {
     const dz = player.position.z - stop.position.z;
     // The whole column above the pad is eligible: horizontal position is what
     // matters, not precise altitude. Column is column — no height bonus.
-    return Math.hypot(dx, dz) <= 7 && player.position.y >= stop.position.y;
+    return Math.hypot(dx, dz) <= ARRIVAL_RADIUS && player.position.y >= stop.position.y;
   });
 }
 
