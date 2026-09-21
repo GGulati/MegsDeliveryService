@@ -36,7 +36,7 @@ export class TouchControls {
     this.root = document.createElement('div');
     this.root.className = 'touch-controls';
     this.root.id = 'touch-controls';
-    this.root.innerHTML = '<div id="joystick" class="joystick" hidden><i></i><span>steer</span></div>';
+    this.root.innerHTML = '<div id="joystick" class="joystick" hidden><i></i></div>';
     // Structural stacking: construct this component after every screen panel
     // (see main.ts) so it is last in DOM order. The stick itself floats on
     // the canvas below the panels (see Input.bindTouch); this layer only
