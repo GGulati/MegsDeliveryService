@@ -115,9 +115,12 @@ function beginDrop(state: GameState, stop: Stop): void {
   state.revision++;
 }
 
-/** Holds Meg still while a committed drop lands. */
+/** Holds Meg still while a committed drop lands. The throttle trim is a pilot
+ * setting, not motion state, so the drop leaves it alone — resuming flight
+ * afterwards restores the pre-drop cruise speed instead of stranding the
+ * drone at zero. */
 function freezeForDrop(state: GameState): void {
-  state.player.speed = 0; state.player.throttle = 0; state.player.hover = true;
+  state.player.speed = 0; state.player.hover = true;
   state.player.velocity = { x: 0, y: 0, z: 0 };
 }
 
@@ -285,6 +288,15 @@ function stickActive(input: FlightInput): boolean {
     || Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
 }
 
+/** Stick input that blocks or cancels the auto-drop: horizontal maneuvering
+ * (turn or throttle trim). Climb never blocks it — riding the pillar up or
+ * down at low horizontal speed is exactly when the drop should happen, at
+ * any height. Fast flyovers are still excluded by the speed gate. */
+function dropInputBlocked(input: FlightInput): boolean {
+  return Math.abs(clamp(input.turn, -1, 1)) > INPUT_DEADZONE
+    || Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
+}
+
 /** Whether the drone is carrying a parcel it could drop at this stop. */
 function carryingParcel(state: GameState, stop: Stop): boolean {
   // The tutorial's practice parcel only becomes droppable once the hover
@@ -293,13 +305,15 @@ function carryingParcel(state: GameState, stop: Stop): boolean {
   return state.run?.job?.to === stop.id;
 }
 
-/** Starts the pre-drop halo fade once the drone is at rest in the active
- * destination's column with a parcel aboard. Fires only with hands off the
- * stick, so a fast flyover never triggers it. */
+/** Starts the pre-drop halo fade once the drone is slow inside the active
+ * destination's column with a parcel aboard. Climb input never blocks it —
+ * descending or ascending through the pillar is when the drop should happen,
+ * at any height — but horizontal stick input does, and fast flyovers never
+ * trigger it via the speed gate. */
 function maybeAutoDrop(state: GameState, input: FlightInput): void {
   if (state.drop || state.haloFade > 0) return;
   if (state.mode !== 'tutorial' && state.mode !== 'flight') return;
-  if (stickActive(input)) return;
+  if (dropInputBlocked(input)) return;
   if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
   const target = glowColumnTarget(state);
   const stop = target ? nearestStop(state) : undefined;
@@ -340,11 +354,11 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const seconds = Math.max(0, dt);
   // An auto-drop pending: the halo fades out first, and only then does the
   // parcel commit. The run clock and flight physics freeze mid-fade — pausing
-  // freezes it too, since step returns early while paused — and any stick
-  // input cancels the pending drop.
+  // freezes it too, since step returns early while paused — and horizontal
+  // stick input cancels the pending drop (climb never does).
   if (state.haloFade > 0) {
     state.haloFade = Math.max(0, state.haloFade - seconds);
-    if (stickActive(input)) state.haloFade = 0;
+    if (dropInputBlocked(input)) state.haloFade = 0;
     else if (state.haloFade === 0) commitAutoDrop(state);
     state.revision++;
     if (state.haloFade > 0 || state.drop) return;

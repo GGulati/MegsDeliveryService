@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, toggleHover, HALO_FADE_SECONDS } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -196,7 +196,9 @@ test('pause freezes mid-brake', () => {
 test('manual drop button still commits immediately', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
+  state.player.throttle = 11;
   interact(state);
+  assert.equal(state.player.throttle, 11, 'manual drop preserves the throttle trim');
   assert.equal(state.haloFade, 0, 'manual drop skips the fade');
   assert.ok(state.drop, 'manual drop commits at press');
   assert.equal(glowColumnTarget(state), undefined, 'halo hides as soon as the drop commits');
@@ -262,4 +264,78 @@ test('second delivery auto-drops after choosing from offers', () => {
   stepMany(state, 14);
   finishDrop(state);
   assert.equal(state.run!.deliveries, 2, 'second delivery should complete hands-off');
+});
+
+test('auto-drop fires while descending through the pillar', () => {
+  const state = createState(); startRun(state, 7);
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  stepMany(state, 3, { turn: 0, climb: -1, throttle: 0 });
+  assert.equal(state.run!.deliveries, 1, 'descending through the pillar should drop the parcel');
+});
+
+test('auto-drop fires while ascending through the pillar', () => {
+  const state = createState(); startRun(state, 7);
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 20, z: CAFE.position.z };
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  stepMany(state, 3, { turn: 0, climb: 1, throttle: 0 });
+  assert.equal(state.run!.deliveries, 1, 'ascending through the pillar should drop the parcel');
+});
+
+test('turn input still blocks the auto-drop', () => {
+  const state = createState(); startRun(state, 7);
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  stepMany(state, 3, { turn: 1, climb: 0, throttle: 0 });
+  assert.equal(state.haloFade, 0, 'holding turn should block the auto-drop');
+  assert.equal(state.run!.deliveries, 0);
+});
+
+test('climb input does not cancel a pending drop', () => {
+  const state = createState(); startRun(state, 7);
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
+  state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  step(state, idle, 1 / 60);
+  assert.ok(state.haloFade > 0, 'fade should start hands-off');
+  stepMany(state, 2, { turn: 0, climb: -1, throttle: 0 });
+  assert.equal(state.run!.deliveries, 1, 'holding descend should not cancel the pending drop');
+});
+
+test('throttle trim survives the drop and restores speed on resume', () => {
+  const state = createState(); startRun(state, 7);
+  approach(state, CAFE, 40, 14);
+  stepMany(state, 12);
+  for (let i = 0; i < 200 && (state.haloFade > 0 || state.drop); i++) step(state, idle, 1 / 60);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
+  assert.equal(state.player.throttle, 14, 'trim should survive the drop');
+  chooseJob(state, 0);
+  toggleHover(state); // resume flight
+  stepMany(state, 3); // no throttle input held
+  assert.ok(state.player.speed > 8, `speed should recover toward trim, got ${state.player.speed}`);
+});
+
+test('no auto-drop on a fast flyover with only climb held', () => {
+  const state = createState(); startRun(state, 5);
+  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z + 30 };
+  state.player.yaw = 0;
+  state.player.speed = 12; state.player.throttle = 12; state.player.hover = false;
+  state.player.velocity = { x: 0, y: 0, z: -12 };
+  stepMany(state, 2, { turn: 0, climb: 1, throttle: 0 });
+  assert.equal(state.haloFade, 0, 'no halo fade on a fast flyover');
+  assert.equal(state.drop, null, 'no drop on a fast flyover');
+  assert.equal(state.run!.earnings, 0);
+});
+
+test('throttle input during the halo fade cancels the auto-drop', () => {
+  const state = createState(); startRun(state, 5);
+  above(state, 'harbor-cafe', 40);
+  step(state, idle, 0.1);
+  assert.ok(state.haloFade > 0, 'fade should be in progress');
+  step(state, { turn: 0, climb: 0, throttle: 1 }, 0.1);
+  assert.equal(state.haloFade, 0, 'throttle input cancels the pending auto-drop');
+  assert.equal(state.drop, null, 'cancelled fade must not commit a drop');
 });
