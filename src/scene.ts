@@ -322,7 +322,10 @@ export class GameRenderer {
     const k = reduced ? 1 : Math.min(1, drop.t / DROP_ANIM_SECONDS);
     const ease = k * k;
     const p = state.player.position;
-    const fromY = p.y - 1.4, toY = stop.position.y + .7;
+    const toY = stop.position.y + .7;
+    // Meg's descent releases near the pad, but a low manual drop can commit
+    // below release height — clamp so the parcel never rises.
+    const fromY = Math.max(p.y - 1.4, toY);
     this.dropParcel.position.set(
       p.x + (stop.position.x - p.x) * ease,
       fromY + (toY - fromY) * ease,

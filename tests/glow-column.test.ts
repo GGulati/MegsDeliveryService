@@ -11,8 +11,10 @@ function land(state: ReturnType<typeof createState>, id: string): void {
   state.player.hover = true;
 }
 
-/** Steps until a committed drop's landing animation resolves. */
+/** Steps through a pending descent (if any), then until a committed drop's
+ * landing animation resolves. */
 function finishDrop(state: ReturnType<typeof createState>): void {
+  for (let i = 0; i < 3600 && state.descent && !state.drop; i++) step(state, input, 1 / 60);
   for (let i = 0; i < 120 && state.drop; i++) step(state, input, 1 / 60);
   assert.equal(state.drop, null, 'committed drop should resolve');
 }

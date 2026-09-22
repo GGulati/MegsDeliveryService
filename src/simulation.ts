@@ -19,6 +19,12 @@ export const DROP_ANIM_SECONDS = 0.9;
 /** How long the glow column takes to fade out before an auto-committed drop.
  * The halo goes away first; only then does the parcel leave Meg's hands. */
 export const HALO_FADE_SECONDS = 0.45;
+/** Meg descends to this height (m) above the pad before the parcel drops the
+ * last stretch. The parcel detaches 1.4 m below her, so the visible fall is
+ * ~1.4 m — short, centered in frame, and unmistakably a drop-off. */
+export const DESCENT_RELEASE_HEIGHT = 3.5;
+/** Auto-descent vertical speed (m/s): fast when high, easing out near the pad. */
+const DESCENT_SPEED_MAX = 8, DESCENT_SPEED_MIN = 2;
 /** Arrival auto-brake profile (m/s^2): shapes the sqrt(2·a·d) speed-cap curve
  * on approach. The drone decelerates toward the cap at the hover-brake rate,
  * so it rides under the curve and comes to rest at the destination instead
@@ -58,7 +64,7 @@ export function createState(): GameState {
   return {
     mode: 'title', player: createPlayer(),
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
-    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, haloFade: 0, fadeSnap: null, fadeCooldown: 0,
+    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, descent: null, haloFade: 0, fadeSnap: null, fadeCooldown: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
     // Set once at boot by main.ts from matchMedia('(pointer: coarse)').
     // Lives on state (not read from window inside the simulation) so the
@@ -70,7 +76,7 @@ export function createState(): GameState {
 
 export function startTutorial(state: GameState): void {
   state.mode = 'tutorial'; state.paused = false; state.pauseReason = '';
-  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
+  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.descent = null; state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   state.message = 'Steer toward the glowing Harbor Cafe pad.'; state.revision++;
 }
 
@@ -102,23 +108,23 @@ export function nearestStop(state: GameState): Stop | undefined {
 export function interact(state: GameState): void {
   if (state.paused) return;
   if (state.mode === 'home') { interactHome(state); return; }
-  if (state.drop || state.haloFade > 0) return;
+  if (state.drop || state.descent || state.haloFade > 0) return;
   if (state.mode === 'tutorial') {
     if (nearestStop(state)?.id !== 'harbor-cafe') return;
     // The practice drop lands like a real one, then practice completes.
-    beginDrop(state, STOPS.find((stop) => stop.id === 'harbor-cafe')!);
+    beginDescent(state, STOPS.find((stop) => stop.id === 'harbor-cafe')!);
     return;
   }
   if (state.mode !== 'flight' || !state.run) return;
   if (state.run.elapsed >= RUN_SECONDS) { settleRun(state, false); return; }
   const stop = nearestStop(state);
   if (!stop) return;
-  beginDrop(state, stop);
+  beginDescent(state, stop);
 }
 
-/** Commits a parcel drop right now: the manual path. The halo hides the
- * moment the drop commits; the parcel lands during the 0.9 s animation and
- * the delivery (or banking) resolves when it reaches the pad. */
+/** Commits the parcel drop once the descent reaches release height: the halo
+ * hides the moment the drop commits; the parcel lands during the 0.9 s
+ * animation and the delivery (or banking) resolves when it reaches the pad. */
 function beginDrop(state: GameState, stop: Stop): void {
   // The approach is over once the drop commits: release the sticky brake hold
   // (flight physics freezes during the drop animation, so the step logic that
@@ -203,7 +209,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
   };
   state.summary = null;
   state.homePanel = 'none';
-  state.drop = null;
+  state.drop = null; state.descent = null;
   state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   state.mode = 'flight';
   state.message = 'First parcel: Harbor Cafe.';
@@ -236,7 +242,7 @@ export function returnHome(state: GameState): void {
 export function settleRun(state: GameState, success: boolean): void {
   const run = state.run;
   if (!run) return;
-  state.drop = null;
+  state.drop = null; state.descent = null;
   state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
   const earnings = success ? run.earnings : 0;
   state.summary = { success, earnings, deliveries: run.deliveries };
@@ -275,7 +281,7 @@ function stopName(id: string): string { return STOPS.find((stop) => stop.id === 
  * It also hides the moment any drop commits, so the halo is gone before the
  * parcel's landing animation starts. */
 export function glowColumnTarget(state: GameState): Stop | undefined {
-  if (state.drop) return undefined;
+  if (state.drop || state.descent) return undefined;
   if (state.mode !== 'tutorial' && state.mode !== 'flight') return undefined;
   return getTarget(state);
 }
@@ -365,7 +371,7 @@ function autoDropEligible(state: GameState, stop: Stop): boolean {
  * automatically; only a fresh maneuver during the fade aborts it. Fast
  * flyovers never trigger it via the speed gate. */
 function maybeAutoDrop(state: GameState, input: FlightInput): void {
-  if (state.drop || state.haloFade > 0 || state.fadeCooldown > 0) return;
+  if (state.drop || state.descent || state.haloFade > 0 || state.fadeCooldown > 0) return;
   if (state.mode !== 'tutorial' && state.mode !== 'flight') return;
   if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
   const target = glowColumnTarget(state);
@@ -375,15 +381,30 @@ function maybeAutoDrop(state: GameState, input: FlightInput): void {
   state.fadeSnap = { turn: clamp(input.turn, -1, 1), throttle: clamp(input.throttle, -1, 1) };
 }
 
-/** Commits the pending auto-drop once the halo has faded, re-verifying the
- * drone is still eligible. Returns whether a drop was committed. */
-function commitAutoDrop(state: GameState): boolean {
+/** Begins the descent for a pending auto-drop once the halo has faded,
+ * re-verifying the drone is still eligible. */
+function commitAutoDescent(state: GameState): void {
   const target = glowColumnTarget(state);
   const stop = target ? nearestStop(state) : undefined;
-  if (!stop || stop.id !== target!.id || !autoDropEligible(state, stop)) return false;
-  if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return false;
-  beginDrop(state, stop);
-  return true;
+  if (!stop || stop.id !== target!.id || !autoDropEligible(state, stop)) return;
+  if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
+  beginDescent(state, stop);
+}
+
+/** Starts the descent: Meg lowers herself to just above the pad, and only
+ * then does the parcel drop the last stretch. Manual presses and the auto
+ * path both land this way — every delivery shows the descent. The wave-off
+ * window was the fade; once descending, the delivery is committed. */
+function beginDescent(state: GameState, stop: Stop): void {
+  state.descent = { stopId: stop.id };
+  state.fadeCooldown = 0;
+  // The approach is over: release the sticky brake hold and hold Meg still
+  // while she descends (flight physics freezes through the descent, so the
+  // step logic that normally clears it will not run).
+  state.player.brakeHold = false;
+  freezeForDrop(state);
+  state.message = 'Descending…';
+  state.revision++;
 }
 
 export function step(state: GameState, input: FlightInput, dt: number): void {
@@ -417,9 +438,37 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     if (freshManeuver(input, state.fadeSnap)) {
       state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = FADE_REARM_SECONDS;
     }
-    else if (state.haloFade === 0) { state.fadeSnap = null; commitAutoDrop(state); }
+    else if (state.haloFade === 0) { state.fadeSnap = null; commitAutoDescent(state); }
     state.revision++;
-    if (state.haloFade > 0 || state.drop) return;
+    if (state.haloFade > 0 || state.drop || state.descent) return;
+  }
+  // An auto-descent in progress: Meg lowers herself to just above the pad,
+  // then the parcel drops the last stretch. The run clock and flight physics
+  // freeze mid-descent — pausing freezes it too, since step returns early
+  // while paused — and the descent can't be waved off: the fade was the
+  // abort window.
+  if (state.descent) {
+    const stop = STOPS.find((s) => s.id === state.descent!.stopId);
+    if ((state.mode !== 'flight' && state.mode !== 'tutorial') || !stop) {
+      // Defensive-only: unreachable in practice — the clock is frozen and
+      // input ignored mid-descent, so the mode can't change here. Unpin the
+      // hover freeze so Meg never hangs frozen mid-air.
+      state.descent = null;
+      state.player.hover = false;
+    }
+    else {
+      const targetY = stop.position.y + DESCENT_RELEASE_HEIGHT;
+      if (state.player.position.y - targetY <= 0.05) {
+        state.descent = null;
+        beginDrop(state, stop);
+      } else {
+        // Fast when high, gentle near the pad — no long ease-out tail.
+        const vy = Math.min(DESCENT_SPEED_MAX, Math.max(DESCENT_SPEED_MIN, (state.player.position.y - targetY) * 1.5));
+        state.player.position.y = Math.max(targetY, state.player.position.y - vy * seconds);
+        state.revision++;
+      }
+    }
+    return;
   }
   // The clock runs on the offer screen, but that screen intentionally freezes flight input.
   if (state.run && (state.mode === 'flight' || state.mode === 'offers')) {
