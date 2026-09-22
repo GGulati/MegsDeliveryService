@@ -258,6 +258,12 @@ export function getTarget(state: GameState): Stop | undefined {
   return STOPS.find((stop) => stop.id === (state.run!.returning ? 'home' : state.run!.job?.to));
 }
 
+/** Bearing of `to` as seen from `from`, relative to facing `yaw`, in degrees.
+ * 0 means straight ahead, positive is clockwise — the HUD compass convention. */
+export function relativeBearing(from: { x: number; z: number }, to: { x: number; z: number }, yaw: number): number {
+  return (Math.atan2(to.x - from.x, -(to.z - from.z)) - yaw) * 180 / Math.PI;
+}
+
 function stopName(id: string): string { return STOPS.find((stop) => stop.id === id)?.name ?? id; }
 
 /** The active destination the glow column should mark: the live delivery's

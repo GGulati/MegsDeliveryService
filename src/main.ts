@@ -1,5 +1,5 @@
 import './style.css';
-import { createState, startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget } from './simulation';
+import { createState, startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget, relativeBearing } from './simulation';
 import { STOPS } from './world';
 import { GameRenderer } from './scene';
 import { UI } from './ui';
@@ -97,14 +97,10 @@ function draw(dt: number) {
   if (!renderer || contextLost) return;
   renderer.render(state, dt, { reducedMotion, lowQuality });
   const target = getTarget(state) ?? STOPS[0];
-  const home = STOPS[0].position;
-  const dx = home.x - state.player.position.x, dz = home.z - state.player.position.z;
-  const homeDistance = Math.hypot(dx, dz);
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
-    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined,
-    homeBearing: (Math.atan2(dx,-dz)-state.player.yaw)*180/Math.PI,homeDistance,homeMinimum: homeDistance/(18*(1+state.profile.upgrades.speed*.1)),
-    targetAltitude: target.position.y-state.player.position.y });
+    targetBearing: relativeBearing(state.player.position, target.position, state.player.yaw),
+    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
