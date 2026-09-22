@@ -485,21 +485,35 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const horizontal = { x: Math.sin(player.yaw), z: -Math.cos(player.yaw) };
   const verticalSpeed = player.hover ? 0 : climb * Math.max(player.speed, 3) * 0.7;
   const delta = { x: horizontal.x * player.speed * seconds, y: verticalSpeed * seconds, z: horizontal.z * player.speed * seconds };
+  const fromX = player.position.x, fromY = player.position.y, fromZ = player.position.z;
+  // A hit used to discard the whole frame's motion, so every wall or
+  // roof-edge contact was a dead stop — which also made turning feel frozen
+  // while pinned against a building. Now the into-surface component stops at
+  // the contact point but the tangential remainder still applies, so a
+  // glancing hit slides along the surface. One sweep is enough: the slide
+  // runs parallel to the hit face (it can't enter that box), and the boxes
+  // are far enough apart that a single frame's remainder can't reach another.
   const hit = sweep(player.position, delta);
-  if (hit) {
+  if (hit && (hit.normal.x || hit.normal.y || hit.normal.z)) {
     const safeT = Math.max(0, hit.t - 0.0001);
     player.position.x += delta.x * safeT; player.position.y += delta.y * safeT; player.position.z += delta.z * safeT;
-    if (hit.normal.x) delta.x = 0;
-    if (hit.normal.y) delta.y = 0;
-    if (hit.normal.z) delta.z = 0;
-  } else {
+    const rest = 1 - safeT;
+    if (!hit.normal.x) player.position.x += delta.x * rest;
+    if (!hit.normal.y) player.position.y += delta.y * rest;
+    if (!hit.normal.z) player.position.z += delta.z * rest;
+  } else if (!hit) {
     player.position.x += delta.x; player.position.y += delta.y; player.position.z += delta.z;
   }
+  // else: degenerate contact with no surface normal (already inside a box) —
+  // hold still rather than guess a slide direction.
   player.position.x = clamp(player.position.x, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   player.position.y = clamp(player.position.y, MIN_ALTITUDE, MAX_ALTITUDE);
   player.position.z = clamp(player.position.z, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
-  player.velocity = { x: delta.x / seconds, y: delta.y / seconds, z: delta.z / seconds };
-  if (state.mode === 'tutorial' && state.tutorialStage === 0 && length(delta) > 0.1) {
+  // Velocity is what actually happened, not what was attempted: pinned
+  // against a wall it reads ~0 instead of the full into-wall delta.
+  player.velocity = { x: (player.position.x - fromX) / seconds, y: (player.position.y - fromY) / seconds, z: (player.position.z - fromZ) / seconds };
+  const moved = length({ x: player.position.x - fromX, y: player.position.y - fromY, z: player.position.z - fromZ });
+  if (state.mode === 'tutorial' && state.tutorialStage === 0 && moved > 0.1) {
     // Stage 0 needs real motion, not turning in place: stage 1's lesson is
     // the stop, and its gate (speed near zero) must not fire on the same
     // frame the player first twitches the stick.
