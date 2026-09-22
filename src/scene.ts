@@ -14,6 +14,8 @@ export class GameRenderer {
   private effects: FlightEffects;
   private hero = new THREE.Group();
   private dropParcel = new THREE.Group();
+  private dropPos = new THREE.Vector3();
+  private dropLook: THREE.Vector3 | null = null;
   private glowColumn = new THREE.Group();
   private glowMats: THREE.ShaderMaterial[] = [];
   private lastGlowStopId: string | undefined;
@@ -311,23 +313,30 @@ export class GameRenderer {
     this.dropParcel.add(box, ribbonX, ribbonZ, bow);
     this.dropParcel.visible = false;
   }
-  private updateDropParcel(state: GameState, step: number, reduced: boolean): void {
+  /** Where the falling parcel is right now, shared by the parcel mesh and the
+   * drop-tracking camera. Returns false when no parcel is falling. */
+  private dropParcelPosition(state: GameState, out: THREE.Vector3, k: number): boolean {
     const drop = state.drop;
     const stop = drop ? STOPS.find((s) => s.id === drop.stopId) : undefined;
-    const show = !!drop && !!stop && drop.parcel;
-    this.dropParcel.visible = show;
-    if (!show || !drop || !stop) return;
+    if (!drop || !stop || !drop.parcel) return false;
     // The player is frozen at the drop point, so the parcel falls from Meg's
     // position straight to the pad, accelerating as it goes.
-    const k = reduced ? 1 : Math.min(1, drop.t / DROP_ANIM_SECONDS);
     const ease = k * k;
     const p = state.player.position;
     const fromY = p.y - 1.4, toY = stop.position.y + .7;
-    this.dropParcel.position.set(
+    out.set(
       p.x + (stop.position.x - p.x) * ease,
       fromY + (toY - fromY) * ease,
       p.z + (stop.position.z - p.z) * ease,
     );
+    return true;
+  }
+  private updateDropParcel(state: GameState, step: number, reduced: boolean): void {
+    const k = reduced ? 1 : Math.min(1, (state.drop?.t ?? 0) / DROP_ANIM_SECONDS);
+    const show = this.dropParcelPosition(state, this.dropPos, k);
+    this.dropParcel.visible = show;
+    if (!show) return;
+    this.dropParcel.position.copy(this.dropPos);
     if (!reduced) this.dropParcel.rotation.y += step * 4;
   }
   private updateCamera(state: GameState, player: THREE.Vector3, step: number, reduced: boolean, snap: boolean): void {
@@ -338,6 +347,21 @@ export class GameRenderer {
       this.blockers.forEach(blocker => blocker.updateWorldMatrix(true, false));
       this.ray.set(start,dir.normalize());const hit=this.ray.intersectObjects(this.blockers,false)[0];if(hit&&hit.distance<dist)wanted.copy(start).add(dir.setLength(Math.max(7,hit.distance-1)));}
     // Translation tracks the broom; only heading eases. The horizon never banks with it.
+    // During a parcel drop the camera tilts down to follow the fall: without
+    // this a high drop leaves the frame halfway down and reads as the parcel
+    // vanishing. The track eases in from the current framing so there is no snap.
+    if (!reduced && state.drop && state.drop.parcel
+        && this.dropParcelPosition(state, this.dropPos, Math.min(1, state.drop.t / DROP_ANIM_SECONDS))) {
+      if (!this.dropLook) this.dropLook = look.clone();
+      if (step > 0) this.dropLook.lerp(this.dropPos, 1 - Math.exp(-10 * step));
+      look = this.dropLook;
+    } else if (this.dropLook) {
+      // Release: ease back to the normal framing over ~0.25 s instead of
+      // cutting on the frame the drop resolves, mirroring the ease-in above.
+      if (step > 0) this.dropLook.lerp(look, 1 - Math.exp(-16 * step));
+      if (this.dropLook.distanceTo(look) < 0.25) this.dropLook = null;
+      else look = this.dropLook;
+    }
     this.camPos.copy(wanted);this.camLook.copy(look);this.camera.position.copy(this.camPos);this.camera.up.set(0,1,0);this.camera.lookAt(this.camLook);
   }
 }
