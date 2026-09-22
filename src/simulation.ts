@@ -23,6 +23,12 @@ export const HALO_FADE_SECONDS = 0.45;
  * last stretch. The parcel detaches 1.4 m below her, so the visible fall is
  * ~1.4 m — short, centered in frame, and unmistakably a drop-off. */
 export const DESCENT_RELEASE_HEIGHT = 3.5;
+/** Angular speed of the landing spiral around the pad (radians/second). */
+export const DESCENT_SPIRAL_OMEGA = 2.0;
+/** Minimum orbit radius so a near-center arrival still shows a little spiral. */
+export const DESCENT_SPIRAL_MIN_RADIUS = 3.0;
+/** Seconds over which the spiral ramps out to its full radius (no popping). */
+export const DESCENT_SPIRAL_RAMP_SECONDS = 0.8;
 /** Auto-descent vertical speed (m/s): fast when high, easing out near the pad. */
 const DESCENT_SPEED_MAX = 8, DESCENT_SPEED_MIN = 2;
 /** Arrival auto-brake profile (m/s^2): shapes the sqrt(2·a·d) speed-cap curve
@@ -396,7 +402,15 @@ function commitAutoDescent(state: GameState): void {
  * path both land this way — every delivery shows the descent. The wave-off
  * window was the fade; once descending, the delivery is committed. */
 function beginDescent(state: GameState, stop: Stop): void {
-  state.descent = { stopId: stop.id };
+  const dx = state.player.position.x - stop.position.x;
+  const dz = state.player.position.z - stop.position.z;
+  state.descent = {
+    stopId: stop.id,
+    startY: state.player.position.y,
+    angle: Math.atan2(dz, dx),
+    radius0: Math.hypot(dx, dz),
+    t: 0,
+  };
   state.fadeCooldown = 0;
   // The approach is over: release the sticky brake hold and hold Meg still
   // while she descends (flight physics freezes through the descent, so the
@@ -442,7 +456,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     state.revision++;
     if (state.haloFade > 0 || state.drop || state.descent) return;
   }
-  // An auto-descent in progress: Meg lowers herself to just above the pad,
+  // An auto-descent in progress: Meg spirals down to just above the pad,
   // then the parcel drops the last stretch. The run clock and flight physics
   // freeze mid-descent — pausing freezes it too, since step returns early
   // while paused — and the descent can't be waved off: the fade was the
@@ -462,9 +476,22 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
         state.descent = null;
         beginDrop(state, stop);
       } else {
-        // Fast when high, gentle near the pad — no long ease-out tail.
+        // Witch spiral: Meg circles the pad while sinking, the orbit radius
+        // shrinking to the pad as she nears release height. A near-center
+        // arrival eases out to a visible little spiral instead of popping.
+        const d = state.descent!;
         const vy = Math.min(DESCENT_SPEED_MAX, Math.max(DESCENT_SPEED_MIN, (state.player.position.y - targetY) * 1.5));
         state.player.position.y = Math.max(targetY, state.player.position.y - vy * seconds);
+        d.t += seconds;
+        d.angle += DESCENT_SPIRAL_OMEGA * seconds;
+        const rampT = Math.min(1, d.t / DESCENT_SPIRAL_RAMP_SECONDS);
+        const ramp = rampT * rampT * (3 - 2 * rampT);
+        const rFull = Math.max(d.radius0, DESCENT_SPIRAL_MIN_RADIUS);
+        const rEff = d.radius0 + (rFull - d.radius0) * ramp;
+        const frac = Math.max(0, (state.player.position.y - targetY) / Math.max(0.001, d.startY - targetY));
+        const r = rEff * frac;
+        state.player.position.x = stop.position.x + Math.cos(d.angle) * r;
+        state.player.position.z = stop.position.z + Math.sin(d.angle) * r;
         state.revision++;
       }
     }
