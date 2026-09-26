@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, BAY_SHORE, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
+import { buildBayShape, buildBaySandShape } from './shore';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -132,17 +133,9 @@ export class GameRenderer {
     // Both sit just above the island top so the flat toon shapes merge visually.
     // The mouth opens past the island edge to meet the ocean.
     const sandMat = toon(0xead9a8);
-    const shoreShape = new THREE.Shape(BAY_SHORE.map(([x, z]) => new THREE.Vector2(x, z)));
-    const bayWater = new THREE.Mesh(new THREE.ShapeGeometry(shoreShape), waterMat);
+    const bayWater = new THREE.Mesh(new THREE.ShapeGeometry(buildBayShape()), waterMat);
     bayWater.rotation.x = -Math.PI / 2; bayWater.position.y = .18; g.add(bayWater);
-    // Sand rim: push each shore point outward from the bay centroid for a beach.
-    const cx = BAY_SHORE.reduce((a, p) => a + p[0], 0) / BAY_SHORE.length;
-    const cz = BAY_SHORE.reduce((a, p) => a + p[1], 0) / BAY_SHORE.length;
-    const sandShape = new THREE.Shape(BAY_SHORE.map(([x, z]) => {
-      const dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz) || 1;
-      return new THREE.Vector2(x + (dx / d) * 7, z + (dz / d) * 7);
-    }));
-    const baySand = new THREE.Mesh(new THREE.ShapeGeometry(sandShape), sandMat);
+    const baySand = new THREE.Mesh(new THREE.ShapeGeometry(buildBaySandShape()), sandMat);
     baySand.rotation.x = -Math.PI / 2; baySand.position.y = .165; g.add(baySand);
     // Curving pale paths are tubes so they remain charming from the chase camera.
     // They ring the bay: west loop serves the cottage and bungalow lanes, east loop

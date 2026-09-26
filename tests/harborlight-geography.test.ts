@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay } from '../src/world';
+import { buildBayShape } from '../src/shore';
+import * as THREE from 'three';
 
 // Harborlight geography: the bay is water cutting into the island, every stop
 // sits on land, and every pad sits above its building's roof.
@@ -8,6 +10,30 @@ import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay } from '../src/wo
 test('bay mouth reaches past the island edge to meet the sea', () => {
   // Island radius is 190; the shoreline must poke past it to join the ocean.
   assert.ok(BAY_SHORE.some(([, z]) => z > 189), 'mouth connects to the ocean');
+});
+
+test('the rendered bay shape agrees with isInBay (no mirrored shoreline)', () => {
+  // Regression: ShapeGeometry is built in XY and rendered with rotation.x=-PI/2,
+  // which maps shape-Y to world -Z. If the shape isn't z-negated, the visual bay
+  // mirrors north-south and disagrees with the logic — water under houses.
+  const outline = buildBayShape().getPoints();
+  const inShape = (sx: number, sy: number): boolean => {
+    let inside = false;
+    for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+      const xi = outline[i].x, yi = outline[i].y;
+      const xj = outline[j].x, yj = outline[j].y;
+      if (yi > sy !== yj > sy && sx < ((xj - xi) * (sy - yi)) / (yj - yi) + xi) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  };
+  // Shape-space (x, -z) must match world (x, z) per isInBay.
+  assert.equal(inShape(20, -100), isInBay(20, 100), 'mid-bay water agrees');
+  assert.equal(inShape(20, 0), isInBay(20, 0), 'inner harbor agrees');
+  assert.equal(inShape(-45, -65), isInBay(-45, 65), 'harbor cafe land agrees');
+  assert.equal(inShape(80, -70), isInBay(80, 70), 'marina land agrees');
+  assert.equal(inShape(88, -118), isInBay(88, 118), 'lighthouse land agrees');
 });
 
 test('the bay is a single simple polygon', () => {
