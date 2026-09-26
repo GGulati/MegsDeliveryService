@@ -2,21 +2,27 @@ import * as THREE from 'three';
 import { heightAt } from './terrain';
 
 /** Size of the baked heightmap texture (covers the 440x440 terrain). */
-const HEIGHTMAP_SIZE = 256;
+const HEIGHTMAP_SIZE = 512;
 const WORLD_SIZE = 440;
+/** Height range encoded in the byte texture: [-12, +8] meters. */
+const H_MIN = -12, H_RANGE = 20;
 
-/** Bakes heightAt into a float texture so the water shader can discover depth. */
+/** Bakes heightAt into a byte texture so the water shader can discover depth.
+ *  Uses UnsignedByteType (not FloatType): linear filtering on float textures
+ *  requires OES_texture_float_linear, which is ~unsupported everywhere and
+ *  silently falls back to nearest — the blocky-water bug. Bytes filter universally. */
 function bakeHeightmap(): THREE.DataTexture {
-  const data = new Float32Array(HEIGHTMAP_SIZE * HEIGHTMAP_SIZE);
+  const data = new Uint8Array(HEIGHTMAP_SIZE * HEIGHTMAP_SIZE);
   for (let j = 0; j < HEIGHTMAP_SIZE; j++) {
     for (let i = 0; i < HEIGHTMAP_SIZE; i++) {
-      // Texture v=0 is at z=-220 (after rotateX, plane UVs map accordingly).
       const x = (i / (HEIGHTMAP_SIZE - 1) - 0.5) * WORLD_SIZE;
       const z = (j / (HEIGHTMAP_SIZE - 1) - 0.5) * WORLD_SIZE;
-      data[j * HEIGHTMAP_SIZE + i] = heightAt(x, z);
+      const h = heightAt(x, z);
+      const enc = Math.round(((h - H_MIN) / H_RANGE) * 255);
+      data[j * HEIGHTMAP_SIZE + i] = Math.max(0, Math.min(255, enc));
     }
   }
-  const tex = new THREE.DataTexture(data, HEIGHTMAP_SIZE, HEIGHTMAP_SIZE, THREE.RedFormat, THREE.FloatType);
+  const tex = new THREE.DataTexture(data, HEIGHTMAP_SIZE, HEIGHTMAP_SIZE, THREE.RedFormat, THREE.UnsignedByteType);
   tex.needsUpdate = true;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
@@ -48,7 +54,7 @@ const waterFrag = /* glsl */`
 
   void main() {
     vec2 uv = vWorldXZ / ${WORLD_SIZE}.0 + 0.5;
-    float terrainH = texture2D(uHeightmap, uv).r;
+    float terrainH = texture2D(uHeightmap, uv).r * ${H_RANGE}.0 + (${H_MIN}.0);
     float depth = -terrainH; // water surface at y=0
 
     if (depth < 0.02) discard; // land at/above water — show terrain, not water
