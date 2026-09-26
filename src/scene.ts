@@ -5,6 +5,7 @@ import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget 
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
+import { grainSpeckles, GRAIN_SEED, GRAIN_SIZE } from './grain';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 export class GameRenderer {
@@ -348,5 +349,5 @@ export class GameRenderer {
 
 function toon(color: THREE.ColorRepresentation): THREE.MeshToonMaterial { return new THREE.MeshToonMaterial({color, map: grainTexture(), gradientMap: gradientTexture()}); }
 let grain:THREE.CanvasTexture|undefined, gradient:THREE.CanvasTexture|undefined;
-function grainTexture(): THREE.CanvasTexture { if(grain)return grain;const c=document.createElement('canvas');c.width=c.height=32;const x=c.getContext('2d')!;x.fillStyle='rgba(255,255,255,.9)';x.fillRect(0,0,32,32);for(let i=0;i<110;i++){x.fillStyle=`rgba(85,55,45,${Math.random()*.07})`;x.fillRect(Math.random()*32,Math.random()*32,1,1)}grain=new THREE.CanvasTexture(c);grain.colorSpace=THREE.SRGBColorSpace;grain.wrapS=grain.wrapT=THREE.RepeatWrapping;return grain;}
+function grainTexture(): THREE.CanvasTexture { if(grain)return grain;const c=document.createElement('canvas');c.width=c.height=GRAIN_SIZE;const x=c.getContext('2d')!;x.fillStyle='rgba(255,255,255,.9)';x.fillRect(0,0,GRAIN_SIZE,GRAIN_SIZE);for(const s of grainSpeckles(GRAIN_SEED)){x.fillStyle=`rgba(85,55,45,${s.alpha})`;x.fillRect(s.x,s.y,1,1)}grain=new THREE.CanvasTexture(c);grain.colorSpace=THREE.SRGBColorSpace;grain.wrapS=grain.wrapT=THREE.RepeatWrapping;return grain;}
 function gradientTexture(): THREE.CanvasTexture {if(gradient)return gradient;const c=document.createElement('canvas');c.width=1;c.height=3;const x=c.getContext('2d')!;x.fillStyle='#202020';x.fillRect(0,0,1,1);x.fillStyle='#9a9a9a';x.fillRect(0,1,1,1);x.fillStyle='#fff';x.fillRect(0,2,1,1);gradient=new THREE.CanvasTexture(c);gradient.minFilter=gradient.magFilter=THREE.NearestFilter;return gradient;}
