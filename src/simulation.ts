@@ -75,6 +75,25 @@ export const ARRIVAL_RADIUS = 3.6;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 /** Smoothstep of a 0..1 input, clamped — eases a blend in and out. */
 const smooth01 = (t: number) => { const u = clamp(t, 0, 1); return u * u * (3 - 2 * u); };
+/** Width of the soft border band inside the world limit: outward motion bleeds
+ *  off across this zone so the edge feels like a gentle current rather than a
+ *  wall. The hard clamp further down stays as the absolute backstop. */
+const SOFT_BORDER_MARGIN = 45;
+/** Bleeds off the radially-outward part of a movement delta near the world
+ *  edge, eased in with a smoothstep across the soft border band. Tangential
+ *  motion is untouched, so flying along the border feels normal. Mutates delta. */
+function softenBorder(position: Vec3, delta: { x: number; y: number; z: number }): void {
+  const distC = Math.hypot(position.x, position.z);
+  const softR = WORLD_LIMIT - RADIUS - SOFT_BORDER_MARGIN;
+  if (distC <= softR) return;
+  const t = smooth01((distC - softR) / SOFT_BORDER_MARGIN);
+  const nx = position.x / distC, nz = position.z / distC;
+  const outward = delta.x * nx + delta.z * nz;
+  if (outward <= 0) return;
+  const kept = outward * (1 - t);
+  delta.x += nx * (kept - outward);
+  delta.z += nz * (kept - outward);
+}
 const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
 
 export function createPlayer(position: Vec3 = STOPS[0].position): Player {
@@ -581,6 +600,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const horizontal = { x: Math.sin(player.yaw), z: -Math.cos(player.yaw) };
   const verticalSpeed = player.hover ? 0 : climb * Math.max(player.speed, 3) * 0.7;
   const delta = { x: horizontal.x * player.speed * seconds, y: verticalSpeed * seconds, z: horizontal.z * player.speed * seconds };
+  softenBorder(player.position, delta);
   const fromX = player.position.x, fromY = player.position.y, fromZ = player.position.z;
   // A hit used to discard the whole frame's motion, so every wall or
   // roof-edge contact was a dead stop — which also made turning feel frozen
