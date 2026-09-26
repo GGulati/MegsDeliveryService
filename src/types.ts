@@ -27,8 +27,9 @@ export interface DeliveryDescent {
   radius0: number;
   /** Fixed circling radius for the descent (ramps out from radius0). */
   orbitR: number;
-  /** Player heading when the descent began; yaw eases from here to the travel direction. */
-  yaw0: number;
+  /** Orbit direction around the pad: +1 counterclockwise, -1 clockwise —
+   * chosen at descent start to match the parked heading. */
+  dir: 1 | -1;
   /** Seconds since the descent began (drives the circling ramp-in). */
   t: number;
 }
@@ -36,7 +37,7 @@ export interface Run { seed: number; elapsed: number; earnings: number; deliveri
 export type Mode = 'title' | 'tutorial' | 'flight' | 'offers' | 'home' | 'summary';
 export type HomePanel = 'none' | 'jobs' | 'brooms' | 'decor' | 'cat';
 /** Seconds left on the pre-drop halo fade-out; 0 when no auto-drop is pending.
- * While fading, the run clock and flight physics freeze, and only a fresh
- * maneuver (not a steadily held stick) cancels the pending drop. */
-export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; drop: DeliveryDrop | null; descent: DeliveryDescent | null; haloFade: number; fadeSnap: { turn: number; throttle: number } | null; fadeCooldown: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number; coarsePointer: boolean }
+ * While fading, the run clock and flight physics freeze, and the landing is
+ * committed: control inputs are ignored until the drop resolves. */
+export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; drop: DeliveryDrop | null; descent: DeliveryDescent | null; haloFade: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number; coarsePointer: boolean }
 export interface RenderSettings { reducedMotion: boolean; lowQuality: boolean }

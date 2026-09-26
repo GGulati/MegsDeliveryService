@@ -31,8 +31,9 @@ export const DESCENT_CIRCLE_MIN_RADIUS = 3.0;
 export const DESCENT_CIRCLE_RAMP_SECONDS = 0.8;
 /** Final fraction of the descent spent gliding from the orbit onto the pad. */
 export const DESCENT_GLIDE_FRAC = 0.2;
-/** Seconds over which Meg's heading eases into the circling direction (no snap). */
-export const DESCENT_YAW_BLEND_SECONDS = 0.4;
+/** Fastest Meg turns to face her direction of travel (radians/second): a
+ * smooth, deliberate bank — never a snap, from any parked heading. */
+export const DESCENT_YAW_RATE = 3.0;
 /** Auto-descent vertical speed (m/s): fast when high, easing out near the pad. */
 const DESCENT_SPEED_MAX = 8, DESCENT_SPEED_MIN = 2;
 /** Arrival auto-brake profile (m/s^2): shapes the sqrt(2·a·d) speed-cap curve
@@ -42,8 +43,7 @@ const DESCENT_SPEED_MAX = 8, DESCENT_SPEED_MIN = 2;
 const AUTO_BRAKE_DECEL = 6;
 /** Inside this horizontal distance (m) of the destination, the brake holds the
  * drone at rest: without it the drone can straddle the pad center, flip to
- * "flying away", and launch off at full throttle. Suspended during the
- * wave-off window so a held throttle can power out of the column. */
+ * "flying away", and launch off at full throttle. */
 const AUTO_BRAKE_HOLD_RADIUS = 2;
 /** The sticky transit hold never extends past this distance (m) from the pad:
  * a too-fast transit always stops well inside it, so a stale hold can never
@@ -76,7 +76,7 @@ export function createState(): GameState {
   return {
     mode: 'title', player: createPlayer(),
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
-    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, descent: null, haloFade: 0, fadeSnap: null, fadeCooldown: 0,
+    run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, descent: null, haloFade: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
     // Set once at boot by main.ts from matchMedia('(pointer: coarse)').
     // Lives on state (not read from window inside the simulation) so the
@@ -88,7 +88,7 @@ export function createState(): GameState {
 
 export function startTutorial(state: GameState): void {
   state.mode = 'tutorial'; state.paused = false; state.pauseReason = '';
-  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.descent = null; state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
+  state.player = createPlayer(); state.tutorialStage = 0; state.drop = null; state.descent = null; state.haloFade = 0;
   state.message = 'Steer toward the glowing Harbor Cafe pad.'; state.revision++;
 }
 
@@ -145,7 +145,7 @@ function beginDrop(state: GameState, stop: Stop): void {
   // Reset fade state for safety. A manual press can't actually reach here
   // mid-fade — interact() returns early while haloFade > 0 — but the reset
   // is harmless if that ever changes.
-  state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
+  state.haloFade = 0;
   state.drop = { stopId: stop.id, t: 0, parcel: stop.id !== 'home' };
   freezeForDrop(state);
   state.message = stop.id === 'home' ? 'Banking your earnings…' : 'Parcel away!';
@@ -222,7 +222,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
   state.summary = null;
   state.homePanel = 'none';
   state.drop = null; state.descent = null;
-  state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
+  state.haloFade = 0;
   state.mode = 'flight';
   state.message = 'First parcel: Harbor Cafe.';
   state.revision++;
@@ -255,7 +255,7 @@ export function settleRun(state: GameState, success: boolean): void {
   const run = state.run;
   if (!run) return;
   state.drop = null; state.descent = null;
-  state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = 0;
+  state.haloFade = 0;
   const earnings = success ? run.earnings : 0;
   state.summary = { success, earnings, deliveries: run.deliveries };
   if (success) state.profile.coins += earnings;
@@ -344,28 +344,6 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
   return hit;
 }
 
-/** True when the player is demanding speed on the throttle (beyond a small deadzone). */
-function throttleHeld(input: FlightInput): boolean {
-  return Math.abs(clamp(input.throttle, -1, 1)) > INPUT_DEADZONE;
-}
-
-/** A deliberate new maneuver during the halo fade aborts the pending drop.
- * Input that was already held when the fade started doesn't count — arriving
- * with the stick held is normal, and the drop should proceed automatically.
- * Only a fresh deflection (or a much stronger one) cancels; letting go never
- * does. Climb is never a cancel. */
-/** Re-arm delay after the pilot aborts a pending auto-drop: the wave-off
- * has to mean something, so the fade can't restart on the very next frame
- * (the aborting jab would just become the new "steady held" baseline). */
-const FADE_REARM_SECONDS = 2;
-
-function freshManeuver(input: FlightInput, snap: { turn: number; throttle: number } | null): boolean {
-  const s = snap ?? { turn: 0, throttle: 0 };
-  const turn = clamp(input.turn, -1, 1), thr = clamp(input.throttle, -1, 1);
-  return (Math.abs(turn) > INPUT_DEADZONE && Math.abs(turn - s.turn) > 0.35)
-      || (Math.abs(thr) > INPUT_DEADZONE && Math.abs(thr - s.throttle) > 0.35);
-}
-
 /** Whether the drone should auto-drop/land at this stop right now, no button
  * needed: the practice parcel at Harbor Cafe (any tutorial stage — the hover
  * lesson is guidance, not a gate), a live job's destination, or a flown-home
@@ -378,19 +356,18 @@ function autoDropEligible(state: GameState, stop: Stop): boolean {
 }
 
 /** Starts the pre-drop halo fade once the drone is slow inside the active
- * destination's column with a parcel aboard — stick held or not. Arriving
- * with the stick held is the normal case, and the delivery should complete
- * automatically; only a fresh maneuver during the fade aborts it. Fast
- * flyovers never trigger it via the speed gate. */
-function maybeAutoDrop(state: GameState, input: FlightInput): void {
-  if (state.drop || state.descent || state.haloFade > 0 || state.fadeCooldown > 0) return;
+ * destination's column with a parcel aboard. The landing is committed from
+ * here: control inputs are ignored until the drop resolves, so the animation
+ * can't be broken out of by accident. Fast flyovers never trigger it via the
+ * speed gate. */
+function maybeAutoDrop(state: GameState): void {
+  if (state.drop || state.descent || state.haloFade > 0) return;
   if (state.mode !== 'tutorial' && state.mode !== 'flight') return;
   if (Math.abs(state.player.speed) > AUTO_DROP_MAX_SPEED) return;
   const target = glowColumnTarget(state);
   const stop = target ? nearestStop(state) : undefined;
   if (!stop || stop.id !== target!.id || !autoDropEligible(state, stop)) return;
   state.haloFade = HALO_FADE_SECONDS;
-  state.fadeSnap = { turn: clamp(input.turn, -1, 1), throttle: clamp(input.throttle, -1, 1) };
 }
 
 /** Begins the descent for a pending auto-drop once the halo has faded,
@@ -406,22 +383,28 @@ function commitAutoDescent(state: GameState): void {
 /** Starts the descent: Meg circles the pad like a bird losing height, then
  * glides in to hover just above it, and only then does the parcel drop the
  * last stretch. Manual presses and the auto path both land this way — every
- * delivery shows the descent. The wave-off window was the fade; once
- * descending, the delivery is committed. */
+ * delivery shows the descent. The landing is committed from the fade onward:
+ * control inputs are ignored until the drop resolves. */
 function beginDescent(state: GameState, stop: Stop): void {
   const dx = state.player.position.x - stop.position.x;
   const dz = state.player.position.z - stop.position.z;
   const radius0 = Math.hypot(dx, dz);
+  const angle0 = Math.atan2(dz, dx);
+  // Circle whichever way lines up with the parked heading: the two orbit
+  // tangents are exactly π apart, so the better one is always within π/2 of
+  // where she faces — no spin-around to join the orbit, from any angle.
+  const tangentCCW = Math.atan2(-Math.sin(angle0), -Math.cos(angle0));
+  const diffCCW = Math.abs(Math.atan2(Math.sin(tangentCCW - state.player.yaw),
+    Math.cos(tangentCCW - state.player.yaw)));
   state.descent = {
     stopId: stop.id,
     startY: state.player.position.y,
-    angle: Math.atan2(dz, dx),
+    angle: angle0,
     radius0,
     orbitR: Math.max(radius0, DESCENT_CIRCLE_MIN_RADIUS),
-    yaw0: state.player.yaw,
+    dir: diffCCW <= Math.PI / 2 ? 1 : -1,
     t: 0,
   };
-  state.fadeCooldown = 0;
   // The approach is over: release the sticky brake hold and hold Meg still
   // while she descends (flight physics freezes through the descent, so the
   // step logic that normally clears it will not run).
@@ -451,18 +434,14 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     return;
   }
   const seconds = Math.max(0, dt);
-  if (state.fadeCooldown > 0) state.fadeCooldown = Math.max(0, state.fadeCooldown - seconds);
   // An auto-drop pending: the halo fades out first, and only then does the
   // parcel commit. The run clock and flight physics freeze mid-fade — pausing
-  // freezes it too, since step returns early while paused — and only a fresh
-  // maneuver cancels the pending drop (steady-held input and climb never do).
-  // A cancel starts a short re-arm cooldown so the wave-off sticks.
+  // freezes it too, since step returns early while paused — and the landing
+  // is committed: control inputs are ignored until the drop resolves, so the
+  // animation can't be broken out of by accident.
   if (state.haloFade > 0) {
     state.haloFade = Math.max(0, state.haloFade - seconds);
-    if (freshManeuver(input, state.fadeSnap)) {
-      state.haloFade = 0; state.fadeSnap = null; state.fadeCooldown = FADE_REARM_SECONDS;
-    }
-    else if (state.haloFade === 0) { state.fadeSnap = null; commitAutoDescent(state); }
+    if (state.haloFade === 0) commitAutoDescent(state);
     state.revision++;
     if (state.haloFade > 0 || state.drop || state.descent) return;
   }
@@ -471,7 +450,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // the parcel drops the last stretch. She faces her direction of travel
   // the whole way down. The run clock and flight physics freeze mid-descent
   // — pausing freezes it too, since step returns early while paused — and
-  // the descent can't be waved off: the fade was the abort window.
+  // control inputs are ignored until the drop resolves.
   if (state.descent) {
     const stop = STOPS.find((s) => s.id === state.descent!.stopId);
     if ((state.mode !== 'flight' && state.mode !== 'tutorial') || !stop) {
@@ -496,25 +475,22 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
         const vy = Math.min(DESCENT_SPEED_MAX, Math.max(DESCENT_SPEED_MIN, (state.player.position.y - targetY) * 1.5));
         state.player.position.y = Math.max(targetY, state.player.position.y - vy * seconds);
         d.t += seconds;
-        d.angle += DESCENT_CIRCLE_OMEGA * seconds;
+        d.angle += d.dir * DESCENT_CIRCLE_OMEGA * seconds;
         const rBase = d.radius0 + (d.orbitR - d.radius0) * smooth01(d.t / DESCENT_CIRCLE_RAMP_SECONDS);
         const frac = Math.max(0, (state.player.position.y - targetY) / Math.max(0.001, d.startY - targetY));
         const glide = frac >= DESCENT_GLIDE_FRAC ? 1 : smooth01(frac / DESCENT_GLIDE_FRAC);
         const r = rBase * glide;
         const nx = stop.position.x + Math.cos(d.angle) * r;
         const nz = stop.position.z + Math.sin(d.angle) * r;
-        // Face the direction of travel (heading is clockwise from north).
-        // Ease in from the parked heading over the first moments so the
-        // broom doesn't snap around on the entry frame.
+        // Face the direction of travel (heading is clockwise from north),
+        // turning toward it at a capped bank rate: smooth from any parked
+        // heading, and quick to settle since the orbit was chosen to match it.
         const dx = nx - px, dz = nz - pz;
         if (Math.hypot(dx, dz) > 0.75 * seconds) {
           const target = Math.atan2(dx, -dz);
-          if (d.t < DESCENT_YAW_BLEND_SECONDS) {
-            const diff = Math.atan2(Math.sin(target - d.yaw0), Math.cos(target - d.yaw0));
-            state.player.yaw = d.yaw0 + diff * smooth01(d.t / DESCENT_YAW_BLEND_SECONDS);
-          } else {
-            state.player.yaw = target;
-          }
+          const diff = Math.atan2(Math.sin(target - state.player.yaw), Math.cos(target - state.player.yaw));
+          const maxStep = DESCENT_YAW_RATE * seconds;
+          state.player.yaw += Math.max(-maxStep, Math.min(maxStep, diff));
         }
         state.player.position.x = nx;
         state.player.position.z = nz;
@@ -557,22 +533,18 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // until the drone actually stops, instead of releasing it to a stale
   // throttle setting. A transit that carries past the pad kills the stale
   // throttle trim so the drone parks; a clean stop inside the hold zone
-  // preserves the trim for the next leg. The single exception is the wave-off
-  // window: for the 2 s after a fresh maneuver aborts a pending drop, a held
-  // throttle suspends the hold-zone pin so the pilot can actually power out of
-  // the column instead of being pinned to a drop they just cancelled.
+  // preserves the trim for the next leg.
   let brakeCap: number | undefined;
   let distH = Infinity;
   const brakeTarget = !player.hover ? glowColumnTarget(state) : undefined;
-  const waveOff = state.fadeCooldown > 0 && throttleHeld(input);
   if (brakeTarget) {
     const dx = brakeTarget.position.x - player.position.x;
     const dz = brakeTarget.position.z - player.position.z;
     distH = Math.hypot(dx, dz);
-    if (distH < AUTO_BRAKE_HOLD_RADIUS && !waveOff) {
+    if (distH < AUTO_BRAKE_HOLD_RADIUS) {
       brakeCap = 0;
       player.brakeHold = true;
-    } else if (!waveOff && player.brakeHold && distH < BRAKE_TRANSIT_RADIUS) {
+    } else if (player.brakeHold && distH < BRAKE_TRANSIT_RADIUS) {
       brakeCap = 0;
     } else if (distH > 1e-6) {
       const closing = (player.velocity.x * dx + player.velocity.z * dz) / distH;
@@ -639,7 +611,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     state.tutorialStage = 2;
     state.message = 'Nice and steady. Drift over the glowing Harbor Cafe pad — the parcel drops itself.';
   }
-  maybeAutoDrop(state, input);
+  maybeAutoDrop(state);
   state.revision++;
 }
 
