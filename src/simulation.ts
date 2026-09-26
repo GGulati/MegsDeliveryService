@@ -1,6 +1,7 @@
 import type { FlightInput, GameState, Player, Stop, Vec3 } from './types';
 import { enterHome, interactHome, stepHome } from './home';
 import { SOLIDS, STOPS, WALLS, WORLD_LIMIT } from './world';
+import { heightAt } from './terrain';
 
 const RADIUS = 1;
 const MIN_ALTITUDE = 3;
@@ -623,7 +624,9 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // else: degenerate contact with no surface normal (already inside a box) —
   // hold still rather than guess a slide direction.
   player.position.x = clamp(player.position.x, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
-  player.position.y = clamp(player.position.y, MIN_ALTITUDE, MAX_ALTITUDE);
+  // Floor follows the terrain: 3m above ground (or water), so Meg can't clip hills.
+  const groundY = Math.max(heightAt(player.position.x, player.position.z), 0) + MIN_ALTITUDE;
+  player.position.y = clamp(player.position.y, groundY, MAX_ALTITUDE);
   player.position.z = clamp(player.position.z, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   // Velocity is what actually happened, not what was attempted: pinned
   // against a wall it reads ~0 instead of the full into-wall delta.

@@ -72,6 +72,8 @@ test('an invisible wall closes the bay mouth — you cannot fly out to sea', () 
   // Wall spans the bay's width at the island edge and reaches max altitude.
   assert.ok(wall.min.x < 40 && wall.max.x > 70, 'wall spans the bay mouth');
   assert.ok(wall.max.y >= 100, 'wall cannot be flown over');
+  // Wall must be inside the world limit to be reachable (not stranded outside).
+  assert.ok(wall.max.z < WORLD_LIMIT, `wall at z=${wall.max.z} is outside WORLD_LIMIT=${WORLD_LIMIT}`);
 });
 
 test('every stop is inside the world limit', () => {
