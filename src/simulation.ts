@@ -9,7 +9,11 @@ const MAX_SPEED = 18;
 const TURN_RATE = 2.2;
 const THROTTLE_RATE = 7;
 const ACCELERATION = 12;
-const HOVER_BRAKE = 18;
+/** Curved braking ("fade like a bike"): the manual decel rate scales with
+ * speed — strong initial bite at full cruise that eases off as the drone
+ * slows, like weight transfer under braking. */
+const BRAKE_BASE_DECEL = 5;
+const BRAKE_SPEED_FACTOR = 0.5;
 const RUN_SECONDS = 480;
 const LANDING_SPEED = 3.5;
 /** How long a dropped parcel takes to reach the pad. The drop is committed
@@ -37,10 +41,18 @@ export const DESCENT_YAW_RATE = 3.0;
 /** Auto-descent vertical speed (m/s): fast when high, easing out near the pad. */
 const DESCENT_SPEED_MAX = 8, DESCENT_SPEED_MIN = 2;
 /** Arrival auto-brake profile (m/s^2): shapes the sqrt(2·a·d) speed-cap curve
- * on approach. The drone decelerates toward the cap at the hover-brake rate,
- * so it rides under the curve and comes to rest at the destination instead
- * of overshooting it. */
+ * on approach. The drone decelerates toward the cap at the curved braking
+ * rate, so it rides under the curve and comes to rest at the destination
+ * instead of overshooting it. */
 const AUTO_BRAKE_DECEL = 6;
+
+/** Braking decel rate (m/s^2) at a given speed: strong initial bite that
+ * fades as the drone slows. Floored at AUTO_BRAKE_DECEL so the arrival
+ * auto-brake's guaranteed pad stop can never regress; scaled by the
+ * braking upgrade like the old flat rate was. */
+export function brakeDecel(speed: number, brakingUpgrade: number): number {
+  return Math.max(AUTO_BRAKE_DECEL, BRAKE_BASE_DECEL + BRAKE_SPEED_FACTOR * speed) * (1 + brakingUpgrade * 0.2);
+}
 /** Inside this horizontal distance (m) of the destination, the brake holds the
  * drone at rest: without it the drone can straddle the pad center, flip to
  * "flying away", and launch off at full throttle. */
@@ -513,7 +525,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const climb = clamp(input.climb, -1, 1);
   const maxSpeed = MAX_SPEED * (1 + state.profile.upgrades.speed * 0.1);
   const turnRate = TURN_RATE * (1 + state.profile.upgrades.handling * 0.2);
-  const hoverBrake = HOVER_BRAKE * (1 + state.profile.upgrades.braking * 0.2);
+  const brakeRate = brakeDecel(player.speed, state.profile.upgrades.braking);
   player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
   // Release-to-brake (touch stick): releasing the stick collapses the cruise
@@ -556,7 +568,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   }
   const held = player.throttle > INPUT_DEADZONE ? player.throttle : player.speed;
   const targetSpeed = player.hover ? 0 : brakeCap === undefined ? player.throttle : Math.min(brakeCap, held);
-  player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -hoverBrake * seconds, ACCELERATION * seconds), 0, maxSpeed);
+  player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -brakeRate * seconds, ACCELERATION * seconds), 0, maxSpeed);
   if (Math.abs(player.speed) < 0.01) player.speed = 0;
   if (player.brakeHold && player.speed === 0) {
     player.brakeHold = false;

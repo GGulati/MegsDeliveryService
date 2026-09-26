@@ -13,7 +13,9 @@ test('yaw zero heads north (negative z) and right turn heads positive x', () => 
 
 test('hover brakes to a stable hold', () => {
   const state = createState(); startTutorial(state); toggleHover(state);
-  for (let i = 0; i < 10; i++) step(state, { turn: 0, climb: 0, throttle: 0 }, .1);
+  // Braking is curved now (strong bite, gentle tail), so allow the full
+  // ~2s settle from cruise instead of the old 1s wall-stop.
+  for (let i = 0; i < 30; i++) step(state, { turn: 0, climb: 0, throttle: 0 }, .1);
   const before = { ...state.player.position }; step(state, { turn: 0, climb: 0, throttle: 0 }, .1);
   assert.equal(state.player.speed, 0); assert.deepEqual(state.player.position, before);
 });
