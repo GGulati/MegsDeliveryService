@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS, DESCENT_RELEASE_HEIGHT, DESCENT_CIRCLE_MIN_RADIUS, DESCENT_GLIDE_FRAC } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -37,8 +37,16 @@ function horizontalTo(state: State, stop: { position: { x: number; z: number } }
   return Math.hypot(state.player.position.x - stop.position.x, state.player.position.z - stop.position.z);
 }
 
-/** Steps until a committed drop's landing animation resolves. */
+/** Steps through a pending auto-descent until the parcel drop commits. */
+function finishDescent(state: State, input = idle): void {
+  for (let i = 0; i < 3600 && state.descent && !state.drop; i++) step(state, input, 1 / 60);
+  assert.ok(state.drop, 'descent should finish by committing the drop');
+}
+
+/** Steps through a pending descent (if any), then until a committed drop's
+ * landing animation resolves. */
 function finishDrop(state: State): void {
+  for (let i = 0; i < 3600 && state.descent && !state.drop; i++) step(state, idle, 1 / 60);
   for (let i = 0; i < 120 && state.drop; i++) step(state, idle, 1 / 60);
   assert.equal(state.drop, null, 'committed drop should resolve');
 }
@@ -142,47 +150,21 @@ test('a late throttle release still stops inside the column', () => {
   assert.ok(state.drop || state.haloFade > 0, 'delivery should proceed after the stop');
 });
 
-test('wave-off during the fade lets a held throttle power out of the column', () => {
+test('control input during the fade cannot break the landing', () => {
   const state = createState(); startRun(state, 5);
-  // parked in the column at rest with a hot throttle trim, as after a fast arrival
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z };
   state.player.yaw = 0;
-  state.player.speed = 0; state.player.throttle = 18; state.player.hover = false;
+  state.player.speed = 0; state.player.hover = true;
   state.player.velocity = { x: 0, y: 0, z: 0 };
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
-  // fresh maneuver aborts the pending drop while the throttle stays held
-  step(state, { turn: 1, climb: 0, throttle: 1 }, 0.1);
-  assert.equal(state.haloFade, 0, 'fade aborted');
-  assert.ok(state.fadeCooldown > 0, 're-arm cooldown set');
-  // keep holding the throttle through the wave-off window: the hold-zone pin
-  // is suspended, so the drone must actually leave the column
-  stepMany(state, 1.5, { turn: 0, climb: 0, throttle: 1 });
-  assert.ok(horizontalTo(state, CAFE) > ARRIVAL_RADIUS,
-    `wave-off must escape the column, dist=${horizontalTo(state, CAFE)}`);
-  assert.equal(state.drop, null, 'aborted drop must not commit');
-});
-
-test('releasing the stick during the wave-off window re-pins the hold', () => {
-  const state = createState(); startRun(state, 5);
-  // parked in the column at rest with a hot throttle trim, as after a fast arrival
-  state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z };
-  state.player.yaw = 0;
-  state.player.speed = 0; state.player.throttle = 18; state.player.hover = false;
-  state.player.velocity = { x: 0, y: 0, z: 0 };
-  step(state, idle, 0.1);
-  assert.ok(state.haloFade > 0, 'fade should be in progress');
-  // fresh maneuver aborts the pending drop while the throttle stays held
-  step(state, { turn: 1, climb: 0, throttle: 1 }, 0.1);
-  assert.ok(state.fadeCooldown > 0, 're-arm cooldown set');
-  // release the stick instead of powering out: cutThrottle collapses the trim,
-  // so the wave-off escape no longer applies and the hold re-pins
-  step(state, { turn: 0, climb: 0, throttle: 0, cutThrottle: true }, 1 / 60);
-  assert.equal(state.player.throttle, 0, 'release zeroes the trim');
-  stepMany(state, 2.5, idle);
-  assert.ok(horizontalTo(state, CAFE) <= ARRIVAL_RADIUS,
-    `released drone must stay pinned in the column, dist=${horizontalTo(state, CAFE)}`);
-  assert.ok(state.haloFade > 0 || state.drop, 'delivery should re-arm after the wave-off window');
+  // hammer the controls through the whole fade: the landing is committed,
+  // so the stick can't break out of the animation by accident
+  stepMany(state, HALO_FADE_SECONDS + 0.2, { turn: 1, climb: 1, throttle: 1 });
+  assert.ok(state.descent || state.drop, 'landing must continue despite the input');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
+  assert.equal(state.run!.earnings, 20, 'delivery should pay out');
 });
 
 test('no auto-brake without an active destination', () => {
@@ -227,13 +209,14 @@ test('returning home auto-lands, banks, and transitions to home', () => {
   assert.ok(state.message.includes('20'), `home message reports the banked shift, got: ${state.message}`);
 });
 
-test('manual bank at home still works without waiting for the fade', () => {
+test('manual bank at home skips the fade', () => {
   const state = createState(); startRun(state, 7);
   above(state, 'harbor-cafe', 40); interact(state); finishDrop(state);
   returnHome(state);
   above(state, 'home', 40);
   interact(state);
-  assert.ok(state.drop, 'pressing the button banks immediately');
+  assert.ok(state.descent, 'pressing the button starts the landing right away');
+  assert.equal(state.haloFade, 0, 'manual bank skips the fade');
   finishDrop(state);
   assert.equal(state.mode, 'home');
   assert.equal(state.profile.coins, 20);
@@ -245,17 +228,134 @@ test('auto-drop fires when stopped in the column with a parcel', () => {
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'halo should start fading before the drop');
   assert.equal(state.drop, null, 'parcel must not drop while the halo is fading');
+  assert.equal(state.descent, null, 'descent must not start while the halo is fading');
   stepMany(state, HALO_FADE_SECONDS + 0.2);
-  assert.ok(state.drop, 'parcel auto-drops after the halo fades');
+  assert.ok(state.descent, 'Meg descends after the halo fades');
+  assert.equal(state.drop, null, 'parcel must not drop until the descent finishes');
   finishDrop(state);
   assert.equal(state.run!.earnings, 20);
   assert.equal(state.mode, 'offers');
+});
+
+test('descent lowers Meg to just above the pad before the parcel drops', () => {
+  const state = createState(); startRun(state, 5);
+  above(state, 'harbor-cafe', 40);
+  stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.descent, 'descent should be in progress');
+  assert.equal(state.message, 'Descending…');
+  const elapsed = state.run!.elapsed;
+  const x = state.player.position.x, z = state.player.position.z;
+  const yawBefore = state.player.yaw;
+  const angleBefore = state.descent!.angle;
+  stepMany(state, 1);
+  assert.ok(state.player.position.y < CAFE.position.y + 40, 'descent should lower Meg');
+  assert.ok(state.descent!.angle !== angleBefore, 'Meg should circle the pad as she descends');
+  const rBefore = Math.hypot(x - CAFE.position.x, z - CAFE.position.z);
+  const rAfter = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
+  assert.ok(rAfter <= ARRIVAL_RADIUS + 1e-9, `circling must stay inside the column, r=${rAfter}`);
+  assert.ok(Math.abs(rAfter - Math.max(rBefore, DESCENT_CIRCLE_MIN_RADIUS)) < 0.5,
+    `radius should hold steady while circling, not tighten immediately (r=${rAfter})`);
+  assert.notEqual(state.player.yaw, yawBefore, 'Meg should turn to face her direction of travel');
+  assert.equal(state.run!.elapsed, elapsed, 'run clock freezes during the descent');
+  finishDescent(state);
+  const releaseY = state.player.position.y;
+  assert.ok(Math.abs(releaseY - (CAFE.position.y + DESCENT_RELEASE_HEIGHT)) < 0.15,
+    `drop should commit at release height, y=${releaseY}`);
+  assert.ok(state.drop, 'parcel drops after the descent');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
+});
+
+test('descent circles the pad at a steady radius, then glides in to land', () => {
+  const state = createState(); startRun(state, 5);
+  // Park off-center so the circling radius is the arrival radius, no ramp-in.
+  state.player.position = { x: CAFE.position.x + 3.0, y: CAFE.position.y + 40, z: CAFE.position.z };
+  state.player.speed = 0; state.player.hover = true;
+  state.player.velocity = { x: 0, y: 0, z: 0 };
+  state.player.yaw = 0; // parked facing north; the orbit runs clockwise to match it
+  let guard = 0;
+  while (!state.descent && guard++ < 600) step(state, idle, 1 / 60);
+  assert.ok(state.descent, 'descent should begin after the halo fades');
+  assert.equal(state.descent.dir, -1, 'orbit direction should match the parked heading');
+  // No snap on entry: the heading turns toward the circling direction at a
+  // capped rate instead of jumping to the tangent on frame one.
+  step(state, idle, 1 / 60);
+  const entryMoved = Math.abs(Math.atan2(Math.sin(state.player.yaw), Math.cos(state.player.yaw)));
+  assert.ok(entryMoved < 0.3, `heading must turn in, not snap, on the first descent frame (moved ${entryMoved})`);
+  const startAngle = state.descent!.angle;
+  // The whole entry stays fluid: no frame turns the broom faster than the cap.
+  let maxYawStep = 0;
+  for (let i = 0; i < 60; i++) {
+    const y0 = state.player.yaw;
+    step(state, idle, 1 / 60);
+    maxYawStep = Math.max(maxYawStep, Math.abs(Math.atan2(Math.sin(state.player.yaw - y0), Math.cos(state.player.yaw - y0))));
+  }
+  assert.ok(maxYawStep <= 3.5 / 60 + 1e-9, `no sharp turns during the entry, max step=${maxYawStep}`);
+  const r1 = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
+  stepMany(state, 1.5);
+  assert.ok(state.descent, 'descent should still be underway');
+  const r2 = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
+  assert.ok(Math.abs(r1 - 3.0) < 0.3, `circling radius should hold steady high up, r=${r1}`);
+  assert.ok(Math.abs(r2 - 3.0) < 0.3, `circling radius should still hold before the glide-in, r=${r2}`);
+  assert.ok(r2 <= ARRIVAL_RADIUS + 1e-9, `circling must stay inside the column, r=${r2}`);
+  assert.ok(Math.abs(state.descent!.angle - startAngle) > 2, 'Meg should circle the pad while descending');
+  // She faces where she is going, like a bird — not strafing sideways.
+  const p0 = { ...state.player.position };
+  step(state, idle, 0.25);
+  const dx = state.player.position.x - p0.x, dz = state.player.position.z - p0.z;
+  const wantYaw = Math.atan2(dx, -dz);
+  const yawErr = Math.abs(Math.atan2(Math.sin(state.player.yaw - wantYaw), Math.cos(state.player.yaw - wantYaw)));
+  assert.ok(yawErr < 0.2, `Meg should face her direction of travel, err=${yawErr}`);
+  finishDescent(state);
+  const rEnd = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
+  assert.ok(rEnd < 0.5, `glide-in should converge on the pad, r=${rEnd}`);
+  assert.ok(state.drop, 'parcel drops after the landing');
+});
+
+test('descent circles whichever way matches the parked heading', () => {
+  // Parked east of the pad: yaw 0 (north) joins a clockwise orbit, yaw π
+  // (south) a counterclockwise one — the better tangent is always within π/2.
+  for (const [yaw0, wantDir] of [[0, -1], [Math.PI, 1], [Math.PI / 4, -1], [-3 * Math.PI / 4, 1]] as const) {
+    const state = createState(); startRun(state, 5);
+    state.player.position = { x: CAFE.position.x + 3.0, y: CAFE.position.y + 40, z: CAFE.position.z };
+    state.player.speed = 0; state.player.hover = true;
+    state.player.velocity = { x: 0, y: 0, z: 0 };
+    state.player.yaw = yaw0;
+    let guard = 0;
+    while (!state.descent && guard++ < 600) step(state, idle, 1 / 60);
+    assert.ok(state.descent, `descent should begin (parked yaw ${yaw0})`);
+    assert.equal(state.descent.dir, wantDir, `parked yaw ${yaw0} should pick ${wantDir === 1 ? 'counterclockwise' : 'clockwise'}`);
+  }
+});
+
+test('already-low arrival skips straight to the drop', () => {
+  const state = createState(); startRun(state, 5);
+  above(state, 'harbor-cafe', 2);
+  stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.drop, 'low arrival commits the drop without a visible descent');
+  assert.ok(state.player.position.y <= CAFE.position.y + 2 + 1e-9, 'drone must never climb to reach release height');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
+});
+
+test('fresh input during the descent cannot break the landing', () => {
+  const state = createState(); startRun(state, 5);
+  above(state, 'harbor-cafe', 40);
+  stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.descent, 'descent should be in progress');
+  stepMany(state, 1, { turn: 1, climb: 1, throttle: 1 });
+  assert.ok(state.descent || state.drop, 'maneuver input mid-descent must not cancel the delivery');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });
 
 test('halo hides before the landing animation starts', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
   stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.descent, 'descent should be in progress');
+  assert.equal(glowColumnTarget(state), undefined, 'halo must stay gone through the descent');
+  finishDescent(state);
   assert.ok(state.drop, 'drop should be committed');
   assert.ok(state.drop!.t < 0.9, 'animation should still be in flight');
   assert.equal(glowColumnTarget(state), undefined, 'halo must be gone before the parcel lands');
@@ -285,14 +385,17 @@ test('no auto-landing when flying over home mid-run', () => {
   assert.ok(state.run);
 });
 
-test('player input during the halo fade cancels the auto-drop', () => {
+test('player input during the halo fade cannot cancel the auto-drop', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
   step(state, { turn: 1, climb: 0, throttle: 0 }, 0.1);
-  assert.equal(state.haloFade, 0, 'stick input cancels the pending auto-drop');
-  assert.equal(state.drop, null, 'cancelled fade must not commit a drop');
+  assert.ok(state.haloFade > 0, 'stick input mid-fade cannot cancel the pending auto-drop');
+  stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.descent || state.drop, 'the landing proceeds despite the input');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });
 
 test('tutorial auto-drop does not wait for the hover lesson', () => {
@@ -300,7 +403,7 @@ test('tutorial auto-drop does not wait for the hover lesson', () => {
   state.tutorialStage = 1;
   above(state, 'harbor-cafe', 40);
   stepMany(state, 1);
-  assert.ok(state.haloFade > 0 || state.drop, 'stage 1: auto-drop fires without pressing hover');
+  assert.ok(state.haloFade > 0 || state.descent || state.drop, 'stage 1: auto-drop fires without pressing hover');
   finishDrop(state);
   assert.equal(state.tutorialStage, 3, 'practice completes');
   assert.equal(state.profile.tutorialDone, true);
@@ -311,7 +414,7 @@ test('tutorial manual deliver works before the hover lesson', () => {
   state.tutorialStage = 1;
   above(state, 'harbor-cafe', 40);
   interact(state);
-  assert.ok(state.drop, 'stage 1: manual deliver commits at the cafe');
+  assert.ok(state.descent, 'stage 1: manual deliver starts the descent at the cafe');
 });
 
 test('pause freezes the halo fade', () => {
@@ -326,7 +429,7 @@ test('pause freezes the halo fade', () => {
   assert.equal(state.drop, null);
   setPaused(state, false);
   stepMany(state, HALO_FADE_SECONDS + 0.2);
-  assert.ok(state.drop, 'fade resumes after unpausing');
+  assert.ok(state.descent, 'fade resumes after unpausing');
 });
 
 test('pause freezes mid-brake', () => {
@@ -340,15 +443,18 @@ test('pause freezes mid-brake', () => {
   assert.equal(state.player.speed, speed, 'braking must not progress while paused');
 });
 
-test('manual drop button still commits immediately', () => {
+test('manual drop button starts the descent immediately', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
   state.player.throttle = 11;
   interact(state);
   assert.equal(state.player.throttle, 11, 'manual drop preserves the throttle trim');
   assert.equal(state.haloFade, 0, 'manual drop skips the fade');
-  assert.ok(state.drop, 'manual drop commits at press');
-  assert.equal(glowColumnTarget(state), undefined, 'halo hides as soon as the drop commits');
+  assert.ok(state.descent, 'manual drop starts the descent at press');
+  assert.equal(state.drop, null, 'the parcel drops only after the descent');
+  assert.equal(glowColumnTarget(state), undefined, 'halo hides as soon as the descent starts');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });
 
 test('released throttle (touch slider) still glides hands-off into the column', () => {
@@ -434,6 +540,8 @@ test('auto-drop fires while descending through the pillar', () => {
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
   stepMany(state, 3, { turn: 0, climb: -1, throttle: 0 });
+  assert.ok(state.descent || state.drop, 'the pending delivery should be underway');
+  finishDrop(state);
   assert.equal(state.run!.deliveries, 1, 'descending through the pillar should drop the parcel');
 });
 
@@ -443,6 +551,8 @@ test('auto-drop fires while ascending through the pillar', () => {
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
   stepMany(state, 3, { turn: 0, climb: 1, throttle: 0 });
+  assert.ok(state.descent || state.drop, 'the pending delivery should be underway');
+  finishDrop(state);
   assert.equal(state.run!.deliveries, 1, 'ascending through the pillar should drop the parcel');
 });
 
@@ -452,6 +562,7 @@ test('stalled auto-drop fires with the stick held', () => {
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
   stepMany(state, HALO_FADE_SECONDS + 0.3, { turn: 1, climb: 0, throttle: 0 });
+  finishDescent(state);
   assert.ok(state.drop, 'holding turn while stalled should not block the auto-drop');
   finishDrop(state);
   assert.equal(state.mode, 'offers', 'delivery should complete');
@@ -462,6 +573,7 @@ test('steady throttle hold does not block the stalled auto-drop', () => {
   above(state, 'harbor-cafe', 40);
   state.player.hover = false; state.player.throttle = 0; state.player.speed = 0;
   stepMany(state, HALO_FADE_SECONDS + 0.5, { turn: 0, climb: 0, throttle: 1 });
+  finishDescent(state, { turn: 0, climb: 0, throttle: 1 });
   assert.ok(state.drop, 'holding throttle while stalled should not block the auto-drop');
   finishDrop(state);
   assert.equal(state.mode, 'offers', 'delivery should complete');
@@ -473,6 +585,7 @@ test('releasing the stick mid-fade does not cancel the drop', () => {
   step(state, { turn: 1, climb: 0, throttle: 0 }, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
   stepMany(state, HALO_FADE_SECONDS + 0.3, idle);
+  finishDescent(state);
   assert.ok(state.drop, 'letting go mid-fade should not cancel the pending drop');
   finishDrop(state);
   assert.equal(state.mode, 'offers', 'delivery should complete');
@@ -486,6 +599,8 @@ test('climb input does not cancel a pending drop', () => {
   step(state, idle, 1 / 60);
   assert.ok(state.haloFade > 0, 'fade should start hands-off');
   stepMany(state, 2, { turn: 0, climb: -1, throttle: 0 });
+  finishDescent(state, { turn: 0, climb: -1, throttle: 0 });
+  finishDrop(state);
   assert.equal(state.run!.deliveries, 1, 'holding descend should not cancel the pending drop');
 });
 
@@ -493,7 +608,7 @@ test('drone starts parked after a drop and flies on input', () => {
   const state = createState(); startRun(state, 7);
   approach(state, CAFE, 40, 14);
   stepMany(state, 12);
-  for (let i = 0; i < 200 && (state.haloFade > 0 || state.drop); i++) step(state, idle, 1 / 60);
+  for (let i = 0; i < 600 && (state.haloFade > 0 || state.descent || state.drop); i++) step(state, idle, 1 / 60);
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
   assert.equal(state.player.throttle, 0, 'trim should reset so the next leg starts parked');
   chooseJob(state, 0);
@@ -515,24 +630,30 @@ test('no auto-drop on a fast flyover with only climb held', () => {
   assert.equal(state.run!.earnings, 0);
 });
 
-test('reversing a held stick mid-fade aborts the pending drop', () => {
+test('reversing a held stick mid-fade no longer aborts the pending drop', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, { turn: 1, climb: 0, throttle: 0 }, 0.1);
   assert.ok(state.haloFade > 0, 'fade should start with turn held');
   step(state, { turn: -1, climb: 0, throttle: 0 }, 0.1);
-  assert.equal(state.haloFade, 0, 'reversing the held stick should cancel the fade');
-  assert.equal(state.drop, null, 'cancelled fade must not commit a drop');
+  assert.ok(state.haloFade > 0, 'reversing the held stick cannot cancel the fade');
+  stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.descent || state.drop, 'the landing proceeds despite the reversal');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });
 
-test('throttle input during the halo fade cancels the auto-drop', () => {
+test('throttle input during the halo fade cannot cancel the auto-drop', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
   step(state, { turn: 0, climb: 0, throttle: 1 }, 0.1);
-  assert.equal(state.haloFade, 0, 'throttle input cancels the pending auto-drop');
-  assert.equal(state.drop, null, 'cancelled fade must not commit a drop');
+  assert.ok(state.haloFade > 0, 'throttle input mid-fade cannot cancel the pending auto-drop');
+  stepMany(state, HALO_FADE_SECONDS + 0.2);
+  assert.ok(state.descent || state.drop, 'the landing proceeds despite the input');
+  finishDrop(state);
+  assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });
 
 test('auto-drop fires near the visible halo edge at high altitude', () => {
@@ -541,6 +662,7 @@ test('auto-drop fires near the visible halo edge at high altitude', () => {
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
   stepMany(state, HALO_FADE_SECONDS + 0.5);
+  finishDescent(state);
   assert.ok(state.drop, 'just inside the halo circle should auto-drop even at high altitude');
   finishDrop(state);
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
@@ -569,16 +691,18 @@ test('payout is the same at any altitude', () => {
   }
 });
 
-test('aborting the fade buys a re-arm delay before it can restart', () => {
+test('a jab during the fade no longer aborts the landing', () => {
   const state = createState(); startRun(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
+  // a fresh jab mid-fade used to wave off the drop; now the landing is
+  // committed and the controls can't break out of it
   step(state, { turn: 1, climb: 0, throttle: 0 }, 0.1);
-  assert.equal(state.haloFade, 0, 'a fresh jab cancels the fade');
-  stepMany(state, 1, { turn: 1, climb: 0, throttle: 0 });
-  assert.equal(state.haloFade, 0, 'fade must not restart during the re-arm window');
-  stepMany(state, 2.5, { turn: 1, climb: 0, throttle: 0 });
-  assert.equal(state.mode, 'offers', 'steady-held stick re-arms the drop after the window');
+  assert.ok(state.haloFade > 0, 'the fade continues through the jab');
+  stepMany(state, HALO_FADE_SECONDS + 0.2, { turn: 1, climb: 0, throttle: 0 });
+  assert.ok(state.descent || state.drop, 'the landing proceeds despite the jab');
+  finishDrop(state);
+  assert.equal(state.mode, 'offers', 'delivery should complete');
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });

@@ -23,6 +23,13 @@ export function touchControlsVisible(mode: Mode, paused: boolean, homePanel: Hom
   return mode === 'home' && homePanel === 'none';
 }
 
+// Whether the landing sequence is committed: from the halo fade onward,
+// control inputs are ignored until the drop resolves, so the stick must
+// neither appear nor linger while it runs. Pure, covered by unit tests.
+export function landingCommitted(state: GameState): boolean {
+  return state.haloFade > 0 || state.descent != null || state.drop != null;
+}
+
 export class TouchControls {
   private root: HTMLElement;
   constructor(parent: HTMLElement) {
@@ -37,7 +44,7 @@ export class TouchControls {
     parent.append(this.root);
   }
   render(state: GameState): void {
-    this.root.hidden = !touchControlsVisible(state.mode, state.paused, state.homePanel);
+    this.root.hidden = landingCommitted(state) || !touchControlsVisible(state.mode, state.paused, state.homePanel);
     // The joystick floats: Input shows it at the touch point while the stick
     // is held and hides it on release, so render() leaves its own visibility
     // alone and only gates the layer.

@@ -4,6 +4,7 @@ import { chooseJob, createState, interact, nearestStop, returnHome, setPaused, s
 import { STOPS } from '../src/world';
 
 const input = { turn: 0, climb: 0, throttle: 0 };
+const CAFE = STOPS.find((stop) => stop.id === 'harbor-cafe')!;
 
 function land(state: ReturnType<typeof createState>, id: string): void {
   state.player.position = { ...STOPS.find((stop) => stop.id === id)!.position };
@@ -19,8 +20,16 @@ function above(state: ReturnType<typeof createState>, id: string, height: number
   state.player.hover = true;
 }
 
-/** Steps until a committed drop's landing animation resolves. */
+/** Steps through a pending descent until the parcel drop commits. */
+function finishDescent(state: ReturnType<typeof createState>): void {
+  for (let i = 0; i < 3600 && state.descent && !state.drop; i++) step(state, input, 1 / 60);
+  assert.ok(state.drop, 'descent should finish by committing the drop');
+}
+
+/** Steps through a pending descent (if any), then until a committed drop's
+ * landing animation resolves. */
 function finishDrop(state: ReturnType<typeof createState>): void {
+  for (let i = 0; i < 3600 && state.descent && !state.drop; i++) step(state, input, 1 / 60);
   for (let i = 0; i < 120 && state.drop; i++) step(state, input, 1 / 60);
   assert.equal(state.drop, null, 'committed drop should resolve');
 }
@@ -65,8 +74,8 @@ test('drop is eligible anywhere in the column above the pad', () => {
   const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 40);
   assert.equal(nearestStop(state)?.id, 'harbor-cafe');
   interact(state);
-  assert.ok(state.drop, 'drop should commit high in the column');
-  assert.equal(state.mode, 'flight', 'delivery resolves after the landing animation, not instantly');
+  assert.ok(state.descent, 'manual press starts the descent high in the column');
+  assert.equal(state.mode, 'flight', 'delivery resolves after the descent and landing animation, not instantly');
   finishDrop(state);
   assert.equal(state.run!.earnings, 20); assert.equal(state.mode, 'offers');
   assert.equal(state.message, 'Delivered! Choose the next parcel or return home.');
@@ -95,19 +104,36 @@ test('delivery payout is identical regardless of drop height', () => {
   assert.equal(low.run!.earnings, 20); assert.equal(high.run!.earnings, 20);
 });
 
-test('interact during a drop is ignored', () => {
+test('interact during a descent is ignored', () => {
   const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 40);
   interact(state);
-  const first = state.drop!;
+  const first = state.descent!;
   interact(state);
-  assert.equal(state.drop, first, 'a second interact must not restart the drop');
+  assert.equal(state.descent, first, 'a second interact must not restart the descent');
   finishDrop(state);
   assert.equal(state.run!.deliveries, 1); assert.equal(state.run!.earnings, 20);
 });
 
-test('pausing freezes the drop animation', () => {
+test('pausing freezes the descent', () => {
   const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 40);
   interact(state);
+  step(state, input, 0.5);
+  assert.ok(state.descent, 'descent should be underway');
+  const y = state.player.position.y;
+  assert.ok(y < CAFE.position.y + 40, `descent should be lowering Meg, y=${y}`);
+  setPaused(state, true, 'menu');
+  step(state, input, 10);
+  assert.equal(state.player.position.y, y, 'descent must not advance while paused');
+  assert.ok(state.descent, 'descent must survive the pause');
+  setPaused(state, false);
+  finishDrop(state);
+  assert.equal(state.mode, 'offers'); assert.equal(state.run!.earnings, 20);
+});
+
+test('pausing freezes the drop animation', () => {
+  const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 3);
+  interact(state);
+  finishDescent(state);
   step(state, input, 0.5);
   const t = state.drop!.t;
   assert.ok(t > 0 && t < 0.9, `drop should be mid-animation, got t=${t}`);
@@ -125,7 +151,7 @@ test('tutorial practice drop lands before practice completes', () => {
   state.tutorialStage = 2;
   above(state, 'harbor-cafe', 40);
   interact(state);
-  assert.ok(state.drop, 'practice drop commits high in the column');
+  assert.ok(state.descent, 'practice descent starts high in the column');
   assert.equal(state.profile.tutorialDone, false, 'practice completes when the parcel lands, not at press');
   finishDrop(state);
   assert.equal(state.profile.tutorialDone, true);
