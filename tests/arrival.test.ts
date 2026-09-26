@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS, DESCENT_RELEASE_HEIGHT, DESCENT_CIRCLE_MIN_RADIUS, DESCENT_GLIDE_FRAC } from '../src/simulation';
+import { startCafeFlight } from './helpers';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -52,14 +53,14 @@ function finishDrop(state: State): void {
 }
 
 test('auto-brake slows the drone on approach to the active destination', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 25, 18);
   step(state, idle, 0.5);
   assert.ok(state.player.speed < 18, `brake should engage on approach, speed=${state.player.speed}`);
 });
 
 test('auto-brake brings the drone to rest inside the arrival zone', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 40, 18);
   stepMany(state, 10);
   assert.equal(state.player.speed, 0, 'drone should come to rest');
@@ -67,7 +68,7 @@ test('auto-brake brings the drone to rest inside the arrival zone', () => {
 });
 
 test('holding the throttle cannot defeat the auto-brake', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 40, 18);
   // Flat-out toward the pad with the throttle pinned, the way a real flight
   // goes: the brake cap still governs, so the drone must slow and end inside
@@ -102,14 +103,14 @@ test('throttle-held first delivery still auto-drops at the pad', () => {
 });
 
 test('steering toward the destination does not defeat the auto-brake', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 25, 18);
   stepMany(state, 1, { turn: 0.2, climb: 0, throttle: 0 });
   assert.ok(state.player.speed < 18, `brake should engage while steering, speed=${state.player.speed}`);
 });
 
 test('fast steered approach still stops inside the column', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   // start off-axis so reaching the pad requires active steering the whole way
   state.player.position = { x: CAFE.position.x + 25, y: 30, z: CAFE.position.z + 60 };
   state.player.yaw = 0;
@@ -132,7 +133,7 @@ test('fast steered approach still stops inside the column', () => {
 });
 
 test('a late throttle release still stops inside the column', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 150, 18);
   // hold the throttle until 5m out, then let go entirely: the brake was
   // already governing the approach, so the drone must stop inside the column
@@ -151,7 +152,7 @@ test('a late throttle release still stops inside the column', () => {
 });
 
 test('control input during the fade cannot break the landing', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z };
   state.player.yaw = 0;
   state.player.speed = 0; state.player.hover = true;
@@ -168,7 +169,7 @@ test('control input during the fade cannot break the landing', () => {
 });
 
 test('no auto-brake without an active destination', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.run!.job = null; // no parcel, not returning: no active destination
   assert.equal(glowColumnTarget(state), undefined);
   approach(state, CAFE, 20, 14);
@@ -177,7 +178,7 @@ test('no auto-brake without an active destination', () => {
 });
 
 test('no auto-brake when flying away from the destination', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: 30, z: CAFE.position.z + 20 };
   state.player.yaw = Math.PI; // faces +z, away from the pad
   state.player.speed = 14; state.player.throttle = 14; state.player.hover = false;
@@ -187,7 +188,7 @@ test('no auto-brake when flying away from the destination', () => {
 });
 
 test('returning home auto-lands, banks, and transitions to home', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   above(state, 'harbor-cafe', 40); interact(state); finishDrop(state);
   assert.equal(state.run!.earnings, 20);
   returnHome(state);
@@ -210,7 +211,7 @@ test('returning home auto-lands, banks, and transitions to home', () => {
 });
 
 test('manual bank at home skips the fade', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   above(state, 'harbor-cafe', 40); interact(state); finishDrop(state);
   returnHome(state);
   above(state, 'home', 40);
@@ -223,7 +224,7 @@ test('manual bank at home skips the fade', () => {
 });
 
 test('auto-drop fires when stopped in the column with a parcel', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'halo should start fading before the drop');
@@ -238,7 +239,7 @@ test('auto-drop fires when stopped in the column with a parcel', () => {
 });
 
 test('descent lowers Meg to just above the pad before the parcel drops', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   stepMany(state, HALO_FADE_SECONDS + 0.2);
   assert.ok(state.descent, 'descent should be in progress');
@@ -267,7 +268,7 @@ test('descent lowers Meg to just above the pad before the parcel drops', () => {
 });
 
 test('descent circles the pad at a steady radius, then glides in to land', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   // Park off-center so the circling radius is the arrival radius, no ramp-in.
   state.player.position = { x: CAFE.position.x + 3.0, y: CAFE.position.y + 40, z: CAFE.position.z };
   state.player.speed = 0; state.player.hover = true;
@@ -316,7 +317,7 @@ test('descent circles whichever way matches the parked heading', () => {
   // Parked east of the pad: yaw 0 (north) joins a clockwise orbit, yaw π
   // (south) a counterclockwise one — the better tangent is always within π/2.
   for (const [yaw0, wantDir] of [[0, -1], [Math.PI, 1], [Math.PI / 4, -1], [-3 * Math.PI / 4, 1]] as const) {
-    const state = createState(); startRun(state, 5);
+    const state = createState(); startCafeFlight(state, 5);
     state.player.position = { x: CAFE.position.x + 3.0, y: CAFE.position.y + 40, z: CAFE.position.z };
     state.player.speed = 0; state.player.hover = true;
     state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -329,7 +330,7 @@ test('descent circles whichever way matches the parked heading', () => {
 });
 
 test('already-low arrival skips straight to the drop', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 2);
   stepMany(state, HALO_FADE_SECONDS + 0.2);
   assert.ok(state.drop, 'low arrival commits the drop without a visible descent');
@@ -339,7 +340,7 @@ test('already-low arrival skips straight to the drop', () => {
 });
 
 test('fresh input during the descent cannot break the landing', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   stepMany(state, HALO_FADE_SECONDS + 0.2);
   assert.ok(state.descent, 'descent should be in progress');
@@ -350,7 +351,7 @@ test('fresh input during the descent cannot break the landing', () => {
 });
 
 test('halo hides before the landing animation starts', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   stepMany(state, HALO_FADE_SECONDS + 0.2);
   assert.ok(state.descent, 'descent should be in progress');
@@ -362,7 +363,7 @@ test('halo hides before the landing animation starts', () => {
 });
 
 test('no auto-drop on a fast flyover with the stick held', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z + 30 };
   state.player.yaw = 0;
   state.player.speed = 12; state.player.throttle = 12; state.player.hover = false;
@@ -374,7 +375,7 @@ test('no auto-drop on a fast flyover with the stick held', () => {
 });
 
 test('no auto-landing when flying over home mid-run', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   // Not returning (job still active): a stop over the rooftop must not
   // trigger a landing or end the run.
   above(state, 'home', 40);
@@ -386,7 +387,7 @@ test('no auto-landing when flying over home mid-run', () => {
 });
 
 test('player input during the halo fade cannot cancel the auto-drop', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
@@ -418,7 +419,7 @@ test('tutorial manual deliver works before the hover lesson', () => {
 });
 
 test('pause freezes the halo fade', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   const fading = state.haloFade;
@@ -433,7 +434,7 @@ test('pause freezes the halo fade', () => {
 });
 
 test('pause freezes mid-brake', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 25, 18);
   step(state, idle, 0.5);
   const speed = state.player.speed;
@@ -444,7 +445,7 @@ test('pause freezes mid-brake', () => {
 });
 
 test('manual drop button starts the descent immediately', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   state.player.throttle = 11;
   interact(state);
@@ -458,7 +459,7 @@ test('manual drop button starts the descent immediately', () => {
 });
 
 test('released throttle (touch slider) still glides hands-off into the column', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   // Touch slider snaps back to 0 on release: throttle 0, still moving at the pad.
   approach(state, CAFE, 40, 14);
   state.player.throttle = 0;
@@ -470,7 +471,7 @@ test('released throttle (touch slider) still glides hands-off into the column', 
 });
 
 test('released throttle never accelerates the drone beyond its current speed', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 60, 10);
   state.player.throttle = 0;
   stepMany(state, 2);
@@ -478,7 +479,7 @@ test('released throttle never accelerates the drone beyond its current speed', (
 });
 
 test('parked drone does not auto-fly to the destination', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: 40, z: CAFE.position.z + 40 };
   state.player.yaw = 0;
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
@@ -490,7 +491,7 @@ test('parked drone does not auto-fly to the destination', () => {
 });
 
 test('no auto-approach when flying away with throttle released', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: 30, z: CAFE.position.z + 20 };
   state.player.yaw = Math.PI; // faces +z, away from the pad
   state.player.speed = 14; state.player.throttle = 0; state.player.hover = false;
@@ -500,7 +501,7 @@ test('no auto-approach when flying away with throttle released', () => {
 });
 
 test('second delivery auto-drops after choosing from offers', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   above(state, 'harbor-cafe', 10);
   stepMany(state, 3);
   finishDrop(state);
@@ -520,7 +521,7 @@ test('second delivery auto-drops after choosing from offers', () => {
 });
 
 test('drone can fly the second leg after a dropoff', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   above(state, 'harbor-cafe', 10);
   stepMany(state, 3);
   finishDrop(state);
@@ -535,7 +536,7 @@ test('drone can fly the second leg after a dropoff', () => {
 });
 
 test('auto-drop fires while descending through the pillar', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -546,7 +547,7 @@ test('auto-drop fires while descending through the pillar', () => {
 });
 
 test('auto-drop fires while ascending through the pillar', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 20, z: CAFE.position.z };
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -557,7 +558,7 @@ test('auto-drop fires while ascending through the pillar', () => {
 });
 
 test('stalled auto-drop fires with the stick held', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -569,7 +570,7 @@ test('stalled auto-drop fires with the stick held', () => {
 });
 
 test('steady throttle hold does not block the stalled auto-drop', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   state.player.hover = false; state.player.throttle = 0; state.player.speed = 0;
   stepMany(state, HALO_FADE_SECONDS + 0.5, { turn: 0, climb: 0, throttle: 1 });
@@ -580,7 +581,7 @@ test('steady throttle hold does not block the stalled auto-drop', () => {
 });
 
 test('releasing the stick mid-fade does not cancel the drop', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, { turn: 1, climb: 0, throttle: 0 }, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
@@ -592,7 +593,7 @@ test('releasing the stick mid-fade does not cancel the drop', () => {
 });
 
 test('climb input does not cancel a pending drop', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 60, z: CAFE.position.z };
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -605,7 +606,7 @@ test('climb input does not cancel a pending drop', () => {
 });
 
 test('drone starts parked after a drop and flies on input', () => {
-  const state = createState(); startRun(state, 7);
+  const state = createState(); startCafeFlight(state, 7);
   approach(state, CAFE, 40, 14);
   stepMany(state, 12);
   for (let i = 0; i < 600 && (state.haloFade > 0 || state.descent || state.drop); i++) step(state, idle, 1 / 60);
@@ -619,7 +620,7 @@ test('drone starts parked after a drop and flies on input', () => {
 });
 
 test('no auto-drop on a fast flyover with only climb held', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   state.player.position = { x: CAFE.position.x, y: CAFE.position.y + 40, z: CAFE.position.z + 30 };
   state.player.yaw = 0;
   state.player.speed = 12; state.player.throttle = 12; state.player.hover = false;
@@ -631,7 +632,7 @@ test('no auto-drop on a fast flyover with only climb held', () => {
 });
 
 test('reversing a held stick mid-fade no longer aborts the pending drop', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, { turn: 1, climb: 0, throttle: 0 }, 0.1);
   assert.ok(state.haloFade > 0, 'fade should start with turn held');
@@ -644,7 +645,7 @@ test('reversing a held stick mid-fade no longer aborts the pending drop', () => 
 });
 
 test('throttle input during the halo fade cannot cancel the auto-drop', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
@@ -657,7 +658,7 @@ test('throttle input during the halo fade cannot cancel the auto-drop', () => {
 });
 
 test('auto-drop fires near the visible halo edge at high altitude', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   state.player.position = { x: CAFE.position.x + (ARRIVAL_RADIUS - 0.2), y: CAFE.position.y + 80, z: CAFE.position.z };
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -669,7 +670,7 @@ test('auto-drop fires near the visible halo edge at high altitude', () => {
 });
 
 test('no auto-drop just outside the visible halo circle', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   state.player.position = { x: CAFE.position.x + (ARRIVAL_RADIUS + 0.2), y: CAFE.position.y + 40, z: CAFE.position.z };
   state.player.speed = 0; state.player.throttle = 0; state.player.hover = false;
   state.player.velocity = { x: 0, y: 0, z: 0 };
@@ -680,7 +681,7 @@ test('no auto-drop just outside the visible halo circle', () => {
 
 test('payout is the same at any altitude', () => {
   for (const height of [30, 80]) {
-    const state = createState(); startRun(state, 5);
+    const state = createState(); startCafeFlight(state, 5);
     above(state, 'harbor-cafe', height);
     state.player.hover = false; state.player.throttle = 0;
     const payout = state.run!.job!.payout;
@@ -692,7 +693,7 @@ test('payout is the same at any altitude', () => {
 });
 
 test('a jab during the fade no longer aborts the landing', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   above(state, 'harbor-cafe', 40);
   step(state, idle, 0.1);
   assert.ok(state.haloFade > 0, 'fade should be in progress');
