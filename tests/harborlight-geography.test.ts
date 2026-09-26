@@ -17,6 +17,22 @@ test('every stop is on land (not in the bay)', () => {
   }
 });
 
+test('every building footprint is on land (corners included)', () => {
+  for (const b of SOLIDS) {
+    for (const [x, z] of [[b.min.x, b.min.z], [b.min.x, b.max.z], [b.max.x, b.min.z], [b.max.x, b.max.z]]) {
+      assert.ok(!isInBay(x, z), `building corner (${x},${z}) is in the bay`);
+    }
+  }
+});
+
+test('the bay is one continuous inlet', () => {
+  for (let i = 0; i < BAY_CIRCLES.length - 1; i++) {
+    const a = BAY_CIRCLES[i], b = BAY_CIRCLES[i + 1];
+    const d = Math.hypot(a.x - b.x, a.z - b.z);
+    assert.ok(d < a.r + b.r, `bay circles ${i} and ${i + 1} do not overlap`);
+  }
+});
+
 test('every stop is inside the world limit', () => {
   for (const s of STOPS) {
     const r = Math.hypot(s.position.x, s.position.z);

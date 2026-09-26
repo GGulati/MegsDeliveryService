@@ -24,7 +24,7 @@ export const STOPS: Stop[] = [
   { id: 'home', name: 'Bakery Attic', subtitle: 'Home — borrowed attic', position: { x: -70, y: 20, z: 40 }, color: '#f9cf68' },
   { id: 'harbor-cafe', name: 'Harbor Cafe', subtitle: 'Tutorial delivery', position: { x: -45, y: 18, z: 65 }, color: '#63c7dc' },
   { id: 'market', name: 'Sunset Market', subtitle: 'Fresh parcels', position: { x: -10, y: 23, z: -50 }, color: '#e88869' },
-  { id: 'lighthouse', name: 'The Lighthouse', subtitle: 'Beacon House', position: { x: 64, y: 16, z: 104 }, color: '#f4e5b8' },
+  { id: 'lighthouse', name: 'The Lighthouse', subtitle: 'Beacon House', position: { x: 82, y: 16, z: 106 }, color: '#f4e5b8' },
   { id: 'marina', name: 'Marina Works', subtitle: 'Dockside roof', position: { x: 80, y: 20, z: 70 }, color: '#79b9a0' },
   { id: 'observatory', name: 'Hill Observatory', subtitle: 'East hill pad', position: { x: 115, y: 33, z: -55 }, color: '#ad91d1' },
   { id: 'cliffside', name: 'Cliffside Books', subtitle: 'West avenue', position: { x: -125, y: 26, z: 30 }, color: '#db92a7' },
@@ -38,9 +38,13 @@ export const SOLIDS: Solid[] = [
   { min: { x: -82, y: 3, z: 28 }, max: { x: -58, y: 18, z: 52 } },
   { min: { x: -59, y: 3, z: 51 }, max: { x: -31, y: 16, z: 79 } },
   { min: { x: -25, y: 3, z: -64 }, max: { x: 5, y: 21, z: -36 } },
-  { min: { x: 54, y: 3, z: 94 }, max: { x: 74, y: 13, z: 114 } },
+  { min: { x: 72, y: 3, z: 96 }, max: { x: 92, y: 13, z: 116 } },
   { min: { x: 65, y: 3, z: 55 }, max: { x: 95, y: 18, z: 85 } },
   { min: { x: 100, y: 3, z: -70 }, max: { x: 130, y: 31, z: -40 } },
   { min: { x: -140, y: 3, z: 15 }, max: { x: -110, y: 24, z: 45 } },
-  { min: { x: 79, y: 3, z: 111 }, max: { x: 89, y: 29, z: 121 } },
+  { min: { x: 83, y: 3, z: 113 }, max: { x: 93, y: 29, z: 123 } },
 ];
+
+/** Index of the lighthouse tower solid: drawn as a cylinder by makeLighthouse,
+ *  not as a generic box. Keep last so the tower-skip stays obvious. */
+export const LIGHTHOUSE_TOWER_SOLID_INDEX = SOLIDS.length - 1;

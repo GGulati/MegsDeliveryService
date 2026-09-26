@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, BAY_CIRCLES, isInBay } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, BAY_CIRCLES, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -141,7 +141,7 @@ export class GameRenderer {
     // Curving pale paths are tubes so they remain charming from the chase camera.
     // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
     // serves the merchant row and mansion hill, meeting in the north.
-    [[[-150,0,90],[-110,0,40],[-80,0,-10],[-70,0,-70],[-40,0,-110],[0,0,-120]], [[150,0,90],[110,0,50],[90,0,0],[100,0,-60],[60,0,-110],[0,0,-120]]].forEach(points => {
+    [[[-150,0,90],[-116,0,40],[-80,0,-10],[-70,0,-70],[-40,0,-110],[0,0,-120]], [[150,0,90],[110,0,50],[90,0,0],[106,0,-60],[60,0,-110],[0,0,-120]]].forEach(points => {
       const curve = new THREE.CatmullRomCurve3(points.map(a => new THREE.Vector3(a[0], .18, a[2])));
       g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 2.8, 8, false), roadMat));
     });
@@ -167,9 +167,9 @@ export class GameRenderer {
       // Keep a full-height invisible camera blocker while letting the painted roof replace
       // the upper portion of the render box. Collision and camera clearance stay exact.
       const blocker = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz)); blocker.position.copy(center); this.blockers.push(blocker);
-      // The last solid is the lighthouse tower: drawn as a cylinder by
-      // makeLighthouse, so the generic box pass skips its visuals.
-      if (i === SOLIDS.length - 1) return;
+      // The lighthouse tower solid is drawn as a cylinder by makeLighthouse,
+      // so the generic box pass skips its visuals (camera blocker already pushed).
+      if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
       const roofHeight = Math.min(4.2, sy * .28);
       const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy-roofHeight, sz), toon(palette[i % palette.length]));
       body.position.set(center.x, s.min.y + (sy-roofHeight)*.5, center.z); body.castShadow = true; body.receiveShadow = true;
@@ -233,11 +233,15 @@ export class GameRenderer {
     const hx = 74, hz = 110; // headland center
     const rock = new THREE.Mesh(new THREE.CylinderGeometry(20, 24, 9, 18), toon(0x8a7f72));
     rock.position.set(hx, 2.5, hz); rock.castShadow = true; g.add(rock);
-    const x = 84, z = 116; // tower
+    const x = 88, z = 118; // tower
     const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 5.2, 26, 16), toon(0xfff0d4));
     tower.position.set(x, 16, z); tower.castShadow = true; g.add(tower);
-    for (let y = 8; y < 27; y += 6) {
-      const stripe = new THREE.Mesh(new THREE.CylinderGeometry(4.05, 4.85, 2.2, 16), toon(0xd25c51));
+    // Red bands track the tower's taper so they sit proud of the white shell.
+    const towerR = (y: number) => 5.2 - (y - 3) * (1.6 / 26);
+    for (const y of [8, 14, 20, 26]) {
+      const stripe = new THREE.Mesh(
+        new THREE.CylinderGeometry(towerR(y + 1.1) + 0.15, towerR(y - 1.1) + 0.15, 2.2, 16),
+        toon(0xd25c51));
       stripe.position.set(x, y, z); g.add(stripe);
     }
     const gallery = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 1.2, 16), toon(0x3e6680));
@@ -306,9 +310,9 @@ export class GameRenderer {
 
   private animateSky(reduced: boolean): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.birds.children.forEach((b,i)=>{b.position.x+=.035;b.rotation.z=Math.sin(this.clock*5+i)*.18;}); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; }
   private destination(state: GameState): Stop | undefined {
-    if(state.mode==='tutorial') return STOPS.find(s=>s.position.z===55) || STOPS[1];
+    if(state.mode==='tutorial') return STOPS.find(s=>s.id==='harbor-cafe') || STOPS[1];
     const id=state.run?.returning ? 'home' : state.run?.job?.to;
-    return STOPS.find(s=>s.id===id) || STOPS.find(s=>s.position.z===110) || STOPS[0];
+    return STOPS.find(s=>s.id===id) || STOPS.find(s=>s.id==='home') || STOPS[0];
   }
   private updateBeacon(stop: Stop | undefined, step:number): void { if(!stop)return; this.targetRing.position.set(stop.position.x, Math.max(3,stop.position.y+.6),stop.position.z);this.targetRing.rotation.y+=step*.8;if(!this.targetRing.children.length){const ring=new THREE.Mesh(new THREE.TorusGeometry(4.5,.25,8,28),toon(0xffe49b));ring.rotation.x=Math.PI/2;this.targetRing.add(ring);const beam=new THREE.Mesh(new THREE.CylinderGeometry(.08,.26,8,8,1,true),new THREE.MeshBasicMaterial({color:0xffe8a2,transparent:true,opacity:.16,depthWrite:false,side:THREE.DoubleSide}));beam.position.y=4;this.targetRing.add(beam);}}
   /** A tall beacon over the active drop pad so it reads at distance: two nested
