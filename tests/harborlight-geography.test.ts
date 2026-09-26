@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BAY_SHORE, STOPS, SOLIDS, WORLD_LIMIT, isInBay } from '../src/world';
+import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay } from '../src/world';
 
 // Harborlight geography: the bay is water cutting into the island, every stop
 // sits on land, and every pad sits above its building's roof.
@@ -38,6 +38,14 @@ test('the bay holds water where expected', () => {
   assert.ok(isInBay(20, 0), 'inner harbor is water');
   assert.ok(!isInBay(-45, 65), 'harbor cafe is on land');
   assert.ok(!isInBay(80, 70), 'marina is on land');
+});
+
+test('an invisible wall closes the bay mouth — you cannot fly out to sea', () => {
+  assert.ok(WALLS.length > 0, 'wall exists');
+  const wall = WALLS[0];
+  // Wall spans the bay's width at the island edge and reaches max altitude.
+  assert.ok(wall.min.x < 40 && wall.max.x > 70, 'wall spans the bay mouth');
+  assert.ok(wall.max.y >= 100, 'wall cannot be flown over');
 });
 
 test('every stop is inside the world limit', () => {

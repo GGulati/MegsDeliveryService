@@ -59,3 +59,9 @@ export const SOLIDS: Solid[] = [
 /** Index of the lighthouse tower solid: drawn as a cylinder by makeLighthouse,
  *  not as a generic box. Keep last so the tower-skip stays obvious. */
 export const LIGHTHOUSE_TOWER_SOLID_INDEX = SOLIDS.length - 1;
+
+/** Invisible walls: collision only, never rendered. They close the bay mouth at
+ *  the island edge so flight stays over the town — you can't fly out to sea. */
+export const WALLS: Solid[] = [
+  { min: { x: 15, y: 0, z: 181 }, max: { x: 100, y: 100, z: 185 } },
+];

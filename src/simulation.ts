@@ -1,6 +1,6 @@
 import type { FlightInput, GameState, Player, Stop, Vec3 } from './types';
 import { enterHome, interactHome, stepHome } from './home';
-import { SOLIDS, STOPS, WORLD_LIMIT } from './world';
+import { SOLIDS, STOPS, WALLS, WORLD_LIMIT } from './world';
 
 const RADIUS = 1;
 const MIN_ALTITUDE = 3;
@@ -360,7 +360,7 @@ function makeOffers(seed: number, delivery: number, from: string): import('./typ
 
 function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefined {
   let hit: { t: number; normal: Vec3 } | undefined;
-  for (const solid of SOLIDS) {
+  for (const solid of [...SOLIDS, ...WALLS]) {
     const min = { x: solid.min.x - RADIUS, y: solid.min.y - RADIUS, z: solid.min.z - RADIUS };
     const max = { x: solid.max.x + RADIUS, y: solid.max.y + RADIUS, z: solid.max.z + RADIUS };
     let enter = 0, exit = 1;
