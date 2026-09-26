@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { heightAt, SEA_LEVEL } from '../src/terrain';
+import { heightAt, surfaceColor, SEA_LEVEL } from '../src/terrain';
 import { isInBay } from '../src/world';
 
 test('heightAt is deterministic', () => {
@@ -73,4 +73,36 @@ test('inland has hills', () => {
     min = Math.min(min, h); max = Math.max(max, h);
   }
   assert.ok(max - min > 2, `inland too flat: ${min} to ${max}`);
+});
+
+test('surfaceColor: seabed under the bay water', () => {
+  // Inside the bay (underwater) should read as muted seabed sand.
+  const [r, g, b] = surfaceColor(20, 60);
+  assert.ok(r > 0.6 && r < 0.8 && g > 0.6 && b < 0.6, `expected seabed, got ${r},${g},${b}`);
+});
+
+test('surfaceColor: grass on the flat town core', () => {
+  const [r, g, b] = surfaceColor(0, -50); // town center, flat, h~0.2..? actually lowland
+  // Grass is green-dominant.
+  assert.ok(g > r && g > b, `expected grass green-dominant, got ${r},${g},${b}`);
+});
+
+test('surfaceColor: rock on high hilltops', () => {
+  // Find a high inland point and check it trends rocky (low saturation).
+  let best: [number, number, number] | null = null, bestH = -Infinity;
+  for (let x = -120; x <= 120; x += 20) {
+    for (let z = -170; z <= -150; z += 10) {
+      const h = heightAt(x, z);
+      if (h > bestH) { bestH = h; best = surfaceColor(x, z); }
+    }
+  }
+  assert.ok(bestH > 3, `no high hill found (best ${bestH})`);
+  const [r, g, b] = best!;
+  const sat = Math.max(r, g, b) - Math.min(r, g, b);
+  assert.ok(sat < 0.12, `expected muted rock, got ${r},${g},${b} (sat ${sat})`);
+});
+
+test('surfaceColor is deterministic', () => {
+  const a = surfaceColor(37, -42), b = surfaceColor(37, -42);
+  assert.deepStrictEqual(a, b);
 });

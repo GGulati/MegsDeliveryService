@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
 import { buildBayShape } from './shore';
-import { heightAt } from './terrain';
+import { heightAt, surfaceColor } from './terrain';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -130,22 +130,17 @@ export class GameRenderer {
     const water = new THREE.Mesh(new THREE.CircleGeometry(320, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -0.25; g.add(water);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
-    // Vertex colors paint the beach directly from terrain height, so the sand always
-    // follows the true shoreline — no separate sand polygon to misalign and gap.
+    // Vertex colors paint the surface directly from terrain height and slope —
+    // beach, grass, and rock bands — so color always follows the true landform.
     const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
     islandGeo.rotateX(-Math.PI / 2);
     const pos = islandGeo.attributes.position;
     const colors = new Float32Array(pos.count * 3);
-    const grass = new THREE.Color(0x7fae6e), sand = new THREE.Color(0xead9a8);
-    const tmpC = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
-      const h = heightAt(x, z);
-      pos.setY(i, h);
-      // Sand below the waterline blending to grass just above it.
-      const t = Math.min(1, Math.max(0, (h + 0.4) / 1.2));
-      tmpC.copy(sand).lerp(grass, t * t * (3 - 2 * t));
-      colors[i * 3] = tmpC.r; colors[i * 3 + 1] = tmpC.g; colors[i * 3 + 2] = tmpC.b;
+      pos.setY(i, heightAt(x, z));
+      const [r, g, b] = surfaceColor(x, z);
+      colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
     }
     islandGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     islandGeo.computeVertexNormals();

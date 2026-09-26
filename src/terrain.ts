@@ -89,16 +89,8 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 /** Sea level. The bay water inlay sits just above this. */
 export const SEA_LEVEL = 0;
 
-/**
- * Height of the terrain at (x, z). Pure function — the single source of truth.
- *
- * - Coast: ocean to the south at z ≈ 175 (domain-warped ±35m); land is mainland
- *   extending north/east/west to the horizon — not an island.
- * - Hills: warped fBm, ±5m, fading to flat in the town core (all stops/buildings).
- * - Bay: carved to -3.5 below sea level (water inlay sits at +0.18); the bay mouth
- *   opens past the coast to the ocean (-12).
- */
-export function heightAt(x: number, z: number): number {
+/** Internal: heightfield components so color can key off water proximity too. */
+function computeTerrain(x: number, z: number): { h: number; bayT: number; oceanT: number } {
   // Southern coastline with organic wobble (domain-warped).
   const coastZ = 175 + warpSimplex.noise(x * 0.01 + 3.7, 8.2) * 35;
 
@@ -133,5 +125,64 @@ export function heightAt(x: number, z: number): number {
   // Water carve: bay (-3.5) or ocean (-12), whichever is deeper.
   const carve = Math.min(bayT * -3.5, oceanT * -12);
 
-  return landH + carve;
+  return { h: landH + carve, bayT, oceanT };
+}
+
+/**
+ * Height of the terrain at (x, z). Pure function — the single source of truth.
+ *
+ * - Coast: ocean to the south at z ≈ 175 (domain-warped ±35m); land is mainland
+ *   extending north/east/west to the horizon — not an island.
+ * - Hills: warped fBm, 0-8m, fading to flat in the town core (all stops/buildings).
+ * - Bay: carved to -3.5 below sea level (water inlay sits at +0.18); the bay mouth
+ *   opens past the coast to the ocean (-12).
+ */
+export function heightAt(x: number, z: number): number {
+  return computeTerrain(x, z).h;
+}
+
+/** Palette for the terrain color ramps (linear-ish 0-1 RGB). */
+const SAND = [0.918, 0.851, 0.659] as const;  // 0xead9a8 beach
+const GRASS = [0.498, 0.682, 0.431] as const; // 0x7fae6e meadow
+const ROCK = [0.541, 0.498, 0.447] as const;  // 0x8a7f72 stone
+const SEABED = [0.72, 0.68, 0.52] as const;   // muted sand under water
+
+function lerp3(a: readonly number[], b: readonly number[], t: number): [number, number, number] {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
+/**
+ * Surface color at (x, z) as [r,g,b]. Height-and-slope ramps with mottling:
+ * seabed sand under water, beach sand at the waterline (bay shore and open coast),
+ * grass on the town lowland and gentle hills, rock on hilltops and steep slopes.
+ * Pure function of the heightfield.
+ */
+export function surfaceColor(x: number, z: number): [number, number, number] {
+  const { h, bayT, oceanT } = computeTerrain(x, z);
+
+  // Slope via finite differences of the heightfield.
+  const e = 1.5;
+  const sx = (computeTerrain(x + e, z).h - computeTerrain(x - e, z).h) / (2 * e);
+  const sz = (computeTerrain(x, z + e).h - computeTerrain(x, z - e).h) / (2 * e);
+  const slope = Math.hypot(sx, sz);
+
+  // Water proximity: in/near the bay, or in the open-coast transition.
+  const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
+
+  // Base: grass lowland, rock highland.
+  let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
+
+  // Beach sand where land meets water.
+  c = lerp3(c, SAND, nearWater * (h > -1 ? 1 : 0));
+
+  // Seabed under deeper water.
+  if (h < -1) c = [SEABED[0], SEABED[1], SEABED[2]];
+
+  // Steep slopes weather to rock regardless of height (cliffs, hill flanks).
+  const rockT = smoothstep(0.45, 0.75, slope);
+  if (rockT > 0) c = lerp3(c, ROCK, rockT);
+
+  // Mottling: subtle brightness noise so flat areas aren't plasticky.
+  const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9) * 0.07;
+  return [c[0] * m, c[1] * m, c[2] * m];
 }
