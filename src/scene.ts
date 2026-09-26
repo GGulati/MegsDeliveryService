@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
 import { buildBayShape, buildBaySandShape } from './shore';
+import { heightAt } from './terrain';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -126,8 +127,17 @@ export class GameRenderer {
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
     const groundMat = toon(0xf1d79d), roadMat = toon(0xffedc4), waterMat = toon(0x6abdc7);
-    const water = new THREE.Mesh(new THREE.CircleGeometry(WORLD_LIMIT * 1.18, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -1.4; g.add(water);
-    const island = new THREE.Mesh(new THREE.CylinderGeometry(190, 198, 2.7, 72), groundMat); island.position.y = -1.2; g.add(island);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(320, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -1.4; g.add(water);
+    // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
+    // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
+    const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
+    islandGeo.rotateX(-Math.PI / 2);
+    const pos = islandGeo.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
+    }
+    islandGeo.computeVertexNormals();
+    const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
     // Harbor bay: a real inlet, not a painted decal. The shoreline is a hand-placed
     // organic polygon; a sand rim slightly larger than the water gives the beach.
     // Both sit just above the island top so the flat toon shapes merge visually.
@@ -219,8 +229,8 @@ export class GameRenderer {
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
       const t=new THREE.Group(); const h=3+(i%3)*1.4;
       const b=new THREE.Mesh(new THREE.CylinderGeometry(.35,.55,h,7),trunk); b.position.y=h/2; t.add(b);
-      const crown=new THREE.Mesh(new THREE.IcosahedronGeometry(2.2+(i%2),1),leaf); crown.position.y=h+1.5;t.add(crown); t.position.set(x,0,z);g.add(t);
-      if(i%3===0){const f=new THREE.Mesh(new THREE.SphereGeometry(.28,7,6),flower);f.position.set(x+.8,.5,z+.6);g.add(f);}
+      const crown=new THREE.Mesh(new THREE.IcosahedronGeometry(2.2+(i%2),1),leaf); crown.position.y=h+1.5;t.add(crown); t.position.set(x,heightAt(x,z),z);g.add(t);
+      if(i%3===0){const f=new THREE.Mesh(new THREE.SphereGeometry(.28,7,6),flower);f.position.set(x+.8,heightAt(x,z)+.5,z+.6);g.add(f);}
     }
   }
 
