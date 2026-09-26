@@ -36,10 +36,10 @@ test('paused hover and interaction do not mutate tutorial state', () => {
 
 test('swept collision cannot tunnel through a destination wall', () => {
   const state = createState(); startTutorial(state);
-  // Harbor Cafe's south face is z=69 (expanded to 70 for the player sphere).
-  state.player.position = { x: 0, y: 16, z: 72.5 }; state.player.speed = 18; state.player.throttle = 18;
+  // Harbor Cafe's south face is z=79 (expanded to 80 for the player sphere).
+  state.player.position = { x: -45, y: 16, z: 82.5 }; state.player.speed = 18; state.player.throttle = 18;
   step(state, { turn: 0, climb: 0, throttle: 0 }, 1);
-  assert.ok(state.player.position.z >= 69.99);
+  assert.ok(state.player.position.z >= 79.99);
 });
 
 test('tutorial completes by interacting on the first destination', () => {
