@@ -76,3 +76,17 @@ test('broom upgrades affect actual flight speed, turning, and hover braking', ()
   step(upgraded, { turn: 0, climb: 0, throttle: 0 }, .25);
   assert.ok(upgraded.player.speed < base.player.speed);
 });
+
+test('home facing matches the movement direction (room Meg faces +z at rotation 0)', () => {
+  const state = createState();
+  enterHome(state);
+  // climb:-1 moves toward +z; facing 0 keeps the +z-facing model pointed along travel.
+  stepHome(state, { turn: 0, climb: -1, throttle: 0 }, 1);
+  assert.ok(Math.abs(state.homeFacing - 0) < 1e-9, `facing=${state.homeFacing}`);
+  // climb:1 moves toward -z; facing PI turns her to face -z.
+  stepHome(state, { turn: 0, climb: 1, throttle: 0 }, 1);
+  assert.ok(Math.abs(state.homeFacing - Math.PI) < 1e-9, `facing=${state.homeFacing}`);
+  // turn:1 moves toward +x; facing PI/2 turns her to face +x.
+  stepHome(state, { turn: 1, climb: 0, throttle: 0 }, 1);
+  assert.ok(Math.abs(state.homeFacing - Math.PI / 2) < 1e-9, `facing=${state.homeFacing}`);
+});
