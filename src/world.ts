@@ -2,19 +2,30 @@ import type { Solid, Stop } from './types';
 
 export const WORLD_LIMIT = 175;
 
-/** Harbor bay: the union of these circles is water cutting into the island from
- *  the south. B1's mouth reaches past the island edge so the bay meets the sea.
- *  Rendering draws the inlay from these; tests use isInBay to keep stops and
- *  trees on land. */
-export const BAY_CIRCLES = [
-  { x: 20, z: 140, r: 55 },
-  { x: 20, z: 70, r: 40 },
-  { x: 20, z: 5, r: 30 },
+/** Harbor bay shoreline: a hand-placed organic polygon of (x, z) points tracing
+ *  the water's edge from the inner harbor, down the east shore, around the mouth
+ *  (which opens past the island edge to meet the sea), and back up the west shore.
+ *  Rendering draws the inlay from this; tests use isInBay to keep stops,
+ *  buildings, and trees on land. */
+export const BAY_SHORE: [number, number][] = [
+  [20, -25], [30, -18], [40, -5], [46, 12], [50, 30], [54, 50], [56, 70],
+  [60, 90], [63, 105], [66, 120], [70, 140], [76, 160], [82, 180], [88, 200], [95, 220],
+  [45, 220],
+  [40, 200], [34, 180], [26, 160], [16, 140], [6, 120], [-2, 100], [-8, 82],
+  [-14, 65], [-18, 45], [-20, 25], [-16, 5], [-6, -12], [6, -22],
 ];
 
-/** True when (x, z) is bay water. */
+/** True when (x, z) is bay water (ray-cast point-in-polygon). */
 export function isInBay(x: number, z: number): boolean {
-  return BAY_CIRCLES.some((c) => Math.hypot(x - c.x, z - c.z) < c.r);
+  let inside = false;
+  for (let i = 0, j = BAY_SHORE.length - 1; i < BAY_SHORE.length; j = i++) {
+    const xi = BAY_SHORE[i][0], zi = BAY_SHORE[i][1];
+    const xj = BAY_SHORE[j][0], zj = BAY_SHORE[j][1];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 // The pads are deliberately separated by broad streets: they are landmarks, not gates.

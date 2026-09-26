@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BAY_CIRCLES, STOPS, SOLIDS, WORLD_LIMIT, isInBay } from '../src/world';
+import { BAY_SHORE, STOPS, SOLIDS, WORLD_LIMIT, isInBay } from '../src/world';
 
 // Harborlight geography: the bay is water cutting into the island, every stop
 // sits on land, and every pad sits above its building's roof.
 
 test('bay mouth reaches past the island edge to meet the sea', () => {
-  const mouth = BAY_CIRCLES[0];
-  // Island radius is 190; at the mouth's x the island edge is ~189.
-  assert.ok(mouth.z + mouth.r > 189, 'mouth connects to the ocean');
+  // Island radius is 190; the shoreline must poke past it to join the ocean.
+  assert.ok(BAY_SHORE.some(([, z]) => z > 189), 'mouth connects to the ocean');
+});
+
+test('the bay is a single simple polygon', () => {
+  assert.ok(BAY_SHORE.length >= 12, 'enough points for an organic shoreline');
+  // No duplicate consecutive points (would break triangulation).
+  for (let i = 0; i < BAY_SHORE.length; i++) {
+    const a = BAY_SHORE[i], b = BAY_SHORE[(i + 1) % BAY_SHORE.length];
+    assert.ok(a[0] !== b[0] || a[1] !== b[1], `duplicate shore point at index ${i}`);
+  }
 });
 
 test('every stop is on land (not in the bay)', () => {
@@ -25,12 +33,11 @@ test('every building footprint is on land (corners included)', () => {
   }
 });
 
-test('the bay is one continuous inlet', () => {
-  for (let i = 0; i < BAY_CIRCLES.length - 1; i++) {
-    const a = BAY_CIRCLES[i], b = BAY_CIRCLES[i + 1];
-    const d = Math.hypot(a.x - b.x, a.z - b.z);
-    assert.ok(d < a.r + b.r, `bay circles ${i} and ${i + 1} do not overlap`);
-  }
+test('the bay holds water where expected', () => {
+  assert.ok(isInBay(20, 100), 'mid-bay is water');
+  assert.ok(isInBay(20, 0), 'inner harbor is water');
+  assert.ok(!isInBay(-45, 65), 'harbor cafe is on land');
+  assert.ok(!isInBay(80, 70), 'marina is on land');
 });
 
 test('every stop is inside the world limit', () => {
