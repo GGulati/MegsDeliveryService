@@ -44,4 +44,6 @@ test('landing is committed from the halo fade through the drop', () => {
   assert.equal(landingCommitted({ ...idle, haloFade: 0.2 } as GameState), true, 'halo fade');
   assert.equal(landingCommitted({ ...idle, descent: { stopId: 'harbor-cafe' } } as unknown as GameState), true, 'descent');
   assert.equal(landingCommitted({ ...idle, drop: { stopId: 'harbor-cafe', t: 0 } } as unknown as GameState), true, 'drop');
+  assert.equal(landingCommitted({ haloFade: 0, drop: null } as unknown as GameState), false,
+    'a restored save (descent undefined, not null) is not a committed landing');
 });

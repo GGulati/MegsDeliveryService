@@ -27,7 +27,7 @@ export function touchControlsVisible(mode: Mode, paused: boolean, homePanel: Hom
 // control inputs are ignored until the drop resolves, so the stick must
 // neither appear nor linger while it runs. Pure, covered by unit tests.
 export function landingCommitted(state: GameState): boolean {
-  return state.haloFade > 0 || state.descent !== null || state.drop !== null;
+  return state.haloFade > 0 || state.descent != null || state.drop != null;
 }
 
 export class TouchControls {
