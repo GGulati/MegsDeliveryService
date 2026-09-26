@@ -23,12 +23,16 @@ export const HALO_FADE_SECONDS = 0.45;
  * last stretch. The parcel detaches 1.4 m below her, so the visible fall is
  * ~1.4 m — short, centered in frame, and unmistakably a drop-off. */
 export const DESCENT_RELEASE_HEIGHT = 3.5;
-/** Angular speed of the landing spiral around the pad (radians/second). */
-export const DESCENT_SPIRAL_OMEGA = 2.0;
-/** Minimum orbit radius so a near-center arrival still shows a little spiral. */
-export const DESCENT_SPIRAL_MIN_RADIUS = 3.0;
-/** Seconds over which the spiral ramps out to its full radius (no popping). */
-export const DESCENT_SPIRAL_RAMP_SECONDS = 0.8;
+/** Angular speed of the landing circling around the pad (radians/second). */
+export const DESCENT_CIRCLE_OMEGA = 1.5;
+/** Minimum circling radius so a near-center arrival still shows the orbit. */
+export const DESCENT_CIRCLE_MIN_RADIUS = 3.0;
+/** Seconds over which the circling ramps out to its full radius (no popping). */
+export const DESCENT_CIRCLE_RAMP_SECONDS = 0.8;
+/** Final fraction of the descent spent gliding from the orbit onto the pad. */
+export const DESCENT_GLIDE_FRAC = 0.2;
+/** Seconds over which Meg's heading eases into the circling direction (no snap). */
+export const DESCENT_YAW_BLEND_SECONDS = 0.4;
 /** Auto-descent vertical speed (m/s): fast when high, easing out near the pad. */
 const DESCENT_SPEED_MAX = 8, DESCENT_SPEED_MIN = 2;
 /** Arrival auto-brake profile (m/s^2): shapes the sqrt(2·a·d) speed-cap curve
@@ -57,6 +61,8 @@ const AUTO_DROP_MAX_SPEED = 0.5;
 export const ARRIVAL_RADIUS = 3.6;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+/** Smoothstep of a 0..1 input, clamped — eases a blend in and out. */
+const smooth01 = (t: number) => { const u = clamp(t, 0, 1); return u * u * (3 - 2 * u); };
 const length = (v: Vec3) => Math.hypot(v.x, v.y, v.z);
 
 export function createPlayer(position: Vec3 = STOPS[0].position): Player {
@@ -397,18 +403,22 @@ function commitAutoDescent(state: GameState): void {
   beginDescent(state, stop);
 }
 
-/** Starts the descent: Meg lowers herself to just above the pad, and only
- * then does the parcel drop the last stretch. Manual presses and the auto
- * path both land this way — every delivery shows the descent. The wave-off
- * window was the fade; once descending, the delivery is committed. */
+/** Starts the descent: Meg circles the pad like a bird losing height, then
+ * glides in to hover just above it, and only then does the parcel drop the
+ * last stretch. Manual presses and the auto path both land this way — every
+ * delivery shows the descent. The wave-off window was the fade; once
+ * descending, the delivery is committed. */
 function beginDescent(state: GameState, stop: Stop): void {
   const dx = state.player.position.x - stop.position.x;
   const dz = state.player.position.z - stop.position.z;
+  const radius0 = Math.hypot(dx, dz);
   state.descent = {
     stopId: stop.id,
     startY: state.player.position.y,
     angle: Math.atan2(dz, dx),
-    radius0: Math.hypot(dx, dz),
+    radius0,
+    orbitR: Math.max(radius0, DESCENT_CIRCLE_MIN_RADIUS),
+    yaw0: state.player.yaw,
     t: 0,
   };
   state.fadeCooldown = 0;
@@ -456,11 +466,12 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     state.revision++;
     if (state.haloFade > 0 || state.drop || state.descent) return;
   }
-  // An auto-descent in progress: Meg spirals down to just above the pad,
-  // then the parcel drops the last stretch. The run clock and flight physics
-  // freeze mid-descent — pausing freezes it too, since step returns early
-  // while paused — and the descent can't be waved off: the fade was the
-  // abort window.
+  // A bird-like landing in progress: Meg circles the pad at a steady radius
+  // while losing height, then glides in to hover just above the pad before
+  // the parcel drops the last stretch. She faces her direction of travel
+  // the whole way down. The run clock and flight physics freeze mid-descent
+  // — pausing freezes it too, since step returns early while paused — and
+  // the descent can't be waved off: the fade was the abort window.
   if (state.descent) {
     const stop = STOPS.find((s) => s.id === state.descent!.stopId);
     if ((state.mode !== 'flight' && state.mode !== 'tutorial') || !stop) {
@@ -476,22 +487,37 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
         state.descent = null;
         beginDrop(state, stop);
       } else {
-        // Witch spiral: Meg circles the pad while sinking, the orbit radius
-        // shrinking to the pad as she nears release height. A near-center
-        // arrival eases out to a visible little spiral instead of popping.
+        // Circle the pad, then glide in: the radius holds steady through most
+        // of the descent and only shrinks over the last stretch, like a bird
+        // lining up and flaring onto its perch. A near-center arrival eases
+        // out to a visible orbit instead of popping.
         const d = state.descent!;
+        const px = state.player.position.x, pz = state.player.position.z;
         const vy = Math.min(DESCENT_SPEED_MAX, Math.max(DESCENT_SPEED_MIN, (state.player.position.y - targetY) * 1.5));
         state.player.position.y = Math.max(targetY, state.player.position.y - vy * seconds);
         d.t += seconds;
-        d.angle += DESCENT_SPIRAL_OMEGA * seconds;
-        const rampT = Math.min(1, d.t / DESCENT_SPIRAL_RAMP_SECONDS);
-        const ramp = rampT * rampT * (3 - 2 * rampT);
-        const rFull = Math.max(d.radius0, DESCENT_SPIRAL_MIN_RADIUS);
-        const rEff = d.radius0 + (rFull - d.radius0) * ramp;
+        d.angle += DESCENT_CIRCLE_OMEGA * seconds;
+        const rBase = d.radius0 + (d.orbitR - d.radius0) * smooth01(d.t / DESCENT_CIRCLE_RAMP_SECONDS);
         const frac = Math.max(0, (state.player.position.y - targetY) / Math.max(0.001, d.startY - targetY));
-        const r = rEff * frac;
-        state.player.position.x = stop.position.x + Math.cos(d.angle) * r;
-        state.player.position.z = stop.position.z + Math.sin(d.angle) * r;
+        const glide = frac >= DESCENT_GLIDE_FRAC ? 1 : smooth01(frac / DESCENT_GLIDE_FRAC);
+        const r = rBase * glide;
+        const nx = stop.position.x + Math.cos(d.angle) * r;
+        const nz = stop.position.z + Math.sin(d.angle) * r;
+        // Face the direction of travel (heading is clockwise from north).
+        // Ease in from the parked heading over the first moments so the
+        // broom doesn't snap around on the entry frame.
+        const dx = nx - px, dz = nz - pz;
+        if (Math.hypot(dx, dz) > 0.75 * seconds) {
+          const target = Math.atan2(dx, -dz);
+          if (d.t < DESCENT_YAW_BLEND_SECONDS) {
+            const diff = Math.atan2(Math.sin(target - d.yaw0), Math.cos(target - d.yaw0));
+            state.player.yaw = d.yaw0 + diff * smooth01(d.t / DESCENT_YAW_BLEND_SECONDS);
+          } else {
+            state.player.yaw = target;
+          }
+        }
+        state.player.position.x = nx;
+        state.player.position.z = nz;
         state.revision++;
       }
     }

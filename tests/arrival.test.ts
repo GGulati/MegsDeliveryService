@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS, DESCENT_RELEASE_HEIGHT, DESCENT_SPIRAL_MIN_RADIUS } from '../src/simulation';
+import { chooseJob, createState, glowColumnTarget, interact, returnHome, setPaused, startRun, startTutorial, step, HALO_FADE_SECONDS, ARRIVAL_RADIUS, DESCENT_RELEASE_HEIGHT, DESCENT_CIRCLE_MIN_RADIUS, DESCENT_GLIDE_FRAC } from '../src/simulation';
 import { STOPS } from '../src/world';
 
 const idle = { turn: 0, climb: 0, throttle: 0 };
@@ -271,14 +271,17 @@ test('descent lowers Meg to just above the pad before the parcel drops', () => {
   assert.equal(state.message, 'Descending…');
   const elapsed = state.run!.elapsed;
   const x = state.player.position.x, z = state.player.position.z;
+  const yawBefore = state.player.yaw;
   const angleBefore = state.descent!.angle;
   stepMany(state, 1);
   assert.ok(state.player.position.y < CAFE.position.y + 40, 'descent should lower Meg');
-  assert.ok(state.descent!.angle > angleBefore, 'Meg should orbit the pad as she descends');
+  assert.ok(state.descent!.angle > angleBefore, 'Meg should circle the pad as she descends');
   const rBefore = Math.hypot(x - CAFE.position.x, z - CAFE.position.z);
   const rAfter = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
-  assert.ok(rAfter <= ARRIVAL_RADIUS + 1e-9, `spiral must stay inside the column, r=${rAfter}`);
-  assert.ok(rAfter < Math.max(rBefore, DESCENT_SPIRAL_MIN_RADIUS) + 1e-9, 'orbit radius should shrink toward the pad');
+  assert.ok(rAfter <= ARRIVAL_RADIUS + 1e-9, `circling must stay inside the column, r=${rAfter}`);
+  assert.ok(Math.abs(rAfter - Math.max(rBefore, DESCENT_CIRCLE_MIN_RADIUS)) < 0.5,
+    `radius should hold steady while circling, not tighten immediately (r=${rAfter})`);
+  assert.notEqual(state.player.yaw, yawBefore, 'Meg should turn to face her direction of travel');
   assert.equal(state.run!.elapsed, elapsed, 'run clock freezes during the descent');
   finishDescent(state);
   const releaseY = state.player.position.y;
@@ -289,25 +292,42 @@ test('descent lowers Meg to just above the pad before the parcel drops', () => {
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
 });
 
-test('descent spirals around the pad and lands near its center', () => {
+test('descent circles the pad at a steady radius, then glides in to land', () => {
   const state = createState(); startRun(state, 5);
-  // Park near the pad center: the spiral should still show a visible orbit.
-  state.player.position = { x: CAFE.position.x + 0.5, y: CAFE.position.y + 40, z: CAFE.position.z };
+  // Park off-center so the circling radius is the arrival radius, no ramp-in.
+  state.player.position = { x: CAFE.position.x + 3.0, y: CAFE.position.y + 40, z: CAFE.position.z };
   state.player.speed = 0; state.player.hover = true;
   state.player.velocity = { x: 0, y: 0, z: 0 };
-  stepMany(state, HALO_FADE_SECONDS + 0.2);
-  assert.ok(state.descent, 'descent should be in progress');
+  state.player.yaw = 0; // parked facing north; the orbit tangent starts ~π away
+  let guard = 0;
+  while (!state.descent && guard++ < 600) step(state, idle, 1 / 60);
+  assert.ok(state.descent, 'descent should begin after the halo fades');
+  // No snap on entry: the heading eases from the parked heading into the
+  // circling direction instead of jumping to the tangent on frame one.
+  step(state, idle, 1 / 60);
+  const entryMoved = Math.abs(Math.atan2(Math.sin(state.player.yaw), Math.cos(state.player.yaw)));
+  assert.ok(entryMoved < 0.3, `heading must ease in, not snap, on the first descent frame (moved ${entryMoved})`);
   const startAngle = state.descent!.angle;
-  stepMany(state, 2);
+  stepMany(state, 1);
+  const r1 = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
+  stepMany(state, 1.5);
   assert.ok(state.descent, 'descent should still be underway');
-  const r = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
-  assert.ok(r > 1, `near-center arrival should ease out to a visible spiral, r=${r}`);
-  assert.ok(r <= ARRIVAL_RADIUS + 1e-9, `spiral must stay inside the column, r=${r}`);
-  assert.ok(state.descent!.angle - startAngle > 2, 'Meg should complete real orbit progress while descending');
+  const r2 = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
+  assert.ok(Math.abs(r1 - 3.0) < 0.3, `circling radius should hold steady high up, r=${r1}`);
+  assert.ok(Math.abs(r2 - 3.0) < 0.3, `circling radius should still hold before the glide-in, r=${r2}`);
+  assert.ok(r2 <= ARRIVAL_RADIUS + 1e-9, `circling must stay inside the column, r=${r2}`);
+  assert.ok(state.descent!.angle - startAngle > 2, 'Meg should circle the pad while descending');
+  // She faces where she is going, like a bird — not strafing sideways.
+  const p0 = { ...state.player.position };
+  step(state, idle, 0.25);
+  const dx = state.player.position.x - p0.x, dz = state.player.position.z - p0.z;
+  const wantYaw = Math.atan2(dx, -dz);
+  const yawErr = Math.abs(Math.atan2(Math.sin(state.player.yaw - wantYaw), Math.cos(state.player.yaw - wantYaw)));
+  assert.ok(yawErr < 0.2, `Meg should face her direction of travel, err=${yawErr}`);
   finishDescent(state);
   const rEnd = Math.hypot(state.player.position.x - CAFE.position.x, state.player.position.z - CAFE.position.z);
-  assert.ok(rEnd < 0.5, `spiral should converge on the pad, r=${rEnd}`);
-  assert.ok(state.drop, 'parcel drops after the spiral');
+  assert.ok(rEnd < 0.5, `glide-in should converge on the pad, r=${rEnd}`);
+  assert.ok(state.drop, 'parcel drops after the landing');
 });
 
 test('already-low arrival skips straight to the drop', () => {

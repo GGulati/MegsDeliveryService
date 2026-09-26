@@ -19,13 +19,17 @@ export interface DeliveryDrop { stopId: string; t: number; parcel: boolean }
  * and flight input freeze through the descent, like the drop itself. */
 export interface DeliveryDescent {
   stopId: string;
-  /** Player Y when the descent began; the spiral radius shrinks across this span. */
+  /** Player Y when the descent began; the glide-in spans the last fraction of it. */
   startY: number;
-  /** Current orbit angle around the pad (radians); advanced every step. */
+  /** Current circling angle around the pad (radians); advanced every step. */
   angle: number;
   /** Horizontal distance from the pad center when the descent began. */
   radius0: number;
-  /** Seconds since the descent began (drives the spiral ramp-in). */
+  /** Fixed circling radius for the descent (ramps out from radius0). */
+  orbitR: number;
+  /** Player heading when the descent began; yaw eases from here to the travel direction. */
+  yaw0: number;
+  /** Seconds since the descent began (drives the circling ramp-in). */
   t: number;
 }
 export interface Run { seed: number; elapsed: number; earnings: number; deliveries: number; job: Job | null; offers: Job[]; returning: boolean; lastStop: string }
