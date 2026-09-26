@@ -218,16 +218,51 @@ export class GameRenderer {
     [3.0,3.3].forEach(z => add(new THREE.TorusGeometry(.34,.10,6,12),toon(0x55332e),{x:0,y:.15,z}));
     // individual asymmetric reeds make the rear read as straw rather than a cone
     for(let i=0;i<21;i++){const f=(i-10)/10;const curve=new THREE.LineCurve3(new THREE.Vector3(f*.25,.15,3),new THREE.Vector3(f*1.5,-.05+Math.cos(i)*.16,5.8-Math.abs(f)*.35));add(new THREE.TubeGeometry(curve,1,.11,5,false),toon(i%2?0xd3a35a:0xf0c978),{x:0,y:0,z:0});}
-    add(new THREE.ConeGeometry(1.75,4.3,9),toon(0x176e76),{x:0,y:4.0,z:-.25});
-    add(new THREE.SphereGeometry(1.15,14,10),toon(0xffc6a3),{x:0,y:6.5,z:-.35});
-    add(new THREE.ConeGeometry(2.05,4.6,11),toon(0x254958),{x:0,y:9.0,z:-.35});
-    add(new THREE.TorusGeometry(1.55,.28,7,16),toon(0x254958),{x:0,y:7.25,z:-.35},{x:1,y:1,z:1}).rotation.x=Math.PI/2;
-    // Bent booted legs visibly hug either side of the broom instead of leaving Meg standing on it.
-    [-1,1].forEach(side=>{const thigh=add(new THREE.CylinderGeometry(.34,.48,2.2,7),toon(0x254958),{x:side*.72,y:2.35,z:.05});thigh.rotation.z=side*.36;const shin=add(new THREE.CylinderGeometry(.28,.35,1.75,7),toon(0x254958),{x:side*1.12,y:1.15,z:-.08});shin.rotation.z=-side*.62;const boot=add(new THREE.SphereGeometry(.46,8,7),toon(0x573934),{x:side*1.48,y:.52,z:-.47},{x:1,y:.65,z:1.45});});
-    // Auburn curls, two bright eyes, and a smile make the tiny pilot read at distance.
-    [-.75,-.38,.38,.75].forEach((x,i)=>add(new THREE.SphereGeometry(.45,8,7),toon(0x9d4d32),{x,y:6.75-(i%2)*.42,z:-1.15}));
-    [-.4,.4].forEach(x=>add(new THREE.SphereGeometry(.14,8,7),toon(0x263842),{x,y:6.65,z:-1.43}));
-    const cat=toon(0xf2d6af); add(new THREE.SphereGeometry(1.02,12,9),cat,{x:0,y:2.0,z:1.48}); add(new THREE.SphereGeometry(.78,12,9),cat,{x:0,y:2.78,z:2.08});
+    // Clay-style Meg rides side-saddle: a rounded chibi pilot in a floppy purple hat,
+    // curly auburn bob, and teal dress with a satchel. She travels toward -Z.
+    const skin = toon(0xffc6a3), purple = toon(0x4a3550), legging = toon(0x5a4a6e),
+      bootM = toon(0x6b4a35), dark = toon(0x3a2a33), dressM = toon(0x176e76),
+      satchelM = toon(0x7a5238), gingerM = toon(0xc96e37);
+    add(new THREE.ConeGeometry(1.85, 4.4, 12), dressM, {x:0,y:3.7,z:-.2});
+    add(new THREE.SphereGeometry(1.2, 16, 12), dressM, {x:0,y:5.9,z:-.3}, {x:1,y:.85,z:.9});
+    const collarH = add(new THREE.TorusGeometry(.62,.15,8,14), toon(0x0f5a58), {x:0,y:6.6,z:-.3}); collarH.rotation.x = Math.PI/2;
+    [[0,6.3,-1.32],[0,5.9,-1.36],[0,5.5,-1.3]].forEach(([x,y,z]) => add(new THREE.SphereGeometry(.13,8,6), dark, {x,y,z}));
+    // Simple arms resting toward her lap.
+    [-1,1].forEach(side => {
+      const arm = add(new THREE.CylinderGeometry(.3,.34,1.9,8), skin, {x:side*1.05,y:5.3,z:-.55}); arm.rotation.z = side*.5; arm.rotation.x = .3;
+      add(new THREE.SphereGeometry(.36,10,8), skin, {x:side*1.4,y:4.45,z:-.85});
+    });
+    // Bent legging-clad legs hug the broom; rounded boots.
+    [-1,1].forEach(side => {
+      const thigh = add(new THREE.CylinderGeometry(.36,.5,2.2,8), legging, {x:side*.75,y:2.3,z:0}); thigh.rotation.z = side*.36;
+      const shin = add(new THREE.CylinderGeometry(.3,.38,1.75,8), legging, {x:side*1.15,y:1.1,z:-.05}); shin.rotation.z = -side*.62;
+      add(new THREE.SphereGeometry(.5,10,8), bootM, {x:side*1.5,y:.5,z:-.45}, {x:1,y:.7,z:1.5});
+    });
+    // Big head, curly bob, bright eyes with shine, freckles, blush, and a smile.
+    add(new THREE.SphereGeometry(1.3,18,14), skin, {x:0,y:7.9,z:-.35});
+    [[-.8,8,.6,.55],[.8,8,.6,.55],[0,8.3,.75,.6],[-.4,7.6,.7,.5],[.4,7.6,.7,.5],[-1.15,7.7,.1,.5],[1.15,7.7,.1,.5],[-.5,8.9,-.9,.4],[.5,8.9,-.9,.4],[0,9,-.95,.42]].forEach(([x,y,z,r]) => add(new THREE.SphereGeometry(r,10,8), gingerM, {x,y,z}));
+    const eyeW = toon(0xffffff);
+    [-1,1].forEach(side => {
+      add(new THREE.SphereGeometry(.3,12,10), dark, {x:side*.48,y:8,z:-1.5});
+      add(new THREE.SphereGeometry(.07,8,6), eyeW, {x:side*.4,y:8.12,z:-1.76});
+      add(new THREE.SphereGeometry(.06,6,5), toon(0xd98e5f), {x:side*.85,y:7.85,z:-1.35});
+      add(new THREE.SphereGeometry(.06,6,5), toon(0xd98e5f), {x:side*.95,y:7.92,z:-1.28});
+      add(new THREE.SphereGeometry(.16,8,6), toon(0xf0a080), {x:side*.95,y:7.8,z:-1.25}, {x:1,y:1,z:.4});
+    });
+    const smileH = add(new THREE.TorusGeometry(.34,.07,8,14,Math.PI*.72), dark, {x:0,y:7.55,z:-1.6}); smileH.rotation.z = Math.PI*1.14; smileH.rotation.y = Math.PI;
+    // Floppy hat: wide brim, bent tip, teal bow at the back.
+    add(new THREE.CylinderGeometry(1.8,1.9,.24,14), purple, {x:0,y:9,z:-.4});
+    const bandH = add(new THREE.TorusGeometry(1.22,.16,8,14), dressM, {x:0,y:9.15,z:-.42}); bandH.rotation.x = Math.PI/2;
+    const crownH = add(new THREE.ConeGeometry(1.2,2.5,12), purple, {x:0,y:10.2,z:-.5}); crownH.rotation.x = -.12;
+    const tipH = add(new THREE.ConeGeometry(.4,1.1,8), purple, {x:0,y:11.5,z:-.85}); tipH.rotation.x = -.7;
+    add(new THREE.SphereGeometry(.18,8,6), dressM, {x:0,y:9.5,z:1.15});
+    [-1,1].forEach(side => add(new THREE.SphereGeometry(.34,8,6), dressM, {x:side*.36,y:9.55,z:1.15}, {x:1,y:.75,z:.5}));
+    // Satchel on her hip with a strap.
+    add(new THREE.BoxGeometry(.9,1,.5), satchelM, {x:1.7,y:4.6,z:.3});
+    const strapH = add(new THREE.CylinderGeometry(.1,.1,3,6), toon(0x5e3f2a), {x:.9,y:5.8,z:-.1}); strapH.rotation.z = .8;
+    const cat = toon(0xf2d6af);
+    add(new THREE.SphereGeometry(1.02,12,9), cat, {x:0,y:2.0,z:1.48});
+    add(new THREE.SphereGeometry(.78,12,9), cat, {x:0,y:2.78,z:2.08});
     [-.48,.48].forEach(x=>add(new THREE.ConeGeometry(.38,.78,3),toon(0xe0a36c),{x,y:3.55,z:2.2}));
     [-.26,.26].forEach(x=>add(new THREE.SphereGeometry(.12,7,6),toon(0x274151),{x,y:2.88,z:2.88}));
     [-.42,.42].forEach(x=>add(new THREE.SphereGeometry(.19,7,6),cat,{x,y:1.27,z:2.12},{x:1,y:.7,z:1.15}));

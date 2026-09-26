@@ -102,11 +102,45 @@ export class RoomView {
 
   private makeMeg(): void {
     const g = this.meg; g.name = 'Meg'; this.group.add(g);
-    add(g, new THREE.Mesh(new THREE.SphereGeometry(.34, 12, 10), mat(0xffc39e)), 0, 1.52, 0);
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(.38,12,10,0,Math.PI*2,0,Math.PI*.55), mat(0x8e432b)); add(g,hair,0,1.7,.01);
-    const hat = new THREE.Group(); add(g,hat,0,1.94,0); add(hat,new THREE.Mesh(new THREE.CylinderGeometry(.48,.48,.12,12),mat(0x45304d)),0,0,0); const cone = new THREE.Mesh(new THREE.ConeGeometry(.3,.82,12),mat(0x45304d)); cone.rotation.z=-.18; add(hat,cone,.06,.39,0);
-    add(g,new THREE.Mesh(new THREE.ConeGeometry(.48,1.05,12),teal),0,.84,0);
-    for (const [x,z] of [[-.22,.08],[.22,.08]] as number[][]) { const leg=cyl(.09,.55,darkWood); leg.name='limb'; add(g,leg,x,.3,z); const arm=cyl(.075,.58,mat(0xffc39e)); arm.name='limb'; arm.rotation.z=x*1.8; add(g,arm,x*1.5,1.06,0); }
+    const skin = mat(0xffc39e), purple = mat(0x4a3550), legging = mat(0x5a4a6e),
+      bootM = mat(0x6b4a35), dark = mat(0x3a2a33), satchelM = mat(0x7a5238),
+      freckle = mat(0xd98e5f), blush = mat(0xf0a080), shine = mat(0xffffff);
+    // Boots, legging legs, and arms swing while she walks (update() drives 'limb').
+    for (const side of [-1, 1]) {
+      const leg = cyl(.11, .5, legging); leg.name = 'limb'; add(g, leg, side * .17, .45, 0);
+      const b = new THREE.Mesh(new THREE.SphereGeometry(.16, 10, 8), bootM); b.scale.set(1, .8, 1.3); add(g, b, side * .17, .13, .03);
+      const arm = cyl(.085, .55, skin); arm.name = 'limb'; arm.rotation.z = side * .32; add(g, arm, side * .5, 1.42, 0);
+    }
+    // Teal dress: flared skirt, rounded torso, collar, buttons, moon + star appliques.
+    add(g, new THREE.Mesh(new THREE.ConeGeometry(.58, 1.05, 14), teal), 0, 1.02, 0);
+    const torso = new THREE.Mesh(new THREE.SphereGeometry(.4, 14, 12), teal); torso.scale.set(1, .85, .85); add(g, torso, 0, 1.58, 0);
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(.2, .055, 8, 14), mat(0x146662)); collar.rotation.x = Math.PI / 2; add(g, collar, 0, 1.86, 0);
+    [[0, 1.72, .33], [0, 1.58, .36], [0, 1.44, .35]].forEach(([x, y, z]) => add(g, new THREE.Mesh(new THREE.SphereGeometry(.045, 8, 6), dark), x, y, z));
+    const moon = new THREE.Mesh(new THREE.TorusGeometry(.07, .025, 6, 12, 4.2), mat(0xf7d774)); add(g, moon, -.15, .8, .4);
+    const star = new THREE.Mesh(new THREE.OctahedronGeometry(.07), mat(0xf7d774)); star.scale.z = .4; add(g, star, .18, .72, .38);
+    // Satchel with a shoulder strap.
+    add(g, box(.26, .3, .14, satchelM), .55, 1.2, .02);
+    add(g, box(.27, .12, .15, mat(0x5e3f2a)), .55, 1.32, .02);
+    const strap = cyl(.03, 1.0, mat(0x5e3f2a)); strap.rotation.z = 1.1; add(g, strap, .18, 1.6, 0);
+    // Big clay head with a curly auburn bob.
+    add(g, new THREE.Mesh(new THREE.SphereGeometry(.44, 16, 12), skin), 0, 2.28, 0);
+    const curls: Array<[number, number, number, number]> = [[-.28, 2.32, -.3, .2], [.28, 2.32, -.3, .2], [0, 2.42, -.36, .22], [-.14, 2.18, -.36, .18], [.14, 2.18, -.36, .18], [-.4, 2.14, -.08, .17], [.4, 2.14, -.08, .17], [-.18, 2.55, .18, .15], [.18, 2.55, .18, .15], [0, 2.58, .12, .16]];
+    curls.forEach(([x, y, z, r]) => add(g, new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), ginger), x, y, z));
+    for (const side of [-1, 1]) {
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), dark), side * .17, 2.33, .375);
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.022, 6, 5), shine), side * .145, 2.355, .44);
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.02, 6, 5), freckle), side * .27, 2.26, .33);
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.02, 6, 5), freckle), side * .31, 2.3, .28);
+      const cheek = new THREE.Mesh(new THREE.SphereGeometry(.05, 8, 6), blush); cheek.scale.z = .4; add(g, cheek, side * .3, 2.24, .32);
+    }
+    const smile = new THREE.Mesh(new THREE.TorusGeometry(.1, .022, 6, 12, Math.PI * .72), dark); smile.rotation.z = Math.PI * 1.14; add(g, smile, 0, 2.16, .4);
+    // Floppy purple hat: wide brim, bent tip, teal bow at the back.
+    add(g, new THREE.Mesh(new THREE.CylinderGeometry(.64, .68, .09, 14), purple), 0, 2.6, 0);
+    const band = new THREE.Mesh(new THREE.TorusGeometry(.45, .06, 8, 14), teal); band.rotation.x = Math.PI / 2; add(g, band, 0, 2.68, -.02);
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(.44, .9, 12), purple); crown.rotation.x = -.1; add(g, crown, 0, 3.05, -.04);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(.15, .42, 8), purple); tip.rotation.x = -.75; add(g, tip, 0, 3.55, -.18);
+    add(g, new THREE.Mesh(new THREE.SphereGeometry(.07, 8, 6), teal), 0, 2.9, -.48);
+    for (const side of [-1, 1]) { const loop = new THREE.Mesh(new THREE.SphereGeometry(.13, 8, 6), teal); loop.scale.set(1, .75, .5); add(g, loop, side * .14, 2.92, -.48); }
   }
 
   private makePumpkin(): void {
