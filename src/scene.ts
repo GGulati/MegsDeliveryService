@@ -241,15 +241,12 @@ export class GameRenderer {
     // Big head, curly bob, bright eyes with shine, freckles, blush, and a smile.
     add(new THREE.SphereGeometry(1.3,18,14), skin, {x:0,y:7.9,z:-.35});
     [[-.8,8,.6,.55],[.8,8,.6,.55],[0,8.3,.75,.6],[-.4,7.6,.7,.5],[.4,7.6,.7,.5],[-1.15,7.7,.1,.5],[1.15,7.7,.1,.5],[-.5,8.9,-.9,.4],[.5,8.9,-.9,.4],[0,9,-.95,.42]].forEach(([x,y,z,r]) => add(new THREE.SphereGeometry(r,10,8), gingerM, {x,y,z}));
-    const eyeW = toon(0xffffff);
     [-1,1].forEach(side => {
-      add(new THREE.SphereGeometry(.3,12,10), dark, {x:side*.48,y:8,z:-1.5});
-      add(new THREE.SphereGeometry(.07,8,6), eyeW, {x:side*.4,y:8.12,z:-1.76});
+      add(new THREE.SphereGeometry(.22,12,10), dark, {x:side*.48,y:8,z:-1.52});
       add(new THREE.SphereGeometry(.06,6,5), toon(0xd98e5f), {x:side*.85,y:7.85,z:-1.35});
       add(new THREE.SphereGeometry(.06,6,5), toon(0xd98e5f), {x:side*.95,y:7.92,z:-1.28});
-      add(new THREE.SphereGeometry(.16,8,6), toon(0xf0a080), {x:side*.95,y:7.8,z:-1.25}, {x:1,y:1,z:.4});
     });
-    const smileH = add(new THREE.TorusGeometry(.34,.07,8,14,Math.PI*.72), dark, {x:0,y:7.55,z:-1.6}); smileH.rotation.z = Math.PI*1.14; smileH.rotation.y = Math.PI;
+    const smileH = add(new THREE.TorusGeometry(.3,.05,8,14,Math.PI*.72), dark, {x:0,y:7.55,z:-1.62}); smileH.rotation.z = Math.PI*1.14; smileH.rotation.y = Math.PI;
     // Floppy hat: wide brim, bent tip, teal bow at the back.
     add(new THREE.CylinderGeometry(1.8,1.9,.24,14), purple, {x:0,y:9,z:-.4});
     const bandH = add(new THREE.TorusGeometry(1.22,.16,8,14), dressM, {x:0,y:9.15,z:-.42}); bandH.rotation.x = Math.PI/2;

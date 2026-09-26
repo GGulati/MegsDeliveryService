@@ -104,7 +104,7 @@ export class RoomView {
     const g = this.meg; g.name = 'Meg'; this.group.add(g);
     const skin = mat(0xffc39e), purple = mat(0x4a3550), legging = mat(0x5a4a6e),
       bootM = mat(0x6b4a35), dark = mat(0x3a2a33), satchelM = mat(0x7a5238),
-      freckle = mat(0xd98e5f), blush = mat(0xf0a080), shine = mat(0xffffff);
+      freckle = mat(0xd98e5f);
     // Boots, legging legs, and arms swing while she walks (update() drives 'limb').
     for (const side of [-1, 1]) {
       const leg = cyl(.11, .5, legging); leg.name = 'limb'; add(g, leg, side * .17, .45, 0);
@@ -127,13 +127,11 @@ export class RoomView {
     const curls: Array<[number, number, number, number]> = [[-.28, 2.32, -.3, .2], [.28, 2.32, -.3, .2], [0, 2.42, -.36, .22], [-.14, 2.18, -.36, .18], [.14, 2.18, -.36, .18], [-.4, 2.14, -.08, .17], [.4, 2.14, -.08, .17], [-.18, 2.55, .18, .15], [.18, 2.55, .18, .15], [0, 2.58, .12, .16]];
     curls.forEach(([x, y, z, r]) => add(g, new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), ginger), x, y, z));
     for (const side of [-1, 1]) {
-      add(g, new THREE.Mesh(new THREE.SphereGeometry(.075, 10, 8), dark), side * .17, 2.33, .375);
-      add(g, new THREE.Mesh(new THREE.SphereGeometry(.022, 6, 5), shine), side * .145, 2.355, .44);
-      add(g, new THREE.Mesh(new THREE.SphereGeometry(.02, 6, 5), freckle), side * .27, 2.26, .33);
-      add(g, new THREE.Mesh(new THREE.SphereGeometry(.02, 6, 5), freckle), side * .31, 2.3, .28);
-      const cheek = new THREE.Mesh(new THREE.SphereGeometry(.05, 8, 6), blush); cheek.scale.z = .4; add(g, cheek, side * .3, 2.24, .32);
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.055, 10, 8), dark), side * .17, 2.33, .39);
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.02, 6, 5), freckle), side * .27, 2.26, .35);
+      add(g, new THREE.Mesh(new THREE.SphereGeometry(.02, 6, 5), freckle), side * .31, 2.3, .3);
     }
-    const smile = new THREE.Mesh(new THREE.TorusGeometry(.1, .022, 6, 12, Math.PI * .72), dark); smile.rotation.z = Math.PI * 1.14; add(g, smile, 0, 2.16, .4);
+    const smile = new THREE.Mesh(new THREE.TorusGeometry(.085, .016, 6, 12, Math.PI * .72), dark); smile.rotation.z = Math.PI * 1.14; add(g, smile, 0, 2.17, .41);
     // Floppy purple hat: wide brim, bent tip, teal bow at the back.
     add(g, new THREE.Mesh(new THREE.CylinderGeometry(.64, .68, .09, 14), purple), 0, 2.6, 0);
     const band = new THREE.Mesh(new THREE.TorusGeometry(.45, .06, 8, 14), teal); band.rotation.x = Math.PI / 2; add(g, band, 0, 2.68, -.02);

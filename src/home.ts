@@ -73,7 +73,7 @@ export function stepHome(state: GameState, input: FlightInput, dt: number): void
     const scale = WALK_SPEED * dt / Math.max(1, magnitude);
     state.homePosition.x = clamp(state.homePosition.x + x * scale, -ROOM_X, ROOM_X);
     state.homePosition.z = clamp(state.homePosition.z + z * scale, -ROOM_Z, ROOM_Z);
-    state.homeFacing = Math.atan2(x, -z);
+    state.homeFacing = Math.atan2(x, z);
   }
   state.revision++;
 }
