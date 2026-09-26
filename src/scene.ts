@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT } from './world';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
-import { followHeading, modelRotation } from './camera-motion';
+import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
 
@@ -23,6 +23,7 @@ export class GameRenderer {
   private clock = 0;
   private camPos = new THREE.Vector3(0, 27, 145);
   private camLook = new THREE.Vector3(0, 18, 90);
+  private homeLook = new THREE.Vector3(0, HOME_LOOK_Y, 0);
   private ray = new THREE.Raycaster();
   private blockers: THREE.Object3D[] = [];
   private outlines: THREE.Mesh[] = [];
@@ -84,7 +85,7 @@ export class GameRenderer {
     const atHome=state.mode==='home';
     [this.world,this.hero,this.dropParcel,this.glowColumn,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
     this.room.update(state,step,settings.reducedMotion);
-    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();this.camera.position.set(13,14,18);this.camera.up.set(0,1,0);this.camera.lookAt(0,2,0);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
+    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();const hp=state.homePosition||{x:0,z:0};const frame=homeCameraFrame(hp.x,hp.z);const nl=homeLookStep([this.homeLook.x,this.homeLook.z],[frame.look[0],frame.look[2]],this.lastMode!=='home',step,settings.reducedMotion);this.homeLook.set(nl[0],HOME_LOOK_Y,nl[1]);this.camera.position.set(this.homeLook.x+HOME_CAM_OFFSET.x,this.homeLook.y+HOME_CAM_OFFSET.y,this.homeLook.z+HOME_CAM_OFFSET.z);this.camera.up.set(0,1,0);this.camera.lookAt(this.homeLook);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
     if(this.camera.fov!==62){this.camera.fov=62;this.camera.updateProjectionMatrix();}
     this.scene.fog=this.outdoorFog;this.renderer.setClearColor(0xaed9e8);
 
