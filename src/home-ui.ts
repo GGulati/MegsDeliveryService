@@ -31,7 +31,7 @@ export class HomeUI {
       return;
     }
     let content='';
-    if(state.homePanel==='jobs') content='<div class="eyebrow">A NEW DELIVERY DAY</div><h2>The town is waiting.</h2><p>Take your first parcel to Harbor Cafe. You have eight minutes to make deliveries and return home. Anything still in your satchel at nightfall will be lost.</p><button class="primary-button" data-action="start">Pack a parcel & take off →</button>';
+    if(state.homePanel==='jobs') content='<div class="eyebrow">A NEW DELIVERY DAY</div><h2>The town is waiting.</h2><p>Choose your first delivery — pick the route that suits you. You have eight minutes to make deliveries and return home. Anything still in your satchel at nightfall will be lost.</p><button class="primary-button" data-action="start">See today’s deliveries →</button>';
     if(state.homePanel==='brooms') content=`<div class="eyebrow">THE BROOM STAND · ${p.coins} COINS</div><h2>A little more magic.</h2><div class="shop-list">${(['speed','handling','braking'] as const).map(track=>{
       const level=p.upgrades[track],cost=level===0?60:120;
       const description={speed:'Fly 10% faster per level',handling:'Turn 20% more responsively per level',braking:'Slow down 20% faster per level'}[track];

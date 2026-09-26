@@ -221,22 +221,26 @@ function completeDrop(state: GameState, stopId: string): void {
   state.revision++;
 }
 
-/** Starts a fresh shift. A supplied seed makes its offers reproducible for tests/replays. */
+/** Starts a fresh shift. A supplied seed makes its offers reproducible for tests/replays.
+ * Leaving home opens the job picker (the same offers screen as after each
+ * dropoff) instead of auto-assigning Harbor Cafe — the first delivery is the
+ * player's choice. */
 export function startRun(state: GameState, seed = Date.now()): void {
   if (state.paused || state.run || (state.mode !== 'title' && state.mode !== 'summary' && state.mode !== 'home')) return;
   const safeSeed = Number.isFinite(seed) ? Math.floor(seed) : Date.now();
   state.player = createPlayer();
   state.run = {
     seed: safeSeed, elapsed: 0, earnings: 0, deliveries: 0,
-    job: { from: 'home', to: 'harbor-cafe', payout: 20, label: 'Short hop', parcel: 'Cafe parcel' },
-    offers: [], returning: false, lastStop: 'home',
+    job: null,
+    offers: makeOffers(safeSeed, 0, 'home'),
+    returning: false, lastStop: 'home',
   };
   state.summary = null;
   state.homePanel = 'none';
   state.drop = null; state.descent = null;
   state.haloFade = 0;
-  state.mode = 'flight';
-  state.message = 'First parcel: Harbor Cafe.';
+  state.mode = 'offers';
+  state.message = 'Choose your first delivery of the day.';
   state.revision++;
 }
 
@@ -253,7 +257,7 @@ export function chooseJob(state: GameState, index: number): void {
 }
 
 export function returnHome(state: GameState): void {
-  if (state.paused || state.mode !== 'offers' || !state.run) return;
+  if (state.paused || state.mode !== 'offers' || !state.run || state.run.deliveries === 0) return;
   state.run.job = null;
   state.run.offers = [];
   state.run.returning = true;

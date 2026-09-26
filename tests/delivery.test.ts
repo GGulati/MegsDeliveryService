@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chooseJob, createState, interact, nearestStop, returnHome, setPaused, settleRun, startRun, startTutorial, step } from '../src/simulation';
+import { startCafeFlight } from './helpers';
 import { STOPS } from '../src/world';
 
 const input = { turn: 0, climb: 0, throttle: 0 };
@@ -34,8 +35,38 @@ function finishDrop(state: ReturnType<typeof createState>): void {
   assert.equal(state.drop, null, 'committed drop should resolve');
 }
 
+test('leaving home opens the job picker instead of auto-assigning Harbor Cafe', () => {
+  const state = createState(); startRun(state, 7);
+  assert.equal(state.mode, 'offers', 'a fresh run should start at the job picker');
+  assert.equal(state.run!.job, null, 'no job should be pre-assigned');
+  assert.equal(state.run!.offers.length, 2, 'two opening offers');
+  assert.ok(state.run!.offers.every((job) => job.from === 'home' && job.to !== 'home'));
+  assert.ok(new Set(state.run!.offers.map((job) => job.to)).size === 2, 'offers should be distinct');
+});
+
+test('opening offers are deterministic for a seed', () => {
+  const a = createState(), b = createState(); startRun(a, 7); startRun(b, 7);
+  assert.deepEqual(a.run!.offers, b.run!.offers);
+});
+
+test('choosing an opening offer takes off with that job', () => {
+  const state = createState(); startRun(state, 7);
+  const wanted = state.run!.offers[1].to;
+  chooseJob(state, 1);
+  assert.equal(state.mode, 'flight');
+  assert.equal(state.run!.job!.to, wanted);
+  assert.equal(state.run!.offers.length, 0, 'offers clear once a job is chosen');
+});
+
+test('return home is a no-op before the first delivery', () => {
+  const state = createState(); startRun(state, 7);
+  returnHome(state);
+  assert.equal(state.mode, 'offers', 'still at the picker');
+  assert.equal(state.run!.returning, false);
+});
+
 test('same seed produces the same distinct non-home offers', () => {
-  const a = createState(), b = createState(); startRun(a, 42); startRun(b, 42);
+  const a = createState(), b = createState(); startCafeFlight(a, 7); startCafeFlight(b, 7);
   land(a, 'harbor-cafe'); land(b, 'harbor-cafe'); interact(a); interact(b); finishDrop(a); finishDrop(b);
   assert.deepEqual(a.run!.offers, b.run!.offers);
   assert.equal(new Set(a.run!.offers.map((job) => job.to)).size, 2);
@@ -45,33 +76,35 @@ test('same seed produces the same distinct non-home offers', () => {
 });
 
 test('delivery pays the run, cannot be repeated, and does not bank before home', () => {
-  const state = createState(); startRun(state, 5); land(state, 'harbor-cafe'); interact(state); finishDrop(state);
+  const state = createState(); startCafeFlight(state, 5); land(state, 'harbor-cafe'); interact(state); finishDrop(state);
   assert.equal(state.run!.earnings, 20); assert.equal(state.profile.coins, 0); assert.equal(state.profile.deliveries, 1);
   interact(state);
   assert.equal(state.run!.earnings, 20); assert.equal(state.profile.deliveries, 1);
 });
 
 test('choosing an offer resumes flight with that job', () => {
-  const state = createState(); startRun(state, 7); land(state, 'harbor-cafe'); interact(state); finishDrop(state);
+  const state = createState(); startCafeFlight(state, 7); land(state, 'harbor-cafe'); interact(state); finishDrop(state);
   const picked = state.run!.offers[1]; chooseJob(state, 1);
   assert.equal(state.mode, 'flight'); assert.deepEqual(state.run!.job, picked); assert.equal(state.run!.returning, false);
 });
 
 test('offers advance clock while paused clock does not', () => {
-  const state = createState(); startRun(state); land(state, 'harbor-cafe'); interact(state); finishDrop(state);
+  const state = createState(); startCafeFlight(state, 7); land(state, 'harbor-cafe'); interact(state); finishDrop(state);
   step(state, input, 1); assert.equal(state.run!.elapsed, 1);
   setPaused(state, true, 'menu'); step(state, input, 10); assert.equal(state.run!.elapsed, 1);
 });
 
 test('deadline allows banking at 479.99 but rescues at 480', () => {
-  const early = createState(); startRun(early); early.run!.earnings = 20; early.run!.elapsed = 479.99; land(early, 'home'); interact(early); finishDrop(early);
+  const early = createState(); startCafeFlight(early, 7); land(early, 'harbor-cafe'); interact(early); finishDrop(early);
+  returnHome(early); early.run!.elapsed = 479.99; land(early, 'home'); interact(early); finishDrop(early);
   assert.equal(early.mode, 'home', 'banking just before the deadline lands at home'); assert.equal(early.summary, null); assert.equal(early.profile.coins, 20);
-  const late = createState(); startRun(late); late.profile.coins = 17; late.run!.earnings = 20; late.run!.elapsed = 480; land(late, 'home'); interact(late);
+  const late = createState(); startCafeFlight(late, 7); land(late, 'harbor-cafe'); interact(late); finishDrop(late);
+  late.profile.coins = 17; returnHome(late); late.run!.elapsed = 480; land(late, 'home'); interact(late);
   assert.equal(late.summary?.success, false); assert.equal(late.profile.coins, 17);
 });
 
 test('drop is eligible anywhere in the column above the pad', () => {
-  const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 40);
+  const state = createState(); startCafeFlight(state, 5); above(state, 'harbor-cafe', 40);
   assert.equal(nearestStop(state)?.id, 'harbor-cafe');
   interact(state);
   assert.ok(state.descent, 'manual press starts the descent high in the column');
@@ -82,7 +115,7 @@ test('drop is eligible anywhere in the column above the pad', () => {
 });
 
 test('drop is not eligible outside the column, below the pad, or at speed', () => {
-  const state = createState(); startRun(state, 5);
+  const state = createState(); startCafeFlight(state, 5);
   const stop = STOPS.find((s) => s.id === 'harbor-cafe')!;
   state.player.position = { x: stop.position.x + 20, y: stop.position.y + 40, z: stop.position.z };
   state.player.speed = 0; state.player.hover = true;
@@ -98,14 +131,14 @@ test('drop is not eligible outside the column, below the pad, or at speed', () =
 });
 
 test('delivery payout is identical regardless of drop height', () => {
-  const low = createState(); startRun(low, 5); above(low, 'harbor-cafe', 3);
-  const high = createState(); startRun(high, 5); above(high, 'harbor-cafe', 60);
+  const low = createState(); startCafeFlight(low, 5); above(low, 'harbor-cafe', 3);
+  const high = createState(); startCafeFlight(high, 5); above(high, 'harbor-cafe', 60);
   interact(low); interact(high); finishDrop(low); finishDrop(high);
   assert.equal(low.run!.earnings, 20); assert.equal(high.run!.earnings, 20);
 });
 
 test('interact during a descent is ignored', () => {
-  const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 40);
+  const state = createState(); startCafeFlight(state, 5); above(state, 'harbor-cafe', 40);
   interact(state);
   const first = state.descent!;
   interact(state);
@@ -115,7 +148,7 @@ test('interact during a descent is ignored', () => {
 });
 
 test('pausing freezes the descent', () => {
-  const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 40);
+  const state = createState(); startCafeFlight(state, 5); above(state, 'harbor-cafe', 40);
   interact(state);
   step(state, input, 0.5);
   assert.ok(state.descent, 'descent should be underway');
@@ -131,7 +164,7 @@ test('pausing freezes the descent', () => {
 });
 
 test('pausing freezes the drop animation', () => {
-  const state = createState(); startRun(state, 5); above(state, 'harbor-cafe', 3);
+  const state = createState(); startCafeFlight(state, 5); above(state, 'harbor-cafe', 3);
   interact(state);
   finishDescent(state);
   step(state, input, 0.5);
@@ -159,7 +192,7 @@ test('tutorial practice drop lands before practice completes', () => {
 });
 
 test('settlement is idempotent and a return home banks once', () => {
-  const state = createState(); startRun(state); state.run!.earnings = 35; state.mode = 'offers'; returnHome(state); land(state, 'home'); interact(state);
+  const state = createState(); startRun(state, 7); state.run!.earnings = 35; returnHome(state); land(state, 'home'); interact(state);
   settleRun(state, true);
   assert.equal(state.profile.coins, 35); assert.equal(state.profile.runs, 1); assert.equal(state.player.hover, true);
   assert.equal(state.player.speed, 0); assert.deepEqual(state.player.velocity, { x: 0, y: 0, z: 0 });
