@@ -2,6 +2,10 @@
 
 A small original 3D broom-delivery game for desktop and landscape mobile browsers. Meg and her cat Pumpkin explore a seaside town, return before nightfall, and improve their home.
 
+## Feel touchstones
+
+The game feel is cozy, not twitchy. The broom handles like a bicycle, not a racecar: momentum you manage, never a wall you hit. Touchstones: *Kiki's Delivery Service* (film), *So You Want to Be a Wizard* (books), *My Neighbor Totoro* (film).
+
 ## Development
 
 Requires Node 22.16+ (Vite 6), npm, and WebGL 2. Install with `npm.cmd ci`, run `npm.cmd run dev`, and open http://127.0.0.1:5173. Build with `npm.cmd run build`. Production is a static HTTPS site; no backend or account is needed.
