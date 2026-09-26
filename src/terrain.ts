@@ -1,10 +1,11 @@
-/** Procedural terrain heightfield for the island.
+/** Procedural terrain heightfield for the coastal mainland.
  *  heightAt(x, z) is the single source of truth: terrain mesh, water, scatter,
  *  and gameplay all read from it so they can never disagree.
  *
- *  Design: authored base (flat town core, carved bay) + domain-warped noise detail.
- *  The island edge wobbles via warped radius (kills the disc silhouette); gentle
- *  hills rise outside the town core; the bay is carved below sea level.
+ *  Design: a mainland with the ocean to the south and a harbor bay carved into
+ *  the coast — not an island. Authored base (flat town core, carved bay) +
+ *  domain-warped noise detail. The coastline wobbles organically; gentle hills
+ *  rise inland; the bay is carved below sea level.
  */
 
 import { isInBay } from './world';
@@ -85,61 +86,51 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
-
 /** Sea level. The bay water inlay sits just above this. */
 export const SEA_LEVEL = 0;
-
-/** Base island radius before the domain-warped wobble. */
-const ISLAND_RADIUS = 190;
 
 /**
  * Height of the terrain at (x, z). Pure function — the single source of truth.
  *
- * - Coastline: radial falloff with domain-warped edge (±22m wobble kills the disc).
+ * - Coast: ocean to the south at z ≈ 175 (domain-warped ±35m); land is mainland
+ *   extending north/east/west to the horizon — not an island.
  * - Hills: warped fBm, ±5m, fading to flat in the town core (all stops/buildings).
- * - Bay: carved to -3.5 below sea level (water inlay sits at +0.18).
- * - Seabed: continues down to -12 past the island edge (dips under the ocean disc).
+ * - Bay: carved to -3.5 below sea level (water inlay sits at +0.18); the bay mouth
+ *   opens past the coast to the ocean (-12).
  */
 export function heightAt(x: number, z: number): number {
-  // Domain-warped coastline radius.
-  const [wx, wz] = warp(x, z, 0.008, 26);
-  const warpedR = Math.hypot(wx, wz);
-  const edge = ISLAND_RADIUS + warpSimplex.noise(x * 0.008, z * 0.008) * 22;
+  // Southern coastline with organic wobble (domain-warped).
+  const coastZ = 175 + warpSimplex.noise(x * 0.01 + 3.7, 8.2) * 35;
 
-  // Island mask: 1 deep inside, 0 past the warped edge. Stays at 1 until 30m
-  // from the edge, then falls smoothly (so the town center is solid ground).
-  const distToEdge = edge - warpedR;
-  const t = Math.min(1, Math.max(0, distToEdge / 30));
-  const mask = t * t * (3 - 2 * t);
+  // Ocean mask: 0 on land, 1 in the open sea (smooth beach transition).
+  const oceanT = smoothstep(coastZ - 15, coastZ + 45, z);
+
+  // Bay carve: 1 inside the harbor polygon, soft blend at the shoreline.
+  // Past the coastline the bay mouth yields to the ocean depth.
+  let bayT = 0;
+  if (isInBay(x, z)) {
+    bayT = z < coastZ + 25 ? 1 : 0;
+  } else {
+    const s = 6;
+    if (isInBay(x + s, z) || isInBay(x - s, z) || isInBay(x, z + s) || isInBay(x, z - s)) {
+      if (z < coastZ + 20) bayT = 0.45; // beach ramp at the bay shore
+    }
+  }
 
   // Gentle hills from warped fBm.
   const [hx, hz] = warp(x, z, 0.015, 18);
   const hills = fbm(hx * 0.02, hz * 0.02) * 5;
 
   // Town core stays flat: fade hills to 0 within 145m of center (covers all stops;
-  // the farthest, Beacon House, is at ~134m). Hills live in the outer island ring.
+  // the farthest, Beacon House, is at ~134m). Hills live inland and up the coast.
   const townDist = Math.hypot(x, z);
   const hillMask = smoothstep(145, 175, townDist);
 
-  // Bay carve: smooth depression to -3.5 where isInBay, with a soft shoreline blend.
-  // Sample isInBay in a small neighborhood for an approximate distance-to-shore.
-  let bayT = 0;
-  if (isInBay(x, z)) {
-    bayT = 1;
-  } else {
-    // Near-shore blend: check 4 samples 6m away; if any is water, we're at the beach.
-    const s = 6;
-    if (isInBay(x + s, z) || isInBay(x - s, z) || isInBay(x, z + s) || isInBay(x, z - s)) {
-      bayT = 0.45; // beach ramp
-    }
-  }
-  const bayDepth = -3.5 * bayT;
+  // Land height (hills fade out where the bay is carved).
+  const landH = hills * hillMask * (1 - bayT);
 
-  // Combine: land height inside the mask, seabed (-12) outside, smooth blend.
-  const landH = hills * hillMask * (1 - bayT) + bayDepth;
-  const seabedH = -12;
-  return landH * mask + seabedH * (1 - mask);
+  // Water carve: bay (-3.5) or ocean (-12), whichever is deeper.
+  const carve = Math.min(bayT * -3.5, oceanT * -12);
+
+  return landH + carve;
 }
