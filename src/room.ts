@@ -117,7 +117,7 @@ export class RoomView {
     const collar = new THREE.Mesh(new THREE.TorusGeometry(.2, .055, 8, 14), mat(0x146662)); collar.rotation.x = Math.PI / 2; add(g, collar, 0, 1.86, 0);
     [[0, 1.72, .33], [0, 1.58, .36], [0, 1.44, .35]].forEach(([x, y, z]) => add(g, new THREE.Mesh(new THREE.SphereGeometry(.045, 8, 6), dark), x, y, z));
     const moon = new THREE.Mesh(new THREE.TorusGeometry(.07, .025, 6, 12, 4.2), mat(0xf7d774)); add(g, moon, -.15, .8, .4);
-    const star = new THREE.Mesh(new THREE.OctahedronGeometry(.07), mat(0xf7d774)); star.scale.z = .4; add(g, star, .18, .72, .38);
+    const star = new THREE.Mesh(new THREE.OctahedronGeometry(.07), mat(0xf7d774)); star.scale.z = .4; add(g, star, .18, .72, .46);
     // Satchel with a shoulder strap.
     add(g, box(.26, .3, .14, satchelM), .55, 1.2, .02);
     add(g, box(.27, .12, .15, mat(0x5e3f2a)), .55, 1.32, .02);

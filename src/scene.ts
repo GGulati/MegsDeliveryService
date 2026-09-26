@@ -255,8 +255,8 @@ export class GameRenderer {
     const bandH = add(new THREE.TorusGeometry(1.22,.16,8,14), dressM, {x:0,y:9.15,z:-.42}); bandH.rotation.x = Math.PI/2;
     const crownH = add(new THREE.ConeGeometry(1.2,2.5,12), purple, {x:0,y:10.2,z:-.5}); crownH.rotation.x = -.12;
     const tipH = add(new THREE.ConeGeometry(.4,1.1,8), purple, {x:0,y:11.5,z:-.85}); tipH.rotation.x = -.7;
-    add(new THREE.SphereGeometry(.18,8,6), dressM, {x:0,y:9.5,z:1.15});
-    [-1,1].forEach(side => add(new THREE.SphereGeometry(.34,8,6), dressM, {x:side*.36,y:9.55,z:1.15}, {x:1,y:.75,z:.5}));
+    add(new THREE.SphereGeometry(.18,8,6), dressM, {x:0,y:9.5,z:.55});
+    [-1,1].forEach(side => add(new THREE.SphereGeometry(.34,8,6), dressM, {x:side*.36,y:9.55,z:.55}, {x:1,y:.75,z:.5}));
     // Satchel on her hip with a strap.
     add(new THREE.BoxGeometry(.9,1,.5), satchelM, {x:1.7,y:4.6,z:.3});
     const strapH = add(new THREE.CylinderGeometry(.1,.1,3,6), toon(0x5e3f2a), {x:.9,y:5.8,z:-.1}); strapH.rotation.z = .8;
