@@ -152,6 +152,22 @@ function lerp3(a: readonly number[], b: readonly number[], t: number): [number, 
 }
 
 /**
+ * Whether vegetation can grow at (x, z). Masks by altitude (grass band),
+ * water proximity (not on the beach), and slope (not on cliffs).
+ * Pure function of the heightfield — scatter and color can never disagree.
+ */
+export function canGrow(x: number, z: number): boolean {
+  const { h, bayT, oceanT } = computeTerrain(x, z);
+  if (h < 0.2 || h > 4.5) return false; // grass band (town lowland to hillfoot)
+  if (bayT > 0 || oceanT > 0.05) return false; // not on the beach
+  const e = 1.5;
+  const sx = (computeTerrain(x + e, z).h - computeTerrain(x - e, z).h) / (2 * e);
+  const sz = (computeTerrain(x, z + e).h - computeTerrain(x, z - e).h) / (2 * e);
+  if (Math.hypot(sx, sz) > 0.5) return false; // too steep
+  return true;
+}
+
+/**
  * Surface color at (x, z) as [r,g,b]. Height-and-slope ramps with mottling:
  * seabed sand under water, beach sand at the waterline (bay shore and open coast),
  * grass on the town lowland and gentle hills, rock on hilltops and steep slopes.

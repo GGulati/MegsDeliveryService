@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { heightAt, surfaceColor, SEA_LEVEL } from '../src/terrain';
+import { heightAt, surfaceColor, canGrow, SEA_LEVEL } from '../src/terrain';
 import { isInBay } from '../src/world';
 
 test('heightAt is deterministic', () => {
@@ -105,4 +105,24 @@ test('surfaceColor: rock on high hilltops', () => {
 test('surfaceColor is deterministic', () => {
   const a = surfaceColor(37, -42), b = surfaceColor(37, -42);
   assert.deepStrictEqual(a, b);
+});
+
+test('canGrow: true on inland grass, false on beach/water/rock', () => {
+  // Inland grass hillfoot should grow.
+  let grew = 0;
+  for (let x = -120; x <= 120; x += 20) {
+    for (let z = -170; z <= -150; z += 10) {
+      if (canGrow(x, z)) grew++;
+    }
+  }
+  assert.ok(grew > 5, `expected growable inland spots, got ${grew}`);
+  // In the bay: no.
+  assert.ok(!canGrow(20, 60), 'bay water should not grow trees');
+  // On a high hilltop: no (rock).
+  let highX = 0, highZ = -160, highH = -Infinity;
+  for (let x = -120; x <= 120; x += 20) {
+    const h = heightAt(x, -160);
+    if (h > highH) { highH = h; highX = x; }
+  }
+  if (highH > 4.5) assert.ok(!canGrow(highX, -160), 'rock hilltop should not grow trees');
 });

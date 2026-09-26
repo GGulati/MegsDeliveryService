@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
-import { buildBayShape } from './shore';
-import { heightAt, surfaceColor } from './terrain';
+import { buildWater, WaterMesh } from './water';
+import { heightAt, surfaceColor, canGrow } from './terrain';
+import { mulberry32 } from './grain';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -41,6 +42,7 @@ export class GameRenderer {
   private lastPixelRatio = -1;
   private followYaw = 0;
   private world!: THREE.Group;
+  private water: WaterMesh | null = null;
   private room = new RoomView();
   private outdoorFog = new THREE.FogExp2(0xb9dce0,.0035);
 
@@ -72,6 +74,7 @@ export class GameRenderer {
   render(state: GameState, dt: number, settings: RenderSettings): void {
     if (this.disposed) return;
     const step = state.paused ? 0 : Math.min(.05, Math.max(0, dt)); this.clock += step;
+    if (this.water && !settings.reducedMotion) this.water.update(this.clock);
     const visual = flightVisuals(state, this.clock, settings.reducedMotion);
     this.effects.update(visual.speed, settings.lowQuality);
     const canvas = this.renderer.domElement;
@@ -126,8 +129,12 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    const roadMat = toon(0xffedc4), waterMat = toon(0x6abdc7);
-    const water = new THREE.Mesh(new THREE.CircleGeometry(320, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -0.25; g.add(water);
+    const roadMat = toon(0xffedc4);
+    // One water plane for the whole world. The shader discovers depth from the
+    // baked heightfield, so foam and color follow the true coastline — no polygons.
+    const water = buildWater();
+    this.water = water;
+    g.add(water.mesh);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
     // Vertex colors paint the surface directly from terrain height and slope —
@@ -147,11 +154,6 @@ export class GameRenderer {
     const groundMat = toon(0xffffff);
     groundMat.vertexColors = true;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
-    // Harbor bay water: a real inlet, not a painted decal. The shoreline is a
-    // hand-placed organic polygon; the sand is painted on the terrain itself.
-    // The mouth opens past the island edge to meet the ocean.
-    const bayWater = new THREE.Mesh(new THREE.ShapeGeometry(buildBayShape()), waterMat);
-    bayWater.rotation.x = -Math.PI / 2; bayWater.position.y = .18; g.add(bayWater);
     // Curving pale paths are tubes so they remain charming from the chase camera.
     // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
     // serves the merchant row and mansion hill, meeting in the north.
@@ -229,13 +231,32 @@ export class GameRenderer {
 
   private makeGreenery(g: THREE.Group): void {
     const trunk = toon(0x744a36), leaf = toon(0x4d976b), flower = toon(0xff8baa);
-    for (let i=0;i<72;i++) { const a=i*2.399, r=42+(i%9)*15; const x=Math.cos(a)*r, z=Math.sin(a)*r;
-      if (isInBay(x, z)) continue;
+    // Rejection-sampled forest: trees only where the heightfield says vegetation
+    // grows (grass band, gentle slope, off the beach). Deterministic seed.
+    const rand = mulberry32(1337);
+    let placed = 0, tries = 0;
+    while (placed < 140 && tries < 3000) {
+      tries++;
+      const x = (rand() - 0.5) * 400, z = (rand() - 0.5) * 400;
+      if (!canGrow(x, z)) continue;
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
-      const t=new THREE.Group(); const h=3+(i%3)*1.4;
-      const b=new THREE.Mesh(new THREE.CylinderGeometry(.35,.55,h,7),trunk); b.position.y=h/2; t.add(b);
-      const crown=new THREE.Mesh(new THREE.IcosahedronGeometry(2.2+(i%2),1),leaf); crown.position.y=h+1.5;t.add(crown); t.position.set(x,heightAt(x,z),z);g.add(t);
-      if(i%3===0){const f=new THREE.Mesh(new THREE.SphereGeometry(.28,7,6),flower);f.position.set(x+.8,heightAt(x,z)+.5,z+.6);g.add(f);}
+      // Keep the town center airy: thin out trees in the built-up core.
+      if (Math.hypot(x, z) < 100 && rand() < 0.7) continue;
+      const t = new THREE.Group();
+      const h = 3 + rand() * 2.5;
+      const b = new THREE.Mesh(new THREE.CylinderGeometry(.35, .55, h, 7), trunk);
+      b.position.y = h / 2; t.add(b);
+      const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.2 + rand() * 1.2, 1), leaf);
+      crown.position.y = h + 1.5; t.add(crown);
+      t.position.set(x, heightAt(x, z), z);
+      t.rotation.y = rand() * Math.PI * 2;
+      g.add(t);
+      if (rand() < 0.3) {
+        const f = new THREE.Mesh(new THREE.SphereGeometry(.28, 7, 6), flower);
+        f.position.set(x + .8, heightAt(x, z) + .5, z + .6);
+        g.add(f);
+      }
+      placed++;
     }
   }
 
