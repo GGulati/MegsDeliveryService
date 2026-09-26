@@ -39,18 +39,10 @@ const waterVert = /* glsl */`
 `;
 
 const waterFrag = /* glsl */`
+  precision highp float;
   uniform sampler2D uHeightmap;
   uniform float uTime;
   varying vec2 vWorldXZ;
-
-  // Cheap value noise for the foam edge.
-  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-  float vnoise(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x),
-               mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
-  }
 
   void main() {
     vec2 uv = vWorldXZ / ${WORLD_SIZE}.0 + 0.5;
@@ -67,10 +59,13 @@ const waterFrag = /* glsl */`
       ? mix(shallow, mid, depth / 2.5)
       : mix(mid, deep, clamp((depth - 2.5) / 7.0, 0.0, 1.0));
 
-    // Foam hugs the shoreline; the edge shimmers with noise + time.
-    float foamBand = 1.0 - smoothstep(0.05, 0.45, depth);
-    float fn = vnoise(vWorldXZ * 1.4 + vec2(uTime * 0.35, -uTime * 0.22));
-    float foam = foamBand * smoothstep(0.35, 0.75, fn + foamBand * 0.35);
+    // Foam hugs the shoreline in smooth bands. Layered sine waves give an
+    // organic edge without hash noise (which dithers in mediump precision).
+    float foamBand = 1.0 - smoothstep(0.05, 0.5, depth);
+    float w1 = sin(vWorldXZ.x * 0.55 + uTime * 0.9) * sin(vWorldXZ.y * 0.48 - uTime * 0.7);
+    float w2 = sin((vWorldXZ.x + vWorldXZ.y) * 0.23 + uTime * 0.5);
+    float foamEdge = smoothstep(0.15, 0.85, 0.5 + 0.32 * w1 + 0.18 * w2);
+    float foam = foamBand * foamEdge;
     col = mix(col, vec3(0.98, 0.99, 0.98), foam * 0.85);
 
     // Gentle stylized ripple light.

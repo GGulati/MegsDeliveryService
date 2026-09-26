@@ -157,8 +157,9 @@ export class GameRenderer {
     // Curving pale paths are tubes so they remain charming from the chase camera.
     // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
     // serves the merchant row and mansion hill, meeting in the north.
+    // Control points snap to the heightfield so roads ride the hills, not through them.
     [[[-150,0,90],[-116,0,40],[-80,0,-10],[-70,0,-70],[-40,0,-110],[0,0,-120]], [[150,0,90],[110,0,50],[90,0,0],[106,0,-60],[60,0,-110],[0,0,-120]]].forEach(points => {
-      const curve = new THREE.CatmullRomCurve3(points.map(a => new THREE.Vector3(a[0], .18, a[2])));
+      const curve = new THREE.CatmullRomCurve3(points.map(([x, , z]) => new THREE.Vector3(x, heightAt(x, z) + .18, z)));
       g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 2.8, 8, false), roadMat));
     });
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
