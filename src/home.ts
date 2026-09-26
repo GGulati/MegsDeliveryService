@@ -25,8 +25,8 @@ export const BROOM_TRACKS = [
 type Station = typeof HOME_STATIONS[number];
 type UpgradeTrack = typeof BROOM_TRACKS[number]['id'];
 
-const ROOM_X = 7.5;
-const ROOM_Z = 5.5;
+export const ROOM_X = 7.5;
+export const ROOM_Z = 5.5;
 const STATION_RADIUS = 2.4;
 const WALK_SPEED = 3.5;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
