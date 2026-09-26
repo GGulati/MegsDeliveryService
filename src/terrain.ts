@@ -117,9 +117,10 @@ export function heightAt(x: number, z: number): number {
     }
   }
 
-  // Gentle hills from warped fBm.
+  // Gentle hills from warped fBm. Kept non-negative so inland terrain never dips
+  // below sea level (which would let the ocean plane peek through as lagoons).
   const [hx, hz] = warp(x, z, 0.015, 18);
-  const hills = fbm(hx * 0.02, hz * 0.02) * 5;
+  const hills = (fbm(hx * 0.02, hz * 0.02) * 0.5 + 0.5) * 8;
 
   // Town core stays flat: fade hills to 0 within 145m of center (covers all stops;
   // the farthest, Beacon House, is at ~134m). Hills live inland and up the coast.

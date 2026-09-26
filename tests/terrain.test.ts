@@ -27,9 +27,9 @@ test('bay is carved below sea level', () => {
 });
 
 test('ocean is to the south, land is mainland to the north', () => {
-  // At z=250 (well south) it's open sea; at z=-150 (north) it's land, not seabed.
-  assert.ok(heightAt(0, 250) < -10, 'south is ocean');
-  assert.ok(heightAt(-100, 250) < -10, 'southwest is ocean');
+  // Far south it's open sea (deep water); north it's mainland, not seabed.
+  assert.ok(heightAt(0, 280) < -8, 'south is ocean');
+  assert.ok(heightAt(-100, 280) < -8, 'southwest is ocean');
   assert.ok(heightAt(0, -150) > -1, 'north is mainland, not seabed');
   assert.ok(heightAt(-150, -100) > -1, 'northwest is mainland');
 });
@@ -46,6 +46,23 @@ test('coastline wobbles (not a straight line)', () => {
   }
   const min = Math.min(...coasts), max = Math.max(...coasts);
   assert.ok(max - min > 15, `coastline too straight: ${min}-${max}`);
+});
+
+test('inland terrain never dips below sea level (no lagoon holes)', () => {
+  // The ocean plane sits at y=-0.25; any land below that shows water inland.
+  // Sweep the inland mainland (well north of the coast and bay). The bay's
+  // 6m beach ring sits under the sand inlay, so it's excluded too.
+  const nearBay = (x: number, z: number) => {
+    const s = 8;
+    return isInBay(x, z) || isInBay(x + s, z) || isInBay(x - s, z) || isInBay(x, z + s) || isInBay(x, z - s);
+  };
+  for (let x = -170; x <= 170; x += 10) {
+    for (let z = -170; z <= 100; z += 10) {
+      if (nearBay(x, z)) continue;
+      const h = heightAt(x, z);
+      assert.ok(h > -0.25, `lagoon hole at (${x},${z}): height ${h}`);
+    }
+  }
 });
 
 test('inland has hills', () => {

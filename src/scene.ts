@@ -126,8 +126,8 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    const groundMat = toon(0xf1d79d), roadMat = toon(0xffedc4), waterMat = toon(0x6abdc7);
-    const water = new THREE.Mesh(new THREE.CircleGeometry(320, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -1.4; g.add(water);
+    const groundMat = toon(0x7fae6e), roadMat = toon(0xffedc4), waterMat = toon(0x6abdc7);
+    const water = new THREE.Mesh(new THREE.CircleGeometry(320, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -0.25; g.add(water);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
     const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
