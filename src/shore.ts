@@ -8,15 +8,3 @@ import { BAY_SHORE } from './world';
 export function buildBayShape(): THREE.Shape {
   return new THREE.Shape(BAY_SHORE.map(([x, z]) => new THREE.Vector2(x, -z)));
 }
-
-/** Builds the sand rim: the shoreline pushed outward from the bay centroid. */
-export function buildBaySandShape(): THREE.Shape {
-  const cx = BAY_SHORE.reduce((a, p) => a + p[0], 0) / BAY_SHORE.length;
-  const cz = BAY_SHORE.reduce((a, p) => a + p[1], 0) / BAY_SHORE.length;
-  return new THREE.Shape(
-    BAY_SHORE.map(([x, z]) => {
-      const dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz) || 1;
-      return new THREE.Vector2(x + (dx / d) * 7, -(z + (dz / d) * 7));
-    }),
-  );
-}

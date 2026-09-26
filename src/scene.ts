@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
-import { buildBayShape, buildBaySandShape } from './shore';
+import { buildBayShape } from './shore';
 import { heightAt } from './terrain';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
@@ -126,27 +126,37 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    const groundMat = toon(0x7fae6e), roadMat = toon(0xffedc4), waterMat = toon(0x6abdc7);
+    const roadMat = toon(0xffedc4), waterMat = toon(0x6abdc7);
     const water = new THREE.Mesh(new THREE.CircleGeometry(320, 72), waterMat); water.rotation.x = -Math.PI / 2; water.position.y = -0.25; g.add(water);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
+    // Vertex colors paint the beach directly from terrain height, so the sand always
+    // follows the true shoreline — no separate sand polygon to misalign and gap.
     const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
     islandGeo.rotateX(-Math.PI / 2);
     const pos = islandGeo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const grass = new THREE.Color(0x7fae6e), sand = new THREE.Color(0xead9a8);
+    const tmpC = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
-      pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
+      const x = pos.getX(i), z = pos.getZ(i);
+      const h = heightAt(x, z);
+      pos.setY(i, h);
+      // Sand below the waterline blending to grass just above it.
+      const t = Math.min(1, Math.max(0, (h + 0.4) / 1.2));
+      tmpC.copy(sand).lerp(grass, t * t * (3 - 2 * t));
+      colors[i * 3] = tmpC.r; colors[i * 3 + 1] = tmpC.g; colors[i * 3 + 2] = tmpC.b;
     }
+    islandGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     islandGeo.computeVertexNormals();
+    const groundMat = toon(0xffffff);
+    groundMat.vertexColors = true;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
-    // Harbor bay: a real inlet, not a painted decal. The shoreline is a hand-placed
-    // organic polygon; a sand rim slightly larger than the water gives the beach.
-    // Both sit just above the island top so the flat toon shapes merge visually.
+    // Harbor bay water: a real inlet, not a painted decal. The shoreline is a
+    // hand-placed organic polygon; the sand is painted on the terrain itself.
     // The mouth opens past the island edge to meet the ocean.
-    const sandMat = toon(0xead9a8);
     const bayWater = new THREE.Mesh(new THREE.ShapeGeometry(buildBayShape()), waterMat);
     bayWater.rotation.x = -Math.PI / 2; bayWater.position.y = .18; g.add(bayWater);
-    const baySand = new THREE.Mesh(new THREE.ShapeGeometry(buildBaySandShape()), sandMat);
-    baySand.rotation.x = -Math.PI / 2; baySand.position.y = .165; g.add(baySand);
     // Curving pale paths are tubes so they remain charming from the chase camera.
     // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
     // serves the merchant row and mansion hill, meeting in the north.

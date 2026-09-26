@@ -51,7 +51,7 @@ test('coastline wobbles (not a straight line)', () => {
 test('inland terrain never dips below sea level (no lagoon holes)', () => {
   // The ocean plane sits at y=-0.25; any land below that shows water inland.
   // Sweep the inland mainland (well north of the coast and bay). The bay's
-  // 6m beach ring sits under the sand inlay, so it's excluded too.
+  // 6m beach ring is vertex-colored sand, so it's excluded too.
   const nearBay = (x: number, z: number) => {
     const s = 8;
     return isInBay(x, z) || isInBay(x + s, z) || isInBay(x - s, z) || isInBay(x, z + s) || isInBay(x, z - s);
