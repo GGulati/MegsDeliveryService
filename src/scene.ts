@@ -137,22 +137,41 @@ export class GameRenderer {
     g.add(water.mesh);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
-    // Vertex colors paint the surface directly from terrain height and slope —
-    // beach, grass, and rock bands — so color always follows the true landform.
+    // Surface color is baked into a 1024² texture (0.43m/texel) from the same
+    // surfaceColor function, so the GPU filters it smoothly per-pixel. Vertex
+    // colors on the 2.2m mesh grid can't do this — they interpolate as visible
+    // triangles. The heightfield still displaces the vertices.
     const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
     islandGeo.rotateX(-Math.PI / 2);
     const pos = islandGeo.attributes.position;
-    const colors = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), z = pos.getZ(i);
-      pos.setY(i, heightAt(x, z));
-      const [r, g, b] = surfaceColor(x, z);
-      colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
+      pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
     }
-    islandGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     islandGeo.computeVertexNormals();
+    const TEX = 1024;
+    const canvas = document.createElement('canvas');
+    canvas.width = TEX; canvas.height = TEX;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(TEX, TEX);
+    for (let py = 0; py < TEX; py++) {
+      for (let px = 0; px < TEX; px++) {
+        // Canvas y=0 is north (-z); plane UV v=1 is north after rotateX.
+        const x = (px / (TEX - 1) - 0.5) * 440;
+        const z = (0.5 - py / (TEX - 1)) * 440;
+        const [r, g, b] = surfaceColor(x, z);
+        const o = (py * TEX + px) * 4;
+        img.data[o] = Math.round(r * 255);
+        img.data[o + 1] = Math.round(g * 255);
+        img.data[o + 2] = Math.round(b * 255);
+        img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const colorTex = new THREE.CanvasTexture(canvas);
+    colorTex.colorSpace = THREE.SRGBColorSpace;
+    colorTex.anisotropy = 4;
     const groundMat = toon(0xffffff);
-    groundMat.vertexColors = true;
+    groundMat.map = colorTex;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
     // Curving pale paths are tubes so they remain charming from the chase camera.
     // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
