@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay } from '../src/world';
+import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay, OBSERVATORY_DOME_SOLID_INDEX } from '../src/world';
 import { buildBayShape } from '../src/shore';
 import * as THREE from 'three';
 
@@ -117,9 +117,14 @@ test('district buildings do not significantly overlap each other', () => {
     for (let j = i + 1; j < n; j++) {
       const a = SOLIDS[i], b = SOLIDS[j];
       const ox = Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x);
+      const oy = Math.min(a.max.y, b.max.y) - Math.max(a.min.y, b.min.y);
       const oz = Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z);
-      // Attached buildings may touch by a metre; flag real intersections.
-      assert.ok(ox < 2 || oz < 2, `buildings ${i} and ${j} overlap by ${ox.toFixed(1)}x${oz.toFixed(1)}m`);
+      // Attached buildings may touch by a metre; vertical stacking (dome on a
+      // roof) is not an intersection. Flag only real 3D overlaps.
+      // The observatory dome sits on its building's pyramid roof by design.
+      const isDomeStack = (i === OBSERVATORY_DOME_SOLID_INDEX || j === OBSERVATORY_DOME_SOLID_INDEX);
+      const overlap3d = ox >= 2 && oy > 0 && oz >= 2 && !isDomeStack;
+      assert.ok(!overlap3d, `buildings ${i} and ${j} overlap by ${ox.toFixed(1)}x${oy.toFixed(1)}x${oz.toFixed(1)}m`);
     }
   }
 });
@@ -137,4 +142,48 @@ test('home is the bakery attic on the merchant row', () => {
   const home = STOPS[0];
   assert.equal(home.id, 'home');
   assert.ok(home.name.toLowerCase().includes('bakery'), 'home is the bakery');
+});
+
+test('Phase B landmarks sit on land inside the hill line', () => {
+  // Clock tower and observatory dome solids (lighthouse tower is last).
+  const landmarks = [SOLIDS[SOLIDS.length - 3], SOLIDS[SOLIDS.length - 2]];
+  for (const b of landmarks) {
+    const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+    assert.ok(!isInBay(cx, cz), `landmark at (${cx},${cz}) is in the bay`);
+    assert.ok(Math.hypot(cx, cz) < 145, `landmark at r=${Math.hypot(cx, cz).toFixed(0)} is past the hill line`);
+  }
+});
+
+test('clock tower is tallest in town core but shorter than lighthouse', () => {
+  const clock = SOLIDS[SOLIDS.length - 3];
+  const lighthouse = SOLIDS[SOLIDS.length - 1];
+  const clockH = clock.max.y - clock.min.y;
+  const lightH = lighthouse.max.y - lighthouse.min.y;
+  assert.ok(clockH < lightH, `clock tower ${clockH}m not shorter than lighthouse ${lightH}m`);
+  // Taller than the market hall (tallest non-landmark in the core).
+  const market = SOLIDS[2];
+  assert.ok(clockH > market.max.y - market.min.y, 'clock tower not tallest in town core');
+  assert.equal(clock.district, 'old-town');
+});
+
+test('observatory dome sits on its building roof, clear of the pad', () => {
+  const dome = SOLIDS[SOLIDS.length - 2];
+  const base = SOLIDS[5]; // Hill Observatory building
+  const pad = STOPS.find(s => s.id === 'observatory')!.position;
+  // Dome base sits on the pyramid roof surface at its (x,z), not the apex:
+  // roof slopes from base (26.8) to apex (31) over half-extents (15,15).
+  const cx = (base.min.x + base.max.x) / 2, cz = (base.min.z + base.max.z) / 2;
+  const hx = (base.max.x - base.min.x) / 2, hz = (base.max.z - base.min.z) / 2;
+  const dx = Math.abs(107 - cx) / hx, dz = Math.abs(-63 - cz) / hz;
+  const roofSurface = 26.8 + (31 - 26.8) * (1 - Math.max(dx, dz));
+  assert.ok(Math.abs(dome.min.y - roofSurface) < 0.5, `dome not on the roof surface (dome ${dome.min.y}, surface ${roofSurface.toFixed(2)})`);
+  // Dome footprint is inside the building footprint.
+  assert.ok(dome.min.x >= base.min.x && dome.max.x <= base.max.x, 'dome x outside building');
+  assert.ok(dome.min.z >= base.min.z && dome.max.z <= base.max.z, 'dome z outside building');
+  // Pad is clear of the dome collision.
+  const inside = pad.x > dome.min.x && pad.x < dome.max.x &&
+    pad.z > dome.min.z && pad.z < dome.max.z &&
+    pad.y > dome.min.y && pad.y < dome.max.y;
+  assert.ok(!inside, 'observatory pad would be inside the dome collision');
+  assert.equal(dome.district, 'observatory-rise');
 });

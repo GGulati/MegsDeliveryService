@@ -364,7 +364,11 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
   for (const solid of [...SOLIDS, ...WALLS]) {
     const min = { x: solid.min.x - RADIUS, y: solid.min.y - RADIUS, z: solid.min.z - RADIUS };
     const max = { x: solid.max.x + RADIUS, y: solid.max.y + RADIUS, z: solid.max.z + RADIUS };
-    let enter = 0, exit = 1;
+    // enter starts at a tiny negative so a ray beginning exactly on a face
+    // (near == 0) still records that face's normal. Otherwise the 0 > 0
+    // comparison fails, the normal stays zero, and a corner contact degrades
+    // to "degenerate" — pinning the player instead of sliding.
+    let enter = -1e-9, exit = 1;
     let normal: Vec3 = { x: 0, y: 0, z: 0 };
     for (const axis of ['x', 'y', 'z'] as const) {
       const p = start[axis], d = delta[axis];
@@ -607,22 +611,60 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // roof-edge contact was a dead stop — which also made turning feel frozen
   // while pinned against a building. Now the into-surface component stops at
   // the contact point but the tangential remainder still applies, so a
-  // glancing hit slides along the surface. One sweep is enough: the slide
-  // runs parallel to the hit face (it can't enter that box), and the boxes
-  // are far enough apart that a single frame's remainder can't reach another.
-  const hit = sweep(player.position, delta);
-  if (hit && (hit.normal.x || hit.normal.y || hit.normal.z)) {
+  // glancing hit slides along the surface. The sweep iterates (up to 3 hits
+  // per frame): in a narrow corridor the slide remainder can reach the
+  // opposite wall in the same frame, and a single sweep would let it
+  // penetrate — the next iteration re-sweeps the remainder so Meg slides
+  // through or stops cleanly instead of rattling between the walls.
+  let remaining = { ...delta };
+  for (let sweepIter = 0; sweepIter < 3; sweepIter++) {
+    const hit = sweep(player.position, remaining);
+    if (!hit) {
+      player.position.x += remaining.x; player.position.y += remaining.y; player.position.z += remaining.z;
+      break;
+    }
+    if (!(hit.normal.x || hit.normal.y || hit.normal.z)) break; // degenerate: de-penetration handles it
     const safeT = Math.max(0, hit.t - 0.0001);
-    player.position.x += delta.x * safeT; player.position.y += delta.y * safeT; player.position.z += delta.z * safeT;
+    player.position.x += remaining.x * safeT; player.position.y += remaining.y * safeT; player.position.z += remaining.z * safeT;
     const rest = 1 - safeT;
-    if (!hit.normal.x) player.position.x += delta.x * rest;
-    if (!hit.normal.y) player.position.y += delta.y * rest;
-    if (!hit.normal.z) player.position.z += delta.z * rest;
-  } else if (!hit) {
-    player.position.x += delta.x; player.position.y += delta.y; player.position.z += delta.z;
+    remaining = {
+      x: hit.normal.x ? 0 : remaining.x * rest,
+      y: hit.normal.y ? 0 : remaining.y * rest,
+      z: hit.normal.z ? 0 : remaining.z * rest,
+    };
+    if (!remaining.x && !remaining.y && !remaining.z) break;
   }
   // else: degenerate contact with no surface normal (already inside a box) —
-  // hold still rather than guess a slide direction.
+  // fall through to the de-penetration pass below, which pushes out along
+  // the shortest exit instead of holding still.
+  //
+  // De-penetration: if the player sphere intersects any solid (from a discrete
+  // step, a moved building, or a narrow gap), push out along the minimum
+  // translation vector — the closest face. Iterates so a push out of one box
+  // that lands in another still resolves. Meg can never be left stuck inside.
+  for (let iter = 0; iter < 4; iter++) {
+    let pushed = false;
+    for (const solid of [...SOLIDS, ...WALLS]) {
+      const minX = solid.min.x - RADIUS, maxX = solid.max.x + RADIUS;
+      const minY = solid.min.y - RADIUS, maxY = solid.max.y + RADIUS;
+      const minZ = solid.min.z - RADIUS, maxZ = solid.max.z + RADIUS;
+      const p = player.position;
+      if (p.x <= minX || p.x >= maxX || p.y <= minY || p.y >= maxY || p.z <= minZ || p.z >= maxZ) continue;
+      // Penetration depth to each face; exit via the closest one.
+      const dxMin = p.x - minX, dxMax = maxX - p.x;
+      const dyMin = p.y - minY, dyMax = maxY - p.y;
+      const dzMin = p.z - minZ, dzMax = maxZ - p.z;
+      const m = Math.min(dxMin, dxMax, dyMin, dyMax, dzMin, dzMax);
+      // Push 2cm past the face so floating-point doesn't leave us exactly on
+      // the boundary (which the sweep reads as "inside" next frame).
+      const skin = 0.02;
+      if (m === dxMin) p.x = minX - skin; else if (m === dxMax) p.x = maxX + skin;
+      else if (m === dyMin) p.y = minY - skin; else if (m === dyMax) p.y = maxY + skin;
+      else if (m === dzMin) p.z = minZ - skin; else p.z = maxZ + skin;
+      pushed = true;
+    }
+    if (!pushed) break;
+  }
   player.position.x = clamp(player.position.x, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   // Floor follows the terrain: 3m above ground (or water), so Meg can't clip hills.
   const groundY = Math.max(heightAt(player.position.x, player.position.z), 0) + MIN_ALTITUDE;

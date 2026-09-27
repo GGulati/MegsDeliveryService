@@ -85,3 +85,53 @@ test('velocity reflects actual motion while pinned, not attempted motion', () =>
   const speed = Math.hypot(state.player.velocity.x, state.player.velocity.y, state.player.velocity.z);
   assert.ok(speed < 0.5, `pinned velocity should read ~0, got ${speed.toFixed(2)}`);
 });
+
+test('de-penetration pushes the player out when starting inside a solid', () => {
+  const state = createState();
+  // Place Meg inside the harbor-cafe building solid (x[-59,-31], y[3,16], z[51,79]).
+  nearCafe(state, -45, 10, 65, 0, 0);
+  step(state, idle, 0.016);
+  const p = state.player.position;
+  // Expanded by RADIUS=1: x[-60,-30], y[2,17], z[50,80]. Closest face from (-45,10,65)
+  // is... all interior; must be pushed to a face.
+  const insideX = p.x > -60 && p.x < -30;
+  const insideY = p.y > 2 && p.y < 17;
+  const insideZ = p.z > 50 && p.z < 80;
+  assert.ok(!(insideX && insideY && insideZ), `still inside solid at (${p.x},${p.y},${p.z})`);
+});
+
+test('de-penetration resolves a narrow-gap wedge', () => {
+  const state = createState();
+  // Simulate a wedge: place Meg in the 3m corridor between two merchant-row
+  // buildings and step — she must not remain intersecting.
+  state.mode = 'flight';
+  state.player.position = { x: -57.5, y: 8, z: 27.5 }; // between solid 0 and 16
+  state.player.yaw = 0; state.player.speed = 0; state.player.throttle = 0;
+  state.player.hover = false; state.player.velocity = { x: 0, y: 0, z: 0 };
+  step(state, idle, 0.016);
+  const p = state.player.position;
+  // After de-penetration she must be out of both expanded boxes.
+  const in0 = p.x > -83 && p.x < -57 && p.y > 2 && p.y < 19 && p.z > 27 && p.z < 53;
+  const in16 = p.x > -56 && p.x < -39 && p.y > 2 && p.y < 12 && p.z > 19 && p.z < 36;
+  assert.ok(!in0 && !in16, `stuck in gap at (${p.x},${p.y},${p.z})`);
+});
+
+test('iterated sweep slides through a narrow corridor without penetrating', () => {
+  const state = createState();
+  // Fly along the 3m merchant-row corridor (x ~ -57.5 between solid 0 and 16).
+  // The corridor is 3m wide, player 2m — she should slide through, never
+  // ending a frame inside either expanded box.
+  state.mode = 'flight';
+  state.player.position = { x: -57.5, y: 8, z: 10 };
+  state.player.yaw = 0; // yaw 0 = facing -z
+  state.player.speed = 8; state.player.throttle = 8;
+  state.player.hover = false; state.player.velocity = { x: 0, y: 0, z: 0 };
+  // Step several frames moving in -z through the corridor region z 27..36.
+  for (let i = 0; i < 30; i++) {
+    step(state, idle, 0.016);
+    const p = state.player.position;
+    const in0 = p.x > -83 && p.x < -57 && p.y > 2 && p.y < 19 && p.z > 27 && p.z < 53;
+    const in16 = p.x > -56 && p.x < -39 && p.y > 2 && p.y < 12 && p.z > 19 && p.z < 36;
+    assert.ok(!in0 && !in16, `penetrated on frame ${i} at (${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)})`);
+  }
+});
