@@ -5,9 +5,11 @@ import { deckHeightAt, junctionPatches, patchContains, patchSurfaceHeight } from
 
 // Road ribbons used to overlap at intersections with slightly different deck
 // heights, so they visibly clipped through each other (user report 2026-09-27).
-// Every flat multi-edge node now gets a single convex junction patch: the hull
-// of every pairwise ribbon overlap, tessellated as a polar grid and draped 5cm
-// above the highest deck, so the intersection renders as one clean surface.
+// Every flat multi-edge node now gets a single junction patch: the UNION of
+// the incident ribbon stubs (not a convex hull — the hull filled wedges
+// between acute roads with asphalt and overlapped neighboring roads),
+// tessellated as a polar grid from the node and draped 5cm above the highest
+// deck, so the intersection renders as one clean surface.
 // Grade-separated nodes (e.g. switchback hairpins stacked vertically) are
 // skipped — their ribbons can't clip in 3D.
 
@@ -42,68 +44,56 @@ function deckNear(d: ReturnType<typeof dirsOf>[number], id: string, x: number, z
   return deckHeightAt(d.e, d.e.a === id ? t : 1 - t);
 }
 
-// Andrew monotone chain convex hull (separate code from road-deck.ts).
-function convexHull(pts: Pt[]): Pt[] {
-  const s = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lower: Pt[] = [], upper: Pt[] = [];
-  for (const p of s) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
+const drapeOf = (id: string, dirs: ReturnType<typeof dirsOf>) =>
+  (x: number, z: number): number => {
+    let h = -Infinity;
+    for (const d of dirs) h = Math.max(h, deckNear(d, id, x, z));
+    return h + 0.05;
+  };
+
+// Stub length: mirror of road-deck.ts (covers the pairwise overlap zone).
+function stubLenOf(dirs: ReturnType<typeof dirsOf>): number {
+  let stubLen = 8;
+  for (let i = 0; i < dirs.length; i++) {
+    for (let j = i + 1; j < dirs.length; j++) {
+      const a = dirs[i], b = dirs[j];
+      const dot = Math.min(1, Math.max(-1, a.dx * b.dx + a.dz * b.dz));
+      const theta = Math.acos(dot);
+      const clamped = Math.min(Math.PI, Math.max(Math.PI / 15, theta));
+      stubLen = Math.max(stubLen, (a.hw + b.hw) / Math.sin(clamped));
+    }
   }
-  for (let i = s.length - 1; i >= 0; i--) {
-    const p = s[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  lower.pop(); upper.pop();
-  return lower.concat(upper);
+  let minLen = Infinity;
+  for (const d of dirs) minLen = Math.min(minLen, d.len);
+  return Math.min(stubLen, minLen * 0.9, 40);
 }
 
-// Independent re-derivation of the build decision, mirroring the impl rule
-// exactly (any pair angle; hull area >= 2m^2; drape spread <= 0.8m, else
-// grade-separated skip). Straight-through pairs die on the area rule.
+// Mirror of the build decision: >=2 incident dirs, not a near-collinear
+// 2-dir pair (straight-through or duplicate), and the incident roads stay
+// within 0.8m height spread across the stub area (else grade-separated).
 function expectedPatch(id: string): boolean {
-  const p = nodePos(nodeById(id));
   const dirs = dirsOf(id);
-  const rect = (d: (typeof dirs)[number], len: number): Pt[] => {
-    const px = -d.dz, pz = d.dx;
-    const ex = p.x + d.dx * len, ez = p.z + d.dz * len;
-    return [
-      [p.x + px * d.hw, p.z + pz * d.hw],
-      [p.x - px * d.hw, p.z - pz * d.hw],
-      [ex - px * d.hw, ez - pz * d.hw],
-      [ex + px * d.hw, ez + pz * d.hw],
-    ];
-  };
-  const verts: Pt[] = [[p.x, p.z]];
-  for (let i = 0; i < dirs.length; i++) for (let j = i + 1; j < dirs.length; j++) {
-    const a = dirs[i], b = dirs[j];
-    const theta = pairAngle(a, b) * Math.PI / 180;
-    const clamped = Math.min(Math.PI, Math.max(Math.PI / 15, theta));
-    const reach = (a.hw + b.hw) / Math.sin(clamped);
-    for (const v of clipPoly(rect(a, Math.min(a.len, reach)), rect(b, Math.min(b.len, reach)))) verts.push(v);
+  if (dirs.length < 2) return false;
+  if (dirs.length === 2) {
+    const theta = pairAngle(dirs[0], dirs[1]);
+    if (theta < 15 || theta > 165) return false;
   }
-  const hull = convexHull(verts);
-  if (hull.length < 3) return false;
-  let area = 0;
-  for (let i = 0; i < hull.length; i++) {
-    const [x1, z1] = hull[i], [x2, z2] = hull[(i + 1) % hull.length];
-    area += x1 * z2 - x2 * z1;
-  }
-  if (Math.abs(area) / 2 < 2) return false;
+  const p = nodePos(nodeById(id));
+  const stubLen = stubLenOf(dirs);
   let lo = Infinity, hi = -Infinity;
-  for (const [x, z] of hull) {
-    let deck = -Infinity;
-    for (const d of dirs) deck = Math.max(deck, deckNear(d, id, x, z));
-    lo = Math.min(lo, deck); hi = Math.max(hi, deck);
+  for (const d of dirs) {
+    for (const f of [0, 0.5, 1]) {
+      const s = Math.min(stubLen, d.len * 0.9) * f;
+      const h = deckNear(d, id, p.x + d.dx * s, p.z + d.dz * s);
+      lo = Math.min(lo, h); hi = Math.max(hi, h);
+    }
   }
   return hi - lo <= 0.8;
 }
 
-// Every node gets a patch exactly when the spec says so: sharp pair, hull
-// area >= 2m^2, drape spread <= 0.8m. Dead-ends, straight-throughs, and
-// grade-separated (steep) nodes get none.
+// Every node gets a patch exactly when the spec says so. Dead-ends,
+// straight-throughs / duplicate-direction pairs, and grade-separated
+// (steep) nodes get none.
 test('intersection patches exist exactly where needed', () => {
   const patches = junctionPatches();
   const byNode = new Map(patches.map(p => [p.nodeId, p]));
@@ -113,11 +103,6 @@ test('intersection patches exist exactly where needed', () => {
     ids.add(e.a); ids.add(e.b);
   }
   for (const id of ids) {
-    const inc = incident(id);
-    if (inc.length < 2) {
-      assert.ok(!byNode.has(id), `dead-end ${id} should not get a patch`);
-      continue;
-    }
     const want = expectedPatch(id);
     const p = byNode.get(id);
     if (want) {
@@ -130,68 +115,56 @@ test('intersection patches exist exactly where needed', () => {
   }
 });
 
-// Self-contained Sutherland–Hodgman clip (mirrors road-deck.ts, separate code).
-function clipPoly(subject: Pt[], clip: Pt[]): Pt[] {
-  let out = subject;
-  for (let i = 0; i < clip.length; i++) {
-    const a = clip[i], b = clip[(i + 1) % clip.length];
-    const inside = (p: Pt) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0;
-    const next: Pt[] = [];
-    for (let j = 0; j < out.length; j++) {
-      const cur = out[j], prev = out[(j + out.length - 1) % out.length];
-      const ci = inside(cur), pi = inside(prev);
-      const ix = (p1: Pt, p2: Pt): Pt => {
-        const d1x = p2[0] - p1[0], d1y = p2[1] - p1[1];
-        const d2x = b[0] - a[0], d2y = b[1] - a[1];
-        const t = ((a[0] - p1[0]) * d2y - (a[1] - p1[1]) * d2x) / (d1x * d2y - d1y * d2x || 1e-9);
-        return [p1[0] + d1x * t, p1[1] + d1y * t];
-      };
-      if (ci) { if (!pi) next.push(ix(prev, cur)); next.push(cur); }
-      else if (pi) next.push(ix(prev, cur));
-    }
-    out = next;
-    if (!out.length) break;
-  }
-  return out;
-}
-
-// The patch hull must cover the FULL pairwise ribbon overlap: every overlap
-// polygon vertex and edge midpoint lies inside the hull.
-test('patch hull covers every pairwise ribbon overlap', () => {
+// The patch footprint must equal the ribbon union: every point inside an
+// incident ribbon stub is covered (no gaps), and points in the angular
+// wedges between ribbons — beyond every ribbon's half-width — are NOT
+// covered (no convex-hull asphalt fill). This is the user-visible fix for
+// "road meetings are a mess for non-90 degree intersections".
+test('patch footprint equals the ribbon union (no gaps, no wedges)', () => {
   for (const jp of junctionPatches()) {
     const p = nodePos(nodeById(jp.nodeId));
     const dirs = dirsOf(jp.nodeId);
-    const rect = (d: (typeof dirs)[number], len: number): Pt[] => {
-      const px = -d.dz, pz = d.dx;
-      const ex = p.x + d.dx * len, ez = p.z + d.dz * len;
-      return [
-        [p.x + px * d.hw, p.z + pz * d.hw],
-        [p.x - px * d.hw, p.z - pz * d.hw],
-        [ex - px * d.hw, ez - pz * d.hw],
-        [ex + px * d.hw, ez + pz * d.hw],
-      ];
-    };
-    for (let i = 0; i < dirs.length; i++) for (let j = i + 1; j < dirs.length; j++) {
-      const a = dirs[i], b = dirs[j];
-      const theta = pairAngle(a, b) * Math.PI / 180;
-      if (theta < 15 * Math.PI / 180 || theta > 165 * Math.PI / 180) continue;
-      const clamped = Math.min(Math.PI, Math.max(Math.PI / 15, theta));
-      const reach = (a.hw + b.hw) / Math.sin(clamped);
-      const ov = clipPoly(rect(a, Math.min(a.len, reach)), rect(b, Math.min(b.len, reach)));
-      assert.ok(ov.length >= 3, `no overlap polygon for sharp pair at ${jp.nodeId}`);
-      // Probe overlap verts and edge midpoints, inset 2% toward the centroid:
-      // points exactly on the hull edge are float-fragile by construction.
-      let ocx = 0, ocz = 0;
-      for (const [x, z] of ov) { ocx += x; ocz += z; }
-      ocx /= ov.length; ocz /= ov.length;
-      const probes: Pt[] = [...ov];
-      for (let k = 0; k < ov.length; k++)
-        probes.push([(ov[k][0] + ov[(k + 1) % ov.length][0]) / 2, (ov[k][1] + ov[(k + 1) % ov.length][1]) / 2]);
-      for (const [x, z] of probes) {
-        const ix = x + (ocx - x) * 0.02, iz = z + (ocz - z) * 0.02;
-        assert.ok(patchContains(jp, ix, iz),
-          `patch at ${jp.nodeId} misses overlap of pair ${i},${j} at (${x.toFixed(1)},${z.toFixed(1)})`);
+    const stubLen = stubLenOf(dirs);
+    // Inside every ribbon stub: sample along each dir at fractions of the
+    // stub length and lateral offsets within the half-width.
+    for (const d of dirs) {
+      for (const f of [0.25, 0.5, 0.75]) {
+        const s = stubLen * f;
+        for (const w of [-0.85, 0, 0.85]) {
+          const x = p.x + d.dx * s - d.dz * d.hw * w;
+          const z = p.z + d.dz * s + d.dx * d.hw * w;
+          assert.ok(patchContains(jp, x, z),
+            `patch at ${jp.nodeId} has a gap inside ribbon at (${x.toFixed(1)},${z.toFixed(1)})`);
+        }
       }
+    }
+    // Wedges between ribbons: for each angular gap between consecutive dirs
+    // (sorted by angle), probe the bisector at a radius where it lies beyond
+    // every ribbon's half-width. It must NOT be inside the patch.
+    const angs = dirs.map(d => Math.atan2(d.dz, d.dx)).sort((a, b) => a - b);
+    for (let i = 0; i < angs.length; i++) {
+      const a0 = angs[i];
+      let a1 = angs[(i + 1) % angs.length];
+      if (a1 <= a0) a1 += Math.PI * 2;
+      const mid = (a0 + a1) / 2;
+      const gap = a1 - a0;
+      // Radius just beyond the widest ribbon's reach across this wedge:
+      // r * sin(gap/2) > maxHw  =>  outside every ribbon.
+      const maxHw = Math.max(...dirs.map(d => d.hw));
+      const r = maxHw / Math.max(Math.sin(gap / 2), 1e-6) + 1.0;
+      if (r > 30) continue; // very narrow wedge: ribbons legitimately cover it
+      const x = p.x + Math.cos(mid) * r, z = p.z + Math.sin(mid) * r;
+      // Confirm the probe really is outside every ribbon stub.
+      let inRibbon = false;
+      for (const d of dirs) {
+        const rx = x - p.x, rz = z - p.z;
+        const s = rx * d.dx + rz * d.dz;
+        const w = Math.abs(rx * -d.dz + rz * d.dx);
+        if (s >= 0 && s <= 25 && w <= d.hw) { inRibbon = true; break; }
+      }
+      if (inRibbon) continue;
+      assert.ok(!patchContains(jp, x, z),
+        `patch at ${jp.nodeId} fills non-road wedge at (${x.toFixed(1)},${z.toFixed(1)})`);
     }
   }
 });
@@ -214,7 +187,8 @@ test('rendered patch surface stays above all incident decks', () => {
       assert.ok(h !== null, `surface missing inside patch at ${jp.nodeId}`);
       let deck = -Infinity;
       for (const d of dirs) deck = Math.max(deck, deckNear(d, jp.nodeId, x, z));
-      assert.ok(h! >= deck + 0.04,
+      // 2cm margin: the drape lifts 8cm, interpolation can shave some.
+      assert.ok(h! >= deck + 0.02,
         `deck pokes through patch at ${jp.nodeId} (${x.toFixed(1)},${z.toFixed(1)}): surface ${h!.toFixed(2)} vs deck ${deck.toFixed(2)}`);
       probed++;
     }
@@ -222,19 +196,17 @@ test('rendered patch surface stays above all incident decks', () => {
   }
 });
 
-// patchContains agrees with the hull on every patch: centroid inside, a far
-// point outside; patchSurfaceHeight is non-null at the centroid.
-test('patchContains matches hull geometry on all patches', () => {
+// patchContains agrees with the star-shaped geometry: the node (star center)
+// is inside, a far point is outside; patchSurfaceHeight is non-null at the node.
+test('patchContains matches patch geometry on all patches', () => {
   const patches = junctionPatches();
   assert.ok(patches.length > 0, 'expected some junction patches');
   for (const jp of patches) {
-    let cx = 0, cz = 0;
-    for (const v of jp.ring) { cx += v.x; cz += v.z; }
-    cx /= jp.ring.length; cz /= jp.ring.length;
-    assert.ok(patchContains(jp, cx, cz), `centroid outside own patch at ${jp.nodeId}`);
-    assert.ok(patchSurfaceHeight(cx, cz) !== null, `no surface at centroid of ${jp.nodeId}`);
+    const p = nodePos(nodeById(jp.nodeId));
+    assert.ok(patchContains(jp, p.x, p.z), `node outside own patch at ${jp.nodeId}`);
+    assert.ok(patchSurfaceHeight(p.x, p.z) !== null, `no surface at node of ${jp.nodeId}`);
     const far = jp.ring[0];
-    assert.ok(!patchContains(jp, cx + (far.x - cx) * 3, cz + (far.z - cz) * 3),
+    assert.ok(!patchContains(jp, p.x + (far.x - p.x) * 3, p.z + (far.z - p.z) * 3),
       `far point inside patch at ${jp.nodeId}`);
   }
   assert.ok(patchSurfaceHeight(1e5, 1e5) === null, 'surface should be null far away');

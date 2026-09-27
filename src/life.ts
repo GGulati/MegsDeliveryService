@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ROAD_EDGES, nodeById, nodePos, roadGraph, type RoadEdge } from './roads';
 import { roadCurve, roadGroundHeight } from './road-deck';
+import { destinations, shortestPath } from './trips';
 import { heightAt } from './terrain';
 import { PARK_RECT, SOLIDS, MANSION_GROUNDS, isInBay } from './world';
 import { mulberry32 } from './grain';
@@ -67,6 +68,12 @@ interface Car {
   edgeLen: number;
   offX: number; // smoothed lateral offset (right-hand lane, no snap on turns)
   offZ: number;
+  // Trip state: destination building's road node, remaining route edges, and
+  // park-at-destination timer. destNode null = wandering (no route found yet).
+  destNode: string | null;
+  route: RoadEdge[];
+  dwellT: number;
+  dwellNode: string | null;
 }
 
 interface Ped {
@@ -94,6 +101,11 @@ interface Ped {
   lastPos: THREE.Vector3;
   curve: THREE.CatmullRomCurve3;
   edgeLen: number;
+  // Trip state for sidewalk peds (park peds wander instead).
+  destNode: string | null;
+  route: RoadEdge[];
+  dwellT: number;
+  dwellNode: string | null;
 }
 
 // Bubble textures (pre-rendered once, shared singleton — never disposed).
@@ -305,6 +317,7 @@ export class Life {
         edge, t: rnd(), dir: rnd() < 0.5 ? 1 : -1,
         speed, variant, group, curve, edgeLen: curve.getLength(),
         offX: 0, offZ: 0,
+        destNode: null, route: [], dwellT: 0, dwellNode: null,
       });
     }
   }
@@ -374,6 +387,7 @@ export class Life {
         greetCd: 0, startleCd: 0, bubbleT: 0, hopT: 0, waveT: 0,
         stuckT: 0, lastPos: new THREE.Vector3(x, y, z),
         curve, edgeLen: curve.getLength(),
+        destNode: null, route: [], dwellT: 0, dwellNode: null,
       });
       if (inPark) this.pickParkTarget(this.peds[this.peds.length - 1], rnd);
     }
@@ -406,22 +420,99 @@ export class Life {
       ? options[Math.floor(Math.random() * options.length)]
       : current; // dead-end: U-turn
     if (next.a === nodeId) return { edge: next, dir: 1, t: 0 };
-    if (next.b === nodeId) return { edge: next, dir: -1, t: 1 };
-    return { edge: next, dir: 1, t: 0 }; // U-turn fallback
+    return { edge: next, dir: -1, t: 1 }; // next is always incident to nodeId
+  }
+
+  /** Assign a trip: a destination building (not the current node) plus the
+   * shortest-path route of road edges to it. Falls back to wandering when no
+   * destination is reachable (e.g. bridge-isolated components). */
+  private assignTrip(e: Car | Ped, fromNode: string): void {
+    const dests = destinations();
+    for (let tries = 0; tries < 8; tries++) {
+      const d = dests[(Math.random() * dests.length) | 0];
+      if (d.nodeId === fromNode) continue;
+      const route = shortestPath(fromNode, d.nodeId);
+      if (route && route.length > 0) {
+        e.destNode = d.nodeId;
+        e.route = route;
+        return;
+      }
+    }
+    e.destNode = null;
+    e.route = [];
+  }
+
+  /** Put the entity onto `edge` at `nodeId`, heading away from the node. */
+  private mountEdge(e: Car | Ped, edge: RoadEdge, nodeId: string, dir?: 1 | -1, t?: number): void {
+    e.edge = edge;
+    if (dir !== undefined) { e.dir = dir; e.t = t!; }
+    else if (edge.a === nodeId) { e.dir = 1; e.t = 0; }
+    else { e.dir = -1; e.t = 1; }
+    e.curve = this.makeCurve(edge);
+    e.edgeLen = e.curve.getLength();
+  }
+
+  /**
+   * Node arrival for trip-based entities. Follows the route edge-by-edge
+   * (never a random turn mid-trip); on reaching the destination, parks there
+   * briefly — the destination becomes the new start when the next trip is
+   * chained. Returns 'route' | 'dwell' | 'wander'.
+   */
+  private arriveNode(e: Car | Ped, nodeId: string): 'route' | 'dwell' | 'wander' {
+    if (e.route.length > 0) {
+      const re = e.route[0];
+      if (re.a === nodeId || re.b === nodeId) {
+        e.route.shift();
+        this.mountEdge(e, re, nodeId);
+        return 'route';
+      }
+      e.route = []; e.destNode = null; // stale route — drop it, don't teleport
+    }
+    if (e.destNode !== null && nodeId === e.destNode) {
+      e.dwellT = 2 + Math.random() * 3; // pause at the destination building
+      e.dwellNode = nodeId;
+      return 'dwell';
+    }
+    const n = this.nextEdge(e.edge, nodeId);
+    this.mountEdge(e, n.edge, nodeId, n.dir, n.t);
+    if (e.destNode === null) this.assignTrip(e, nodeId);
+    return 'wander';
+  }
+
+  /** Dwell finished: chain the next trip starting from the arrival node. */
+  private beginNextLeg(e: Car | Ped): void {
+    const nodeId = e.dwellNode ?? (e.dir === 1 ? e.edge.b : e.edge.a);
+    e.dwellNode = null;
+    this.assignTrip(e, nodeId);
+    if (e.route.length > 0) {
+      const re = e.route.shift()!;
+      this.mountEdge(e, re, nodeId);
+    } else {
+      const n = this.nextEdge(e.edge, nodeId);
+      this.mountEdge(e, n.edge, nodeId, n.dir, n.t);
+    }
   }
 
   private updateCar(car: Car, dt: number): void {
+    // Parked at a destination: count down, then chain the next trip from here.
+    if (car.dwellT > 0) {
+      car.dwellT -= dt;
+      if (car.dwellT <= 0) {
+        this.beginNextLeg(car);
+        car.speed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+      }
+      return;
+    }
     car.t += (car.dir * car.speed * dt) / car.edgeLen;
     if (car.t >= 1 || car.t <= 0) {
-      const nodeId = car.t >= 1
-        ? (car.dir === 1 ? car.edge.b : car.edge.a)
-        : (car.dir === 1 ? car.edge.a : car.edge.b);
-      const { edge, dir, t } = this.nextEdge(car.edge, nodeId);
-      car.edge = edge; car.dir = dir; car.t = t;
-      car.curve = this.makeCurve(edge);
-      car.edgeLen = car.curve.getLength();
+      // The node reached is determined by travel direction alone: dir=1 runs
+      // t up to edge.b, dir=-1 runs t down to edge.a. (The old code keyed off
+      // t>=1 vs t<=0 and sent dir=-1 arrivals to the wrong end — teleporting
+      // cars to the opposite node. User feedback 2026-09-27.)
+      const nodeId = car.dir === 1 ? car.edge.b : car.edge.a;
+      this.arriveNode(car, nodeId);
       // Switchbacks are slower (M5 fix: apply on transition, not just spawn).
-      car.speed = (car.variant === 'sports' ? 12 : 10) * (edge.kind === 'switchback' ? 0.6 : 1);
+      car.speed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
     }
     const t = THREE.MathUtils.clamp(car.t, 0, 1);
     // Node-pinned deck height — continuous across edge transitions, so cars
@@ -429,14 +520,17 @@ export class Life {
     car.curve.getPointAt(t, this.tmpP);
     car.curve.getTangentAt(t, this.tmpT);
     if (car.dir === -1) this.tmpT.negate();
-    // Right-hand lane offset, smoothed so turns don't pop laterally.
-    const k = Math.min(1, dt * 6);
-    car.offX += ((-this.tmpT.z) * 1.4 - car.offX) * k;
-    car.offZ += ((this.tmpT.x) * 1.4 - car.offZ) * k;
+    // Right-hand lane offset: when the road turns at a node the tangent normal
+    // snaps, so glide the offset vector at a bounded rate instead of popping
+    // laterally (user feedback 2026-09-27).
+    const wantX = (-this.tmpT.z) * 1.4;
+    const wantZ = (this.tmpT.x) * 1.4;
+    car.offX += THREE.MathUtils.clamp(wantX - car.offX, -4 * dt, 4 * dt);
+    car.offZ += THREE.MathUtils.clamp(wantZ - car.offZ, -4 * dt, 4 * dt);
     const px = this.tmpP.x + car.offX;
     const pz = this.tmpP.z + car.offZ;
     // Ride the junction patch surface inside intersections so wheels stay on
-    // the rendered asphalt (the patch sits ~5cm above the deck).
+    // the rendered asphalt (the patch sits ~8cm above the deck).
     const deckY = roadGroundHeight(car.edge, t, px, pz);
     car.group.position.set(px, deckY, pz);
     car.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
@@ -502,15 +596,18 @@ export class Life {
   }
 
   private updateSidewalkPed(ped: Ped, dt: number): void {
+    // Paused at a destination: count down, then chain the next trip from here.
+    if (ped.dwellT > 0) {
+      ped.dwellT -= dt;
+      if (ped.dwellT <= 0) this.beginNextLeg(ped);
+      return;
+    }
     ped.t += (ped.dir * ped.speed * dt) / ped.edgeLen;
     if (ped.t >= 1 || ped.t <= 0) {
-      const nodeId = ped.t >= 1
-        ? (ped.dir === 1 ? ped.edge.b : ped.edge.a)
-        : (ped.dir === 1 ? ped.edge.a : ped.edge.b);
-      const { edge, dir, t } = this.nextEdge(ped.edge, nodeId);
-      ped.edge = edge; ped.dir = dir; ped.t = t;
-      ped.curve = this.makeCurve(edge);
-      ped.edgeLen = ped.curve.getLength();
+      // Same fix as cars: the node reached is determined by travel direction
+      // alone (dir=1 → edge.b, dir=-1 → edge.a).
+      const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
+      this.arriveNode(ped, nodeId);
       // Occasionally switch sides at intersections (reads as using a crosswalk).
       if (Math.random() < 0.15) ped.side *= -1;
     }
@@ -524,10 +621,12 @@ export class Life {
     const dOff = targetOff - ped.sideOff;
     ped.sideOff += THREE.MathUtils.clamp(dOff, -3 * dt, 3 * dt);
     // Ease the 2D offset vector too: when the road turns at a node, the
-    // tangent normal snaps, so glide the vector instead of popping laterally.
-    const k = Math.min(1, dt * 6);
-    ped.offX += ((-this.tmpT.z) * ped.sideOff - ped.offX) * k;
-    ped.offZ += ((this.tmpT.x) * ped.sideOff - ped.offZ) * k;
+    // tangent normal snaps, so glide the vector at a bounded rate instead of
+    // popping laterally (user feedback 2026-09-27).
+    const wantX = (-this.tmpT.z) * ped.sideOff;
+    const wantZ = (this.tmpT.x) * ped.sideOff;
+    ped.offX += THREE.MathUtils.clamp(wantX - ped.offX, -4 * dt, 4 * dt);
+    ped.offZ += THREE.MathUtils.clamp(wantZ - ped.offZ, -4 * dt, 4 * dt);
     const px = this.tmpP.x + ped.offX;
     const pz = this.tmpP.z + ped.offZ;
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
@@ -539,14 +638,19 @@ export class Life {
     // Bob.
     ped.group.position.y += Math.abs(Math.sin(performance.now() * 0.008 + px)) * 0.05;
 
-    // Stuck detection (I5): if no progress in 5s, switch edge.
+    // Stuck detection (I5): if no progress in 5s, resume from the nearest node.
+    // Route-aware: a stuck ped rejoins its trip instead of jumping to a
+    // random edge (no teleporting out of a trip). A ped stuck mid-edge with a
+    // valid t stays put — its motion is deterministic along the curve, so it
+    // will reach the node and follow the route; only a degenerate (NaN or
+    // out-of-range) t is forced to the arrival node.
     if (ped.pos.distanceToSquared(ped.lastPos) < 0.01) {
       ped.stuckT += dt;
       if (ped.stuckT > 5) {
-        const { edge, dir, t: nt } = this.nextEdge(ped.edge, ped.dir === 1 ? ped.edge.b : ped.edge.a);
-        ped.edge = edge; ped.dir = dir; ped.t = nt;
-        ped.curve = this.makeCurve(edge);
-        ped.edgeLen = ped.curve.getLength();
+        const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
+        if (!Number.isFinite(ped.t) || ped.t <= 0 || ped.t >= 1) {
+          this.arriveNode(ped, nodeId);
+        }
         ped.stuckT = 0;
       }
     } else {

@@ -52,6 +52,39 @@ function rawDeckY(e: RoadEdge, t: number): number {
   ) + 0.15;
 }
 
+// Slope-limited deck profile. rawDeckY takes the max over terrain samples
+// across the road width; where a sample crosses a sharp terrain feature (tier
+// blend, bay carve) the max steps vertically — up to 5.5m found on 2026-09-27
+// — putting walls in the rendered road and popping cars/peds vertically
+// ("teleporting", "skipping up hills"). We replace the raw profile with the
+// smallest MAX_DECK_GRADE-Lipschitz function above the raw samples: the deck
+// still clears the terrain everywhere, but can never cliff.
+const SMOOTH_STATIONS = 64;
+const MAX_DECK_GRADE = 0.4; // 40%: kills cliffs, keeps real hillside grades
+const smoothDeckCache = new Map<RoadEdge, Float32Array>();
+
+function smoothRawDeckY(e: RoadEdge, t: number): number {
+  let s = smoothDeckCache.get(e);
+  if (!s) {
+    const curve = roadCurve(e);
+    const dx = curve.getLength() / SMOOTH_STATIONS;
+    const step = MAX_DECK_GRADE * dx;
+    const fwd = new Float32Array(SMOOTH_STATIONS + 1);
+    fwd[0] = rawDeckY(e, 0);
+    for (let i = 1; i <= SMOOTH_STATIONS; i++)
+      fwd[i] = Math.max(rawDeckY(e, i / SMOOTH_STATIONS), fwd[i - 1] - step);
+    s = new Float32Array(SMOOTH_STATIONS + 1);
+    s[SMOOTH_STATIONS] = fwd[SMOOTH_STATIONS];
+    for (let i = SMOOTH_STATIONS - 1; i >= 0; i--)
+      s[i] = Math.max(fwd[i], s[i + 1] - step);
+    smoothDeckCache.set(e, s);
+  }
+  const x = Math.max(0, Math.min(SMOOTH_STATIONS, t * SMOOTH_STATIONS));
+  const i = Math.min(SMOOTH_STATIONS - 1, Math.floor(x));
+  const f = x - i;
+  return s[i] * (1 - f) + s[i + 1] * f;
+}
+
 // Per-node deck height: the max over all incident edges' endpoint heights.
 // Pinning edge endpoints to this makes adjacent decks meet exactly.
 let nodeHeights: Map<string, number> | null = null;
@@ -62,27 +95,29 @@ export function nodeDeckHeights(): Map<string, number> {
     if (e.kind === 'bridge') continue;
     const ends: [string, number][] = [[e.a, 0], [e.b, 1]];
     for (const [id, t] of ends) {
-      const y = rawDeckY(e, t);
+      // From the smoothed profile: node heights must match the Lipschitz
+      // endpoints for exact agreement (pinning was removed).
+      const y = smoothRawDeckY(e, t);
       nodeHeights.set(id, Math.max(nodeHeights.get(id) ?? -Infinity, y));
     }
   }
   return nodeHeights;
 }
 
-// Continuous deck height along an edge: the raw formula blended with the
-// pinned node heights so there is no step where edges meet.
+// Continuous deck height along an edge: the slope-limited raw profile blended
+// with the pinned node heights so there is no step where edges meet.
 export function deckHeightAt(e: RoadEdge, t: number): number {
   const nodes = nodeDeckHeights();
   const yA = nodes.get(e.a) ?? rawDeckY(e, 0);
   const yB = nodes.get(e.b) ?? rawDeckY(e, 1);
-  return Math.max(rawDeckY(e, t), yA + (yB - yA) * t);
+  return Math.max(smoothRawDeckY(e, t), yA + (yB - yA) * t);
 }
 
 // ---------------------------------------------------------------------------
 // Junction patches. Where road ribbons meet, their decks overlap in plan at
 // slightly different heights (different grades) and visibly clip through each
 // other. Each multi-edge node gets a single convex "junction patch" — the hull
-// of every pairwise ribbon overlap — draped 5cm above the highest deck, so the
+// of every pairwise ribbon overlap — draped 8cm above the highest deck, so the
 // intersection renders as one clean asphalt surface (user feedback 2026-09-27).
 // ---------------------------------------------------------------------------
 
@@ -118,69 +153,6 @@ function incidentDirs(nodeId: string): EdgeDir[] {
   return out;
 }
 
-type Pt = [number, number];
-
-// Sutherland–Hodgman convex polygon clip: intersect subject with clip polygon.
-function clipPoly(subject: Pt[], clip: Pt[]): Pt[] {
-  let out = subject;
-  for (let i = 0; i < clip.length; i++) {
-    const a = clip[i], b = clip[(i + 1) % clip.length];
-    const inside = (p: Pt) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]) >= 0;
-    const next: Pt[] = [];
-    for (let j = 0; j < out.length; j++) {
-      const cur = out[j], prev = out[(j + out.length - 1) % out.length];
-      const ci = inside(cur), pi = inside(prev);
-      if (ci) {
-        if (!pi) next.push(segInt(prev, cur, a, b));
-        next.push(cur);
-      } else if (pi) {
-        next.push(segInt(prev, cur, a, b));
-      }
-    }
-    out = next;
-    if (!out.length) break;
-  }
-  return out;
-}
-
-function segInt(p1: Pt, p2: Pt, a: Pt, b: Pt): Pt {
-  const d1x = p2[0] - p1[0], d1y = p2[1] - p1[1];
-  const d2x = b[0] - a[0], d2y = b[1] - a[1];
-  const denom = d1x * d2y - d1y * d2x || 1e-9;
-  const t = ((a[0] - p1[0]) * d2y - (a[1] - p1[1]) * d2x) / denom;
-  return [p1[0] + d1x * t, p1[1] + d1y * t];
-}
-
-// Andrew monotone chain convex hull.
-function convexHull(pts: Pt[]): Pt[] {
-  const s = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o: Pt, a: Pt, b: Pt) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lower: Pt[] = [], upper: Pt[] = [];
-  for (const p of s) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
-  }
-  for (let i = s.length - 1; i >= 0; i--) {
-    const p = s[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
-  }
-  lower.pop(); upper.pop();
-  return lower.concat(upper);
-}
-
-// Rectangle for a ribbon: from the node outward along dir, half-width hw.
-function ribbonRect(p: { x: number; z: number }, d: EdgeDir, len: number): Pt[] {
-  const px = -d.dz, pz = d.dx; // perpendicular
-  const ex = p.x + d.dx * len, ez = p.z + d.dz * len;
-  return [
-    [p.x + px * d.hw, p.z + pz * d.hw],
-    [p.x - px * d.hw, p.z - pz * d.hw],
-    [ex - px * d.hw, ez - pz * d.hw],
-    [ex + px * d.hw, ez + pz * d.hw],
-  ];
-}
-
 // Approximate deck height of edge e near plan position (x,z): project onto
 // the node->other straight segment for the curve parameter. NOTE: t is measured
 // from the node here, while deckHeightAt measures from e.a — flip for incoming
@@ -205,98 +177,114 @@ export function junctionPatches(): JunctionPatch[] {
   for (const id of nodeIds) {
     const dirs = incidentDirs(id);
     if (dirs.length < 2) continue;
+    // Near-collinear pairs are not real junctions (straight-through or
+    // duplicate overlapping roads): the ribbon itself is the surface.
+    if (dirs.length === 2) {
+      const dot = Math.min(1, Math.max(-1, dirs[0].dx * dirs[1].dx + dirs[0].dz * dirs[1].dz));
+      const theta = Math.acos(dot);
+      if (theta < Math.PI / 12 || theta > Math.PI - Math.PI / 12) continue;
+    }
     const p = nodePos(nodeById(id));
-    const verts: Pt[] = [[p.x, p.z]];
+    // Stub length: cover the pairwise ribbon-overlap zone so the patch spans
+    // the full "mess" where ribbons intersect.
+    let stubLen = 8;
     for (let i = 0; i < dirs.length; i++) {
       for (let j = i + 1; j < dirs.length; j++) {
         const a = dirs[i], b = dirs[j];
         const dot = Math.min(1, Math.max(-1, a.dx * b.dx + a.dz * b.dz));
         const theta = Math.acos(dot);
-        // Clamp theta >= 12deg to bound patch size. Tradeoff (review 2026-09-27):
-        // a true fork shallower than 12deg has overlap beyond the clamp reach
-        // and would keep clipping past the patch edge; no current node has a
-        // pair in (0deg, 12deg) (shallowest is 13.1deg), and exact-0deg pairs
-        // are collinear (degenerate clip, no area overlap).
         const clamped = Math.min(Math.PI, Math.max(Math.PI / 15, theta));
-        const reach = (a.hw + b.hw) / Math.sin(clamped);
-        const ra = ribbonRect(p, a, Math.min(a.len, reach));
-        const rb = ribbonRect(p, b, Math.min(b.len, reach));
-        for (const v of clipPoly(ra, rb)) verts.push(v);
+        stubLen = Math.max(stubLen, (a.hw + b.hw) / Math.sin(clamped));
       }
     }
-    const hull = convexHull(verts);
-    if (hull.length < 3) continue;
-    let area = 0;
-    for (let i = 0; i < hull.length; i++) {
-      const [x1, z1] = hull[i], [x2, z2] = hull[(i + 1) % hull.length];
-      area += x1 * z2 - x2 * z1;
+    let minLen = Infinity;
+    for (const d of dirs) minLen = Math.min(minLen, d.len);
+    stubLen = Math.min(stubLen, minLen * 0.9, 40);
+    // Grade-separated check: if the incident roads differ too much in height
+    // across the patch area, this is not a flat intersection — skip it.
+    // Samples each road along its stub; compares individual road heights
+    // (not the max drape, which is uniform by construction).
+    {
+      let hMin = Infinity, hMax = -Infinity;
+      for (const d of dirs) {
+        for (const f of [0, 0.5, 1]) {
+          const s = Math.min(stubLen, d.len * 0.9) * f;
+          const x = p.x + d.dx * s, z = p.z + d.dz * s;
+          const h = deckHeightNear(d, id, x, z);
+          hMin = Math.min(hMin, h); hMax = Math.max(hMax, h);
+        }
+      }
+      if (hMax - hMin > PATCH_MAX_SPREAD) continue;
     }
-    if (Math.abs(area) / 2 < 2) continue; // degenerate (straight-through etc.)
     const drape = (x: number, z: number): number => {
       let h = -Infinity;
       for (const d of dirs) h = Math.max(h, deckHeightNear(d, id, x, z));
-      return h + 0.05;
+      return h + 0.08; // 8cm lift: covers interpolation error across the patch
     };
-    const ring: PatchVertex[] = hull.map(([x, z]) => ({ x, z, h: drape(x, z) }));
-    // Grade-separated check: if the drape spreads too far this is a stacked
-    // crossing (hairpin), not a flat intersection — skip it.
-    let hMin = Infinity, hMax = -Infinity;
-    for (const v of ring) { hMin = Math.min(hMin, v.h); hMax = Math.max(hMax, v.h); }
-    if (hMax - hMin > PATCH_MAX_SPREAD) continue;
-    patchCache.push({ nodeId: id, ring, tris: tessellatePatch(ring, drape) });
+    // Patch footprint = UNION of the incident ribbon stubs (not the convex
+    // hull). The hull filled wedges between acute roads with asphalt and
+    // overlapped neighboring roads; the union is exactly the road surface —
+    // no wedges, no gaps. The union of stubs is star-shaped w.r.t. the node,
+    // so a polar boundary from the node captures it exactly.
+    const K = 72;
+    const rhos = new Float64Array(K);
+    for (let k = 0; k < K; k++) {
+      const phi = (k / K) * Math.PI * 2;
+      const ux = Math.cos(phi), uz = Math.sin(phi);
+      let rMax = 0;
+      for (const d of dirs) {
+        const ud = ux * d.dx + uz * d.dz;
+        const un = Math.abs(ux * -d.dz + uz * d.dx);
+        let r: number;
+        if (ud > 1e-6) {
+          // Inside the strip: lateral |r*un| <= hw, along 0 <= r*ud <= stubLen.
+          r = Math.min(d.hw / Math.max(un, 1e-6), stubLen / ud);
+        } else {
+          // Behind the ribbon start: the rounded cap around the node.
+          r = d.hw;
+        }
+        if (r > rMax) rMax = r;
+      }
+      rhos[k] = Math.max(rMax, 0.5);
+    }
+    const ring: PatchVertex[] = [];
+    for (let k = 0; k < K; k++) {
+      const phi = (k / K) * Math.PI * 2;
+      const x = p.x + Math.cos(phi) * rhos[k];
+      const z = p.z + Math.sin(phi) * rhos[k];
+      ring.push({ x, z, h: drape(x, z) });
+    }
+    patchCache.push({
+      nodeId: id, ring,
+      tris: tessellatePatch(p.x, p.z, rhos, drape),
+    });
   }
   return patchCache;
 }
 
-// Tessellate the hull interior as a polar grid from the hull centroid so the
-// draped surface tracks deck bulges between the center and the rim (a single
-// fan lets the deck poke through by up to 0.3m on real terrain — review
-// 2026-09-27). Cells are ~1.5-2m; deck curvature across a cell is negligible.
-function tessellatePatch(ring: PatchVertex[], drape: (x: number, z: number) => number)
+// Tessellate the star-shaped patch interior as a polar grid from the node
+// (the star center), so the draped surface tracks deck bulges between the
+// center and the rim. rhos[k] is the boundary radius at angle 2πk/K.
+function tessellatePatch(cx: number, cz: number, rhos: Float64Array,
+    drape: (x: number, z: number) => number)
     : [PatchVertex, PatchVertex, PatchVertex][] {
-  const n = ring.length;
-  let cx = 0, cz = 0;
-  for (const v of ring) { cx += v.x; cz += v.z; }
-  cx /= n; cz /= n;
-  // Angles of hull verts from centroid, sorted; subdivide each span 3x.
-  const base = ring.map(v => Math.atan2(v.z - cz, v.x - cx)).sort((a, b) => a - b);
-  const thetas: number[] = [];
-  for (let i = 0; i < n; i++) {
-    let a0 = base[i], a1 = base[(i + 1) % n];
-    if (a1 <= a0) a1 += Math.PI * 2;
-    for (let k = 0; k < 3; k++) thetas.push(a0 + (a1 - a0) * (k / 3));
-  }
-  const m = thetas.length;
-  // Hull radius along each ray from the centroid (convex: exactly one hit).
-  const rho = thetas.map(th => {
-    const dx = Math.cos(th), dz = Math.sin(th);
-    let best = Infinity;
-    for (let i = 0; i < n; i++) {
-      const a = ring[i], b = ring[(i + 1) % n];
-      const ex = b.x - a.x, ez = b.z - a.z;
-      const denom = dx * ez - dz * ex;
-      if (Math.abs(denom) < 1e-9) continue;
-      const t = ((a.x - cx) * ez - (a.z - cz) * ex) / denom;
-      const u = ((a.x - cx) * dz - (a.z - cz) * dx) / denom;
-      if (t > 1e-6 && u >= -1e-6 && u <= 1 + 1e-6 && t < best) best = t;
-    }
-    return best === Infinity ? 0 : best;
-  });
+  const K = rhos.length;
   const FRACS = [0.25, 0.5, 0.75, 1];
-  const at = (j: number, f: number): PatchVertex => {
-    const x = cx + Math.cos(thetas[j]) * rho[j] * f;
-    const z = cz + Math.sin(thetas[j]) * rho[j] * f;
+  const at = (k: number, f: number): PatchVertex => {
+    const phi = (k / K) * Math.PI * 2;
+    const x = cx + Math.cos(phi) * rhos[k] * f;
+    const z = cz + Math.sin(phi) * rhos[k] * f;
     return { x, z, h: drape(x, z) };
   };
   const tris: [PatchVertex, PatchVertex, PatchVertex][] = [];
   const center: PatchVertex = { x: cx, z: cz, h: drape(cx, cz) };
   const grid: PatchVertex[][] = [];
-  for (let j = 0; j < m; j++) grid.push(FRACS.map(f => at(j, f)));
-  const jj = (j: number) => (j + 1) % m;
-  for (let j = 0; j < m; j++) {
-    tris.push([center, grid[j][0], grid[jj(j)][0]]);
+  for (let k = 0; k < K; k++) grid.push(FRACS.map(f => at(k, f)));
+  const kk = (k: number) => (k + 1) % K;
+  for (let k = 0; k < K; k++) {
+    tris.push([center, grid[k][0], grid[kk(k)][0]]);
     for (let i = 0; i < FRACS.length - 1; i++) {
-      const a = grid[j][i], b = grid[j][i + 1], c = grid[jj(j)][i + 1], d = grid[jj(j)][i];
+      const a = grid[k][i], b = grid[k][i + 1], c = grid[kk(k)][i + 1], d = grid[kk(k)][i];
       tris.push([a, b, c], [a, c, d]);
     }
   }
@@ -327,12 +315,15 @@ export function roadGroundHeight(e: RoadEdge, t: number, x: number, z: number): 
   return patchSurfaceHeight(x, z) ?? deckHeightAt(e, t);
 }
 
-// Point-in-convex-polygon (hull rings are CCW convex).
+// Point-in-polygon (even-odd): rings are star-shaped but not convex, so the
+// convex half-plane test no longer applies.
 export function patchContains(patch: JunctionPatch, x: number, z: number): boolean {
   const r = patch.ring;
-  for (let i = 0; i < r.length; i++) {
-    const a = r[i], b = r[(i + 1) % r.length];
-    if ((b.x - a.x) * (z - a.z) - (b.z - a.z) * (x - a.x) < 0) return false;
+  let inside = false;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const xi = r[i].x, zi = r[i].z, xj = r[j].x, zj = r[j].z;
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi)
+      inside = !inside;
   }
-  return true;
+  return inside;
 }

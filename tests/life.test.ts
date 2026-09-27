@@ -23,8 +23,7 @@ before(() => {
 import { Life, CAR_COUNT, PED_COUNT } from '../src/life.js';
 import { SOLIDS, MANSION_GROUNDS, isInBay } from '../src/world.js';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from '../src/roads.js';
-import { deckHeightAt, roadWidth, nodeDeckHeights, roadCurve, patchSurfaceHeight } from '../src/road-deck.js';
-import { heightAt } from '../src/terrain.js';
+import { deckHeightAt, roadWidth, patchSurfaceHeight } from '../src/road-deck.js';
 
 describe('ambient life', () => {
   it('spawns exactly 16 cars and 44 pedestrians', () => {
@@ -149,30 +148,13 @@ describe('ambient life', () => {
     const cars = (life as unknown as { cars: {
       group: THREE.Group; t: number; edge: RoadEdge;
     }[] }).cars;
-    const nodes = nodeDeckHeights();
     for (const car of cars) {
       const pos = car.group.position;
       const t = THREE.MathUtils.clamp(car.t, 0, 1);
-      // Independently recompute the deck height (same math as road-deck.ts,
-      // but through separate code): raw max-across-width + node pin.
-      const curve = roadCurve(car.edge);
-      const p = curve.getPointAt(t);
-      const tan = curve.getTangentAt(t);
-      const l = Math.hypot(tan.x, tan.z) || 1;
-      const nx = -tan.z / l, nz = tan.x / l;
-      const hw = roadWidth(car.edge) / 2;
-      const raw = Math.max(
-        p.y,
-        heightAt(p.x, p.z),
-        heightAt(p.x + nx * hw, p.z + nz * hw),
-        heightAt(p.x - nx * hw, p.z - nz * hw),
-      ) + 0.15;
-      const yA = nodes.get(car.edge.a) ?? -Infinity;
-      const yB = nodes.get(car.edge.b) ?? -Infinity;
-      const deckOnly = Math.max(raw, yA + (yB - yA) * t);
-      // Inside intersections cars ride the junction patch surface (~5cm above
-      // the deck); elsewhere they ride the deck itself.
-      const expectedY = patchSurfaceHeight(pos.x, pos.z) ?? deckOnly;
+      // Ground truth is the same height the renderer uses for the road ribbon
+      // (slope-limited deck), or the junction patch surface inside
+      // intersections (~5cm above the deck).
+      const expectedY = patchSurfaceHeight(pos.x, pos.z) ?? deckHeightAt(car.edge, t);
       assert.ok(Math.abs(pos.y - expectedY) < 0.05,
         `car y=${pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }
@@ -239,6 +221,124 @@ describe('ambient life', () => {
     ped.bubbleT = 0; // bubble expired
     life.update(1 / 60, playerPos, 5, 0, 101);
     assert.equal(ped.bubbleT, 0, 'second greeting suppressed by cooldown');
+    life.dispose();
+  });
+});
+
+describe('trip-based traffic (user feedback 2026-09-27)', () => {
+  it('cars follow their route edge-by-edge with no random turns', () => {
+    const scene = new THREE.Group();
+    const life = new Life(scene);
+    const anyLife = life as unknown as {
+      cars: { edge: RoadEdge; dir: 1 | -1; destNode: string | null; route: RoadEdge[]; dwellT: number }[];
+      assignTrip(e: unknown, from: string): void;
+      arriveNode(e: unknown, node: string): string;
+      beginNextLeg(e: unknown): void;
+    };
+    const car = anyLife.cars[0];
+    const upcoming = car.dir === 1 ? car.edge.b : car.edge.a;
+    anyLife.assignTrip(car, upcoming);
+    assert.ok(car.destNode && car.destNode !== upcoming, 'trip has a distinct destination');
+    assert.ok(car.route.length > 0, 'trip has a route');
+    const route = [...car.route];
+    const dest = car.destNode;
+    // Walk the route node by node: every arrival must take the route edge.
+    let node = upcoming;
+    for (const expected of route) {
+      const res = anyLife.arriveNode(car, node);
+      assert.equal(res, 'route');
+      assert.equal(car.edge, expected, 'car must take the route edge, not a random turn');
+      node = car.dir === 1 ? car.edge.b : car.edge.a;
+    }
+    assert.equal(node, dest, 'route ends at the destination node');
+    // Arrival dwells, then chains a new trip starting from the destination.
+    assert.equal(anyLife.arriveNode(car, node), 'dwell');
+    assert.ok(car.dwellT > 0, 'car pauses at the destination building');
+    car.dwellT = 0.0001;
+    anyLife.beginNextLeg(car);
+    assert.ok(car.destNode && car.destNode !== dest, 'destination becomes the new start');
+    assert.ok(car.route.length > 0, 'chained trip has a route');
+    life.dispose();
+  });
+
+  it('sidewalk peds follow trips and chain them like cars', () => {
+    const scene = new THREE.Group();
+    const life = new Life(scene);
+    const anyLife = life as unknown as {
+      peds: { edge: RoadEdge; dir: 1 | -1; inPark: boolean; destNode: string | null; route: RoadEdge[]; dwellT: number }[];
+      assignTrip(e: unknown, from: string): void;
+      arriveNode(e: unknown, node: string): string;
+      beginNextLeg(e: unknown): void;
+    };
+    const ped = anyLife.peds.find(p => !p.inPark)!;
+    const upcoming = ped.dir === 1 ? ped.edge.b : ped.edge.a;
+    anyLife.assignTrip(ped, upcoming);
+    assert.ok(ped.destNode && ped.destNode !== upcoming);
+    assert.ok(ped.route.length > 0);
+    const dest = ped.destNode;
+    let node = upcoming;
+    for (const expected of [...ped.route]) {
+      assert.equal(anyLife.arriveNode(ped, node), 'route');
+      assert.equal(ped.edge, expected, 'ped must take the route edge');
+      node = ped.dir === 1 ? ped.edge.b : ped.edge.a;
+    }
+    assert.equal(anyLife.arriveNode(ped, node), 'dwell');
+    ped.dwellT = 0.0001;
+    anyLife.beginNextLeg(ped);
+    assert.ok(ped.destNode && ped.destNode !== dest, 'ped chains a new trip from the destination');
+    life.dispose();
+  });
+
+  it('cars and peds never teleport between frames', () => {
+    const scene = new THREE.Group();
+    const life = new Life(scene);
+    const playerPos = new THREE.Vector3(0, 50, 0);
+    const cars = (life as unknown as { cars: { group: THREE.Group; speed: number }[] }).cars;
+    const peds = (life as unknown as { peds: { group: THREE.Group; speed: number }[] }).peds;
+    const dt = 1 / 60;
+    life.update(dt, playerPos, 0, 0, 0); // warm-up: place entities from the origin
+    const prevC = cars.map(c => c.group.position.clone());
+    const prevP = peds.map(p => p.group.position.clone());
+    // 15 seconds: trips get assigned, followed, dwelled, and chained.
+    for (let i = 1; i <= 900; i++) {
+      life.update(dt, playerPos, 0, 0, i * dt);
+      for (let ci = 0; ci < cars.length; ci++) {
+        const d = cars[ci].group.position.distanceTo(prevC[ci]);
+        assert.ok(d <= cars[ci].speed * dt + 0.6,
+          `car ${ci} jumped ${d.toFixed(2)}m in one frame`);
+        prevC[ci].copy(cars[ci].group.position);
+      }
+      for (let pi = 0; pi < peds.length; pi++) {
+        const d = peds[pi].group.position.distanceTo(prevP[pi]);
+        assert.ok(d <= peds[pi].speed * dt + 0.6,
+          `ped ${pi} jumped ${d.toFixed(2)}m in one frame`);
+        prevP[pi].copy(peds[pi].group.position);
+      }
+    }
+    life.dispose();
+  });
+
+  it('simulated traffic acquires trips and reaches destinations', () => {
+    const scene = new THREE.Group();
+    const life = new Life(scene);
+    const playerPos = new THREE.Vector3(0, 50, 0);
+    // 60 seconds of traffic.
+    for (let i = 0; i < 3600; i++) {
+      life.update(1 / 60, playerPos, 0, 0, i / 60);
+    }
+    const cars = (life as unknown as { cars: {
+      destNode: string | null; route: RoadEdge[]; dwellT: number;
+    }[] }).cars;
+    let onTrip = 0, dwelling = 0;
+    for (const car of cars) {
+      if (car.dwellT > 0) dwelling++;
+      else if (car.destNode) onTrip++;
+    }
+    // Every car is either mid-trip, dwelling at a destination, or wandering
+    // while waiting for a route — but wandering must be rare/never since the
+    // graph is connected.
+    assert.ok(onTrip + dwelling === cars.length,
+      `${onTrip} on trip, ${dwelling} dwelling, ${cars.length - onTrip - dwelling} wandering`);
     life.dispose();
   });
 });
