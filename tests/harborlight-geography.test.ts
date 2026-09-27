@@ -84,8 +84,9 @@ test('every stop is inside the world limit', () => {
 });
 
 test('every pad sits above its building roof', () => {
-  // SOLIDS[0..6] align with STOPS[0..6]; last solid is the lighthouse tower.
-  assert.equal(SOLIDS.length, STOPS.length + 1);
+  // SOLIDS[0..6] align with STOPS[0..6]; district shells follow; last solid is
+  // the lighthouse tower.
+  assert.ok(SOLIDS.length >= STOPS.length + 1);
   STOPS.forEach((s, i) => {
     const b = SOLIDS[i];
     const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
@@ -94,6 +95,33 @@ test('every pad sits above its building roof', () => {
     assert.ok(s.position.y >= b.max.y + 1 && s.position.y <= b.max.y + 4,
       `${s.id} pad y=${s.position.y} vs roof ${b.max.y}`);
   });
+});
+
+test('every building belongs to a district and sits inside the hill line', () => {
+  const districts = new Set(['harbor', 'old-town', 'merchant-row', 'mansion-hill', 'bungalow-lanes', 'observatory-rise', 'lighthouse-headland']);
+  SOLIDS.forEach((b, i) => {
+    if (i === SOLIDS.length - 1) return; // lighthouse tower: no district
+    assert.ok(b.district, `building ${i} has no district`);
+    assert.ok(districts.has(b.district!), `building ${i} has unknown district ${b.district}`);
+    const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+    const r = Math.hypot(cx, cz);
+    assert.ok(r < 145, `building ${i} (${b.district}) at r=${r.toFixed(0)} is past the hill line`);
+  });
+});
+
+test('district buildings do not significantly overlap each other', () => {
+  // Skip the lighthouse tower (last): its collision cylinder overlaps the
+  // Beacon House lot by design.
+  const n = SOLIDS.length - 1;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = SOLIDS[i], b = SOLIDS[j];
+      const ox = Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x);
+      const oz = Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z);
+      // Attached buildings may touch by a metre; flag real intersections.
+      assert.ok(ox < 2 || oz < 2, `buildings ${i} and ${j} overlap by ${ox.toFixed(1)}x${oz.toFixed(1)}m`);
+    }
+  }
 });
 
 test('lighthouse pad is clear of the tower footprint', () => {
