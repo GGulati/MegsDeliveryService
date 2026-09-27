@@ -5,6 +5,8 @@ import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
+import { generateLots } from './town-gen';
+import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -12,6 +14,8 @@ import { FlightEffects, flightVisuals } from './flight-visuals';
 import { grainSpeckles, GRAIN_SEED, GRAIN_SIZE } from './grain';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
+/** Pastel Painted-Ladies body colors for bungalow-lanes infill (lot.palette 1-4). */
+const PASTEL_BODIES = [0xf2b8c6, 0xa8d0e8, 0xf2d8a8, 0xc8b8e0];
 export class GameRenderer {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(62, 1, .1, 900);
@@ -359,120 +363,151 @@ export class GameRenderer {
   }
 
   private makeBuildings(g: THREE.Group): void {
-    SOLIDS.forEach((s, i) => {
-      const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
-      const center = new THREE.Vector3((s.min.x+s.max.x)/2, (s.min.y+s.max.y)/2, (s.min.z+s.max.z)/2);
-      // Keep a full-height invisible camera blocker while letting the painted roof replace
-      // the upper portion of the render box. Collision and camera clearance stay exact.
-      const blocker = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz)); blocker.position.copy(center); this.blockers.push(blocker);
-      // The lighthouse tower solid is drawn as a cylinder by makeLighthouse,
-      // so the generic box pass skips its visuals (camera blocker already pushed).
-      if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
-      // Phase B landmarks get dedicated visuals (clock tower, observatory dome),
-      // not generic boxes. Collision blocker already pushed above.
-      if (i === CLOCK_TOWER_SOLID_INDEX || i === OBSERVATORY_DOME_SOLID_INDEX) return;
-      // District palette: each district paints its own bodies and roofs.
-      const pal = (s.district && DISTRICT_PALETTES[s.district]) || DISTRICT_PALETTES['old-town'];
+    // Facade instancing (Task 6): every repeated facade element across heroes
+    // + infill is collected as plain records, then built as one
+    // THREE.InstancedMesh per element type per material. Bodies and roofs stay
+    // individual meshes (a few hundred boxes is fine; roofs vary per building).
+    const F = emptyFacades();
+    // Shared facade materials — one per element type, not one per building.
+    const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), litMat = toon(0xffd98a), doorMat = toon(0x704638);
+    const leafMat = toon(0x4d976b), petalMat = toon(0xff8baa);
+
+    // One building pass: individual body + pyramid roof, facades collected.
+    const addBuilding = (
+      sx: number, sy: number, sz: number, minY: number, cx: number, cz: number,
+      district: string, seedBase: number, colorIdx: number, bayWindow: boolean,
+      bodyColor: number, roofColor: number,
+    ): void => {
       const roofHeight = Math.min(4.2, sy * .28);
-      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy-roofHeight, sz), toon(pal.bodies[i % pal.bodies.length]));
-      body.position.set(center.x, s.min.y + (sy-roofHeight)*.5, center.z); body.castShadow = true; body.receiveShadow = true;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy - roofHeight, sz), toon(bodyColor));
+      body.position.set(cx, minY + (sy - roofHeight) * .5, cz); body.castShadow = true; body.receiveShadow = true;
       g.add(body);
       // These roofs replace the final few metres of each painted box, entirely within
       // its collision footprint, so they read from the air without enlarging an obstacle.
       const halfX = sx * .5, halfZ = sz * .5, roofBase = sy * .5 - roofHeight;
+      const center = new THREE.Vector3(cx, minY + sy * .5, cz);
       const roofGeo = new THREE.BufferGeometry();
       roofGeo.setAttribute('position', new THREE.Float32BufferAttribute([
-        -halfX, roofBase, -halfZ, halfX, roofBase, -halfZ, 0, sy*.5, 0,
-         halfX, roofBase, -halfZ, halfX, roofBase,  halfZ, 0, sy*.5, 0,
-         halfX, roofBase,  halfZ,-halfX, roofBase,  halfZ, 0, sy*.5, 0,
-        -halfX, roofBase,  halfZ,-halfX, roofBase, -halfZ, 0, sy*.5, 0,
-      ], 3)); roofGeo.setIndex([0,2,1,3,5,4,6,8,7,9,11,10]); roofGeo.computeVertexNormals();
-      const roof = new THREE.Mesh(roofGeo, toon(pal.roofs[i % pal.roofs.length]));
+        -halfX, roofBase, -halfZ, halfX, roofBase, -halfZ, 0, sy * .5, 0,
+         halfX, roofBase, -halfZ, halfX, roofBase,  halfZ, 0, sy * .5, 0,
+         halfX, roofBase,  halfZ, -halfX, roofBase,  halfZ, 0, sy * .5, 0,
+        -halfX, roofBase,  halfZ, -halfX, roofBase, -halfZ, 0, sy * .5, 0,
+      ], 3)); roofGeo.setIndex([0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10]); roofGeo.computeVertexNormals();
+      const roof = new THREE.Mesh(roofGeo, toon(roofColor));
       roof.position.copy(center); roof.castShadow = true; g.add(roof);
-      const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), litMat = toon(0xffd98a), doorMat = toon(0x704638);
-      const leafMat = toon(0x4d976b), petalMat = toon(0xff8baa);
-      // Story-aware facades: door on the ground floor, one window row per story above.
-      // Stories are counted against the body height (below the roof), not total height.
-      // Windows vary per building/face/story (jitter, size, lit, flower boxes) for a
-      // softer town feel instead of an industrial grid. Deterministic seed.
-      const storyH = 3.4;
-      const bodyH = sy - roofHeight;
-      const stories = Math.max(1, Math.round(bodyH / storyH));
-      const baseW = Math.min(2.6, sx * .18), baseH = Math.min(2.4, storyH * .55);
-      const sideIdx = { north: 0, south: 1, east: 2, west: 3 };
-      const addFacade = (side: 'north'|'south'|'east'|'west') => {
-        const along = side==='north'||side==='south' ? sx : sz;
-        const positions = along > 29 ? [-.27, .27] : [-.2, .2];
-        const rot = side==='north' ? Math.PI : side==='south' ? 0 : side==='west' ? -Math.PI/2 : Math.PI/2;
-        const isZ = side==='north'||side==='south';
-        const outward = side==='north' ? -1 : side==='south' ? 1 : side==='west' ? -1 : 1;
-        const planeAt = (alongOffset: number, y: number, depth: number) => isZ
-          ? new THREE.Vector3(body.position.x + alongOffset, y, body.position.z + outward * (sz*.5 + depth))
-          : new THREE.Vector3(body.position.x + outward * (sx*.5 + depth), y, body.position.z + alongOffset);
-        const winRow = (story: number, y: number) => {
-          positions.forEach((offset, pi) => {
-            // Deterministic per-window variation (no horizontal jitter — keep rows aligned).
-            const rnd = mulberry32(i * 1000 + sideIdx[side] * 100 + story * 10 + pi);
-            const jx = 0;
-            const w = baseW * (0.88 + rnd() * 0.24);    // width variation
-            const h = baseH * (0.88 + rnd() * 0.24);    // height variation
-            // Keep the window top below the body top (no ceiling clipping).
-            const maxY = s.min.y + bodyH - h * 0.5 - 0.35;
-            const wy = Math.min(y, maxY);
-            const p = planeAt(along * offset + jx, wy, .055);
-            const mat = rnd() < 0.35 ? litMat : glassMat; // some windows warmly lit
-            const win = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); win.position.copy(p); win.rotation.y=rot; g.add(win);
-            const sill = new THREE.Mesh(new THREE.BoxGeometry(w + .38, .18, .16), trimMat); sill.position.copy(planeAt(along * offset + jx, wy-h*.5-.08, .1)); if(!isZ)sill.rotation.y=Math.PI/2; g.add(sill);
-            // Flower box under some windows.
-            if (rnd() < 0.3) {
-              const box = new THREE.Mesh(new THREE.BoxGeometry(w * 0.8, 0.35, 0.4), doorMat);
-              box.position.copy(planeAt(along * offset + jx, wy-h*.5-0.35, 0.28)); if(!isZ)box.rotation.y=Math.PI/2; g.add(box);
-              for (let f = 0; f < 3; f++) {
-                const fl = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 5), f % 2 ? petalMat : leafMat);
-                fl.position.copy(planeAt(along * offset + jx + (f-1)*w*0.22, wy-h*.5-0.12, 0.28)); g.add(fl);
-              }
-            }
-          });
-        };
-        // Ground floor: centered door with flanking windows.
-        const doorH = Math.min(3.0, storyH * .82);
-        const door = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(2.4, along*.13), doorH), doorMat);
-        door.position.copy(planeAt(0, s.min.y + doorH*.5, .06)); door.rotation.y=rot; g.add(door);
-        winRow(0, s.min.y + storyH * .58);
-        // Upper stories: one window row per story.
-        for (let st = 1; st < stories; st++) {
-          winRow(st, s.min.y + storyH * st + storyH * .58);
-        }
-      };
-      addFacade('north'); addFacade('south'); addFacade('east'); addFacade('west');
-      // Merchant-row shops get striped awnings over the south face (street side).
-      // The awning is a sloped quad: top edge at the wall, front edge lower and outward.
-      if (s.district === 'merchant-row') {
-        const awnColors: [string, string][] = [['#e86a6a', '#f5f0e1'], ['#5b7fa6', '#f5f0e1'], ['#6aa86a', '#f5f0e1']];
-        const [c1, c2] = awnColors[i % awnColors.length];
-        const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 16;
-        const ctx = cnv.getContext('2d')!;
-        for (let sIdx = 0; sIdx < 8; sIdx++) { ctx.fillStyle = sIdx % 2 ? c1 : c2; ctx.fillRect(sIdx * 16, 0, 16, 16); }
-        const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
-        const awnW = Math.min(sx * 0.7, 10), awnD = 2.2;
-        const awnGeo = new THREE.PlaneGeometry(awnW, awnD, 1, 1);
-        const pos = awnGeo.attributes.position;
-        for (let v = 0; v < pos.count; v++) {
-          if (pos.getY(v) < 0) pos.setZ(v, -0.7); // front (outward) edge dips down
-        }
-        awnGeo.computeVertexNormals();
-        const awn = new THREE.Mesh(awnGeo, new THREE.MeshToonMaterial({ map: tex, side: THREE.DoubleSide }));
-        const doorH = Math.min(3.0, storyH * .82);
-        // Plane local +y maps to world -z after rotation.x=-PI/2, so the dipped
-        // edge (local y<0) lands outward (+z, street side) and lower.
-        awn.position.set(center.x, s.min.y + doorH + 0.55, center.z + sz * .5 + awnD * .5 - 0.15);
-        awn.rotation.x = -Math.PI / 2;
-        g.add(awn);
-      }
+      mergeFacades(F, collectFacades({ sx, sy, sz, minY, cx, cz, district, seedBase, colorIdx, bayWindow }));
+    };
+
+    // Heroes: keep the full-height invisible camera blocker; landmarks with
+    // dedicated visuals (lighthouse tower, clock tower, observatory dome) skip
+    // the generic box pass exactly as before.
+    SOLIDS.forEach((s, i) => {
+      const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
+      const center = new THREE.Vector3((s.min.x + s.max.x) / 2, (s.min.y + s.max.y) / 2, (s.min.z + s.max.z) / 2);
+      const blocker = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz)); blocker.position.copy(center); this.blockers.push(blocker);
+      if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
+      if (i === CLOCK_TOWER_SOLID_INDEX || i === OBSERVATORY_DOME_SOLID_INDEX) return;
+      // District palette: each district paints its own bodies and roofs.
+      const pal = (s.district && DISTRICT_PALETTES[s.district]) || DISTRICT_PALETTES['old-town'];
+      addBuilding(sx, sy, sz, s.min.y, center.x, center.z, s.district ?? 'old-town', i, i, false,
+        pal.bodies[i % pal.bodies.length], pal.roofs[i % pal.roofs.length]);
       // District dressing: bungalow lanes get picket fences + cottage gardens,
       // mansion hill gets low stone walls + formal walled gardens.
       if (s.district === 'bungalow-lanes') this.makePicketFence(g, s, i);
       if (s.district === 'mansion-hill') this.makeWalledGarden(g, s, i);
+    });
+
+    // Infill lots: seeded procedural town (visual only — no collision or camera
+    // blockers; the brief scopes this task to visual + perf).
+    const lots = generateLots();
+    lots.forEach((lot, li) => {
+      const baseY = heightAt(lot.x + lot.w / 2, lot.z + lot.d / 2);
+      const pal = DISTRICT_PALETTES[lot.district] || DISTRICT_PALETTES['old-town'];
+      // Pastel Painted-Ladies bodies for bungalow-lanes lots with palette 1-4.
+      const bodyColor = lot.palette === 0 ? pal.bodies[li % pal.bodies.length] : PASTEL_BODIES[lot.palette - 1];
+      addBuilding(lot.w, lot.h, lot.d, baseY, lot.x + lot.w / 2, lot.z + lot.d / 2,
+        lot.district, LOT_SEED_BASE + li, li, lot.bayWindow,
+        bodyColor, pal.roofs[li % pal.roofs.length]);
+    });
+
+    this.buildFacadeInstances(g, F, { trimMat, glassMat, litMat, doorMat, leafMat, petalMat });
+  }
+
+  /** Build phase: one THREE.InstancedMesh per facade element type per material. */
+  private buildFacadeInstances(
+    g: THREE.Group, F: FacadeSet,
+    mats: { trimMat: THREE.Material; glassMat: THREE.Material; litMat: THREE.Material; doorMat: THREE.Material; leafMat: THREE.Material; petalMat: THREE.Material },
+  ): void {
+    const unitPlane = new THREE.PlaneGeometry(1, 1);
+    const unitBox = new THREE.BoxGeometry(1, 1, 1);
+    const unitSphere = new THREE.SphereGeometry(1, 6, 5);
+    const dummy = new THREE.Object3D();
+    // Fill an InstancedMesh from records. Instances span the whole town, so
+    // unit-geometry bounds are meaningless: disable frustum culling.
+    const fill = (mesh: THREE.InstancedMesh, recs: FacadeInstance[]): void => {
+      recs.forEach((r, idx) => {
+        dummy.position.set(r.x, r.y, r.z);
+        dummy.rotation.set(r.rotX, r.rotY, 0);
+        dummy.scale.set(r.sx, r.sy, r.sz);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(idx, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.frustumCulled = false;
+      g.add(mesh);
+    };
+
+    if (F.winLit.length) {
+      const m = new THREE.InstancedMesh(unitPlane, mats.litMat, F.winLit.length);
+      fill(m, F.winLit);
+    }
+    if (F.winUnlit.length) {
+      const m = new THREE.InstancedMesh(unitPlane, mats.glassMat, F.winUnlit.length);
+      fill(m, F.winUnlit);
+    }
+    if (F.doors.length) {
+      const m = new THREE.InstancedMesh(unitPlane, mats.doorMat, F.doors.length);
+      fill(m, F.doors);
+    }
+    if (F.sills.length) {
+      const m = new THREE.InstancedMesh(unitBox, mats.trimMat, F.sills.length);
+      fill(m, F.sills);
+    }
+    if (F.bays.length) {
+      const m = new THREE.InstancedMesh(unitBox, mats.trimMat, F.bays.length);
+      fill(m, F.bays);
+    }
+    if (F.flowerBoxes.length) {
+      const m = new THREE.InstancedMesh(unitBox, mats.doorMat, F.flowerBoxes.length);
+      fill(m, F.flowerBoxes);
+    }
+    if (F.petals.length) {
+      const m = new THREE.InstancedMesh(unitSphere, mats.petalMat, F.petals.length);
+      fill(m, F.petals);
+    }
+    if (F.leaves.length) {
+      const m = new THREE.InstancedMesh(unitSphere, mats.leafMat, F.leaves.length);
+      fill(m, F.leaves);
+    }
+
+    // Merchant-row awnings: one sloped unit quad geometry, three shared stripe
+    // materials (previously one canvas texture per building).
+    const awnGeo = new THREE.PlaneGeometry(1, 1, 1, 1);
+    const apos = awnGeo.attributes.position;
+    for (let v = 0; v < apos.count; v++) {
+      if (apos.getY(v) < 0) apos.setZ(v, -0.7); // front (outward) edge dips down
+    }
+    awnGeo.computeVertexNormals();
+    const awnColors: [string, string][] = [['#e86a6a', '#f5f0e1'], ['#5b7fa6', '#f5f0e1'], ['#6aa86a', '#f5f0e1']];
+    F.awnings.forEach((recs, vi) => {
+      if (!recs.length) return;
+      const [c1, c2] = awnColors[vi % awnColors.length];
+      const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 16;
+      const ctx = cnv.getContext('2d')!;
+      for (let sIdx = 0; sIdx < 8; sIdx++) { ctx.fillStyle = sIdx % 2 ? c1 : c2; ctx.fillRect(sIdx * 16, 0, 16, 16); }
+      const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
+      const m = new THREE.InstancedMesh(awnGeo, new THREE.MeshToonMaterial({ map: tex, side: THREE.DoubleSide }), recs.length);
+      fill(m, recs);
     });
   }
 
