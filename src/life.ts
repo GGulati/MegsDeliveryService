@@ -578,8 +578,8 @@ export class Life {
     car.offZ += THREE.MathUtils.clamp(wantZ - car.offZ, -4 * dt, 4 * dt);
     const px = this.tmpP.x + car.offX;
     const pz = this.tmpP.z + car.offZ;
-    // Ride the junction patch surface inside intersections so wheels stay on
-    // the rendered asphalt (the patch sits ~8cm above the deck).
+    // Ride the intersection mesh surface inside intersections so wheels stay
+    // on the rendered asphalt (roadGroundHeight returns the mesh top).
     const deckY = roadGroundHeight(car.edge, t, px, pz);
     car.group.position.set(px, deckY, pz);
     car.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
@@ -683,7 +683,7 @@ export class Life {
     const pz = this.tmpP.z + ped.offZ;
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
     // under it — the deck can ride meters above the terrain on fills.
-    // Inside intersections they stand on the junction patch surface.
+    // Inside intersections they stand on the intersection mesh surface.
     ped.pos.set(px, roadGroundHeight(ped.edge, t, px, pz), pz);
     ped.group.position.copy(ped.pos);
     ped.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);

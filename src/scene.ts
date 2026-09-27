@@ -5,7 +5,7 @@ import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
-import { roadCurve, roadWidth, deckHeightAt, CAR_HALF, BIKE_HALF, WALK_HALF, junctionPatches, patchContains } from './road-deck';
+import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
@@ -222,7 +222,7 @@ export class GameRenderer {
       }
       return bands;
     };
-    const makeFlatRoad = (e: RoadEdge, curve: THREE.CatmullRomCurve3, width: number): THREE.Group => {
+    const makeFlatRoad = (e: RoadEdge, curve: THREE.CatmullRomCurve3, width: number, t0: number, t1: number): THREE.Group => {
       const grp = new THREE.Group();
       const segs = 24, hw = width / 2;
       const bands = bandLayout(width);
@@ -233,15 +233,20 @@ export class GameRenderer {
       const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
       const cc = new THREE.Color();
       for (let i = 0; i <= segs; i++) {
-        const t = i / segs;
+        // Ribbons are clipped at intersection nodes: the station range runs
+        // from t0 to t1 (not 0..1) so the ribbon ends exactly at the clip
+        // line where the intersection mesh begins — zero overlap.
+        const t = t0 + (i / segs) * (t1 - t0);
         const p = curve.getPointAt(t);
         const tan = curve.getTangentAt(t);
         const px = -tan.z, pz = tan.x;
         const plen = Math.hypot(px, pz) || 1;
         const nx = px / plen, nz = pz / plen;
         // Deck clears the highest terrain across the road width and is pinned
-        // at shared nodes so neighboring edges meet exactly.
-        const roadY = deckHeightAt(e, t);
+        // at shared nodes so neighboring edges meet exactly. Near an
+        // intersection the profile ramps to the flat mesh height so the
+        // ribbon end meets the intersection with no step.
+        const roadY = ribbonHeightAt(e, t);
         for (const [off, hex] of bands) {
           pos.push(p.x + nx * off, roadY, p.z + nz * off);
           nor.push(0, 1, 0);
@@ -290,85 +295,160 @@ export class GameRenderer {
       grp.add(skirt);
       return grp;
     };
+    // Intersections (clean-break redesign 2026-09-27, replacing junction
+    // patches): one flat asphalt mesh per junction at a single height, with
+    // stop lines, crosswalks, and sidewalk corner fillets as flat decals
+    // 1-2cm above the base (never coplanar). Road ribbons end exactly at clip
+    // lines; the mesh begins there — zero overlap by construction.
+    const buildIntersections = (g: THREE.Group, deckMat: THREE.Material, earthMat: THREE.Material): void => {
+      const asphalt = new THREE.Color(0x43434a);
+      // Merged marking geometry for the whole map: white paint (stop lines +
+      // crosswalks) and sidewalk-colored fillets. Two draw calls total.
+      const whitePos: number[] = [], whiteNor: number[] = [], whiteIdx: number[] = [];
+      const walkPos: number[] = [], walkNor: number[] = [], walkIdx: number[] = [];
+      const quad = (pos: number[], nor: number[], idx: number[], y: number,
+          a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
+        const base = pos.length / 3;
+        for (const [x, z] of [a, b, c, d]) { pos.push(x, y, z); nor.push(0, 1, 0); }
+        idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      };
+      for (const ix of intersections()) {
+        const H = ix.height;
+        const p = nodePos(nodeById(ix.nodeId));
+        // Flat asphalt base: triangle fan from the node over the zone.
+        const pos: number[] = [p.x, H, p.z];
+        const nor: number[] = [0, 1, 0];
+        const col: number[] = [asphalt.r, asphalt.g, asphalt.b];
+        const idx: number[] = [];
+        for (const v of ix.ring) {
+          pos.push(v.x, H, v.z); nor.push(0, 1, 0);
+          col.push(asphalt.r, asphalt.g, asphalt.b);
+        }
+        for (let k = 0; k < ix.ring.length; k++)
+          idx.push(0, 1 + k, 1 + ((k + 1) % ix.ring.length));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        geo.setIndex(idx);
+        const mesh = new THREE.Mesh(geo, deckMat);
+        mesh.receiveShadow = true;
+        g.add(mesh);
+        // Earthwork skirt around the perimeter, top 2cm below the mesh so no
+        // dirt wall pokes through the surface it supports. The skirt OMITS
+        // the spans where roads enter (the stub end caps): a rim wall across
+        // a road entry would cut the ribbon. Foundations only, never walls
+        // crossing roads.
+        const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+        const n = ix.ring.length;
+        // Road-entry angular spans (from the node): each leg's stub end cap
+        // covers [legAngle - atan2(hw,clip), legAngle + atan2(hw,clip)].
+        const entries = ix.legs.map(l => ({
+          la: Math.atan2(l.dz, l.dx),
+          ca: Math.atan2(l.hw, l.clip),
+        }));
+        const angDiff = (a: number, b: number) => {
+          const d = (a - b) % (Math.PI * 2);
+          return Math.abs(((d + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        };
+        for (let i = 0; i < n; i++) {
+          const a = ix.ring[i], b = ix.ring[(i + 1) % n];
+          // Skip quads on a road-entry cap.
+          const mx = (a.x + b.x) / 2 - p.x, mz = (a.z + b.z) / 2 - p.z;
+          const midAng = Math.atan2(mz, mx);
+          if (entries.some(e => angDiff(midAng, e.la) <= e.ca + 1e-6)) continue;
+          const ex = b.x - a.x, ez = b.z - a.z;
+          const el = Math.hypot(ex, ez) || 1;
+          const ox = ez / el, oz = -ex / el;
+          const ty = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z));
+          const topY = H - 0.02;
+          const by = ty < topY - 0.3 ? Math.max(ty - 0.1, topY - 3) : topY;
+          const base = spos.length / 3;
+          spos.push(a.x, topY, a.z, a.x, by, a.z, b.x, topY, b.z, b.x, by, b.z);
+          snor.push(ox, 0, oz, ox, 0, oz, ox, 0, oz, ox, 0, oz);
+          sidx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        }
+        const sgeo = new THREE.BufferGeometry();
+        sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
+        sgeo.setAttribute('normal', new THREE.Float32BufferAttribute(snor, 3));
+        sgeo.setIndex(sidx);
+        const sm = new THREE.Mesh(sgeo, earthMat);
+        sm.receiveShadow = true;
+        g.add(sm);
+        // Painted markings as flat decals 1-2cm above the asphalt base (never
+        // coplanar): stop lines + crosswalks in white, sidewalk corner
+        // fillets in sidewalk color. Layout is pure geometry from road-deck.
+        const { white, walk } = intersectionMarkings(ix);
+        for (const q of white)
+          quad(whitePos, whiteNor, whiteIdx, H + 0.015, q[0], q[1], q[2], q[3]);
+        for (const q of walk)
+          quad(walkPos, walkNor, walkIdx, H + 0.02, q[0], q[1], q[2], q[3]);
+      }
+      // Emit the merged marking meshes.
+      const markMat = toon(0xf5f1e6);
+      markMat.side = THREE.DoubleSide;
+      if (whiteIdx.length) {
+        const wgeo = new THREE.BufferGeometry();
+        wgeo.setAttribute('position', new THREE.Float32BufferAttribute(whitePos, 3));
+        wgeo.setAttribute('normal', new THREE.Float32BufferAttribute(whiteNor, 3));
+        wgeo.setIndex(whiteIdx);
+        const wm = new THREE.Mesh(wgeo, markMat);
+        wm.receiveShadow = true;
+        g.add(wm);
+      }
+      const walkMat = toon(0xb8b0a0);
+      walkMat.side = THREE.DoubleSide;
+      if (walkIdx.length) {
+        const fgeo = new THREE.BufferGeometry();
+        fgeo.setAttribute('position', new THREE.Float32BufferAttribute(walkPos, 3));
+        fgeo.setAttribute('normal', new THREE.Float32BufferAttribute(walkNor, 3));
+        fgeo.setIndex(walkIdx);
+        const fm = new THREE.Mesh(fgeo, walkMat);
+        fm.receiveShadow = true;
+        g.add(fm);
+      }
+    };
     for (const e of ROAD_EDGES) {
       if (e.kind === 'bridge') continue;
       const curve = roadCurve(e);
       const width = roadWidth(e);
-      g.add(makeFlatRoad(e, curve, width));
+      // Clip the ribbon at intersection nodes: it ends at the clip distance
+      // from the node, where the intersection mesh takes over.
+      const len = curve.getLength();
+      const clips = edgeClips(e);
+      const t0 = clips.a ? clips.a.dist / len : 0;
+      const t1 = clips.b ? 1 - clips.b.dist / len : 1;
+      g.add(makeFlatRoad(e, curve, width, t0, t1));
     }
-    const patches = junctionPatches();
     for (const e of ROAD_EDGES) {
       if (e.kind === 'bridge') continue;
       const curve = roadCurve(e);
-      // Center dashes (flat, on the road surface).
+      // Center dashes (flat, on the road surface). Dashes TERMINATE at
+      // intersection clip lines (with a 1m margin) — they never enter the
+      // intersection, like real lane markings.
       const dashMat = toon(0xfff6d8);
       dashMat.side = THREE.DoubleSide;
       const len = curve.getLength();
-      for (let d = 0; d < len - 2; d += 4) {
+      const clips = edgeClips(e);
+      const cA = clips.a ? clips.a.dist : 0;
+      const cB = clips.b ? clips.b.dist : 0;
+      for (let d = cA + 1; d < len - cB - 3; d += 4) {
         const p0 = curve.getPointAt(d / len), p1 = curve.getPointAt(Math.min(1, (d + 2) / len));
         const dp = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
-        // No dashes inside junction patches (the junction is one clean surface).
-        if (patches.some(jp => patchContains(jp, dp.x, dp.z))) continue;
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
         dash.rotation.x = -Math.PI / 2;
         dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
-        // Match the deck height (clears terrain bulges like the road itself).
-        const dy = deckHeightAt(e, (d + 1) / len) + 0.03;
+        // Match the ribbon height (follows the clip ramp like the road itself).
+        const dy = ribbonHeightAt(e, (d + 1) / len) + 0.03;
         dash.position.set(dp.x, dy, dp.z);
         g.add(dash);
       }
     }
-    // Junction patches: single draped asphalt surfaces over every road
-    // intersection so overlapping ribbons can't clip through each other
-    // (user feedback 2026-09-27).
-    const patchCol = new THREE.Color(0x43434a);
-    for (const jp of patches) {
-      const pos: number[] = [];
-      const nor: number[] = [];
-      const col: number[] = [];
-      const idx: number[] = [];
-      for (const [a, b, c] of jp.tris) {
-        const base = pos.length / 3;
-        for (const v of [a, b, c]) {
-          pos.push(v.x, v.h, v.z); nor.push(0, 1, 0);
-          col.push(patchCol.r, patchCol.g, patchCol.b);
-        }
-        idx.push(base, base + 1, base + 2);
-      }
-      // Skirt wall around the patch perimeter down to the terrain. The top edge
-      // sits 2cm below the deck surface (ring h = deck + 0.05) so no dirt wall
-      // ever pokes through the road it borders (review 2026-09-27).
-      const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
-      const n = jp.ring.length;
-      for (let i = 0; i < n; i++) {
-        const a = jp.ring[i], b = jp.ring[(i + 1) % n];
-        const ex = b.x - a.x, ez = b.z - a.z;
-        const el = Math.hypot(ex, ez) || 1;
-        const ox = ez / el, oz = -ex / el;
-        const ty = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z));
-        const topY = Math.min(a.h, b.h) - 0.07;
-        const by = ty < topY - 0.3 ? Math.max(ty - 0.1, topY - 3) : topY;
-        const base = spos.length / 3;
-        spos.push(a.x, topY, a.z, a.x, by, a.z, b.x, topY, b.z, b.x, by, b.z);
-        snor.push(ox, 0, oz, ox, 0, oz, ox, 0, oz, ox, 0, oz);
-        sidx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
-      }
-      const pgeo = new THREE.BufferGeometry();
-      pgeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      pgeo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-      pgeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-      pgeo.setIndex(idx);
-      const pm = new THREE.Mesh(pgeo, deckMat);
-      pm.receiveShadow = true;
-      g.add(pm);
-      const sgeo = new THREE.BufferGeometry();
-      sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
-      sgeo.setAttribute('normal', new THREE.Float32BufferAttribute(snor, 3));
-      sgeo.setIndex(sidx);
-      const sm = new THREE.Mesh(sgeo, earthMat);
-      sm.receiveShadow = true;
-      g.add(sm);
-    }
+    // Intersections: one flat asphalt mesh per junction at a single height,
+    // with painted markings as flat decals 1-2cm above (never coplanar).
+    // Road ribbons end exactly at clip lines; the mesh begins there — zero
+    // overlap by construction, so z-fighting is impossible (2026-09-27).
+    buildIntersections(g, deckMat, earthMat);
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
     // east pier serves Marina Works.
     buildBridge(g);
