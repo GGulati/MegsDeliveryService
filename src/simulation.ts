@@ -622,7 +622,33 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
     player.position.x += delta.x; player.position.y += delta.y; player.position.z += delta.z;
   }
   // else: degenerate contact with no surface normal (already inside a box) —
-  // hold still rather than guess a slide direction.
+  // fall through to the de-penetration pass below, which pushes out along
+  // the shortest exit instead of holding still.
+  //
+  // De-penetration: if the player sphere intersects any solid (from a discrete
+  // step, a moved building, or a narrow gap), push out along the minimum
+  // translation vector — the closest face. Iterates so a push out of one box
+  // that lands in another still resolves. Meg can never be left stuck inside.
+  for (let iter = 0; iter < 4; iter++) {
+    let pushed = false;
+    for (const solid of [...SOLIDS, ...WALLS]) {
+      const minX = solid.min.x - RADIUS, maxX = solid.max.x + RADIUS;
+      const minY = solid.min.y - RADIUS, maxY = solid.max.y + RADIUS;
+      const minZ = solid.min.z - RADIUS, maxZ = solid.max.z + RADIUS;
+      const p = player.position;
+      if (p.x <= minX || p.x >= maxX || p.y <= minY || p.y >= maxY || p.z <= minZ || p.z >= maxZ) continue;
+      // Penetration depth to each face; exit via the closest one.
+      const dxMin = p.x - minX, dxMax = maxX - p.x;
+      const dyMin = p.y - minY, dyMax = maxY - p.y;
+      const dzMin = p.z - minZ, dzMax = maxZ - p.z;
+      const m = Math.min(dxMin, dxMax, dyMin, dyMax, dzMin, dzMax);
+      if (m === dxMin) p.x = minX; else if (m === dxMax) p.x = maxX;
+      else if (m === dyMin) p.y = minY; else if (m === dyMax) p.y = maxY;
+      else if (m === dzMin) p.z = minZ; else p.z = maxZ;
+      pushed = true;
+    }
+    if (!pushed) break;
+  }
   player.position.x = clamp(player.position.x, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   // Floor follows the terrain: 3m above ground (or water), so Meg can't clip hills.
   const groundY = Math.max(heightAt(player.position.x, player.position.z), 0) + MIN_ALTITUDE;
