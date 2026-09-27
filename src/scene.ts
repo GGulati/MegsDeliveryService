@@ -357,6 +357,137 @@ export class GameRenderer {
         awn.rotation.x = -Math.PI / 2;
         g.add(awn);
       }
+      // District dressing: bungalow lanes get picket fences + cottage gardens,
+      // mansion hill gets low stone walls + formal walled gardens.
+      if (s.district === 'bungalow-lanes') this.makePicketFence(g, s, i);
+      if (s.district === 'mansion-hill') this.makeWalledGarden(g, s, i);
+    });
+  }
+
+  private makePicketFence(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
+    const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
+    const sx = s.max.x - s.min.x, sz = s.max.z - s.min.z;
+    const groundY = s.min.y;
+    const picketMat = toon(0xf5f0e1), soilMat = toon(0x6b4a2f);
+    const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff), toon(0xe86a6a)];
+    // Fence runs: [x1, z1, x2, z2]. Front has a 2.4m gap at center for the path.
+    const off = 4, fx1 = cx - sx / 2 - off, fx2 = cx + sx / 2 + off, fz = cz + sz / 2 + off;
+    const runs: [number, number, number, number][] = [
+      [fx1, fz, cx - 1.2, fz], [cx + 1.2, fz, fx2, fz], // front (with path gap)
+      [fx1, cz - sz / 2, fx1, fz], [fx2, cz - sz / 2, fx2, fz], // sides
+    ];
+    // Collect picket transforms, then instance them.
+    const mats: THREE.Matrix4[] = [];
+    const dummy = new THREE.Object3D();
+    runs.forEach(([x1, z1, x2, z2]) => {
+      const len = Math.hypot(x2 - x1, z2 - z1);
+      const n = Math.max(2, Math.floor(len / 0.38));
+      const ang = Math.atan2(x2 - x1, z2 - z1);
+      for (let k = 0; k <= n; k++) {
+        const t = k / n;
+        dummy.position.set(x1 + (x2 - x1) * t, groundY + 0.55, z1 + (z2 - z1) * t);
+        dummy.rotation.set(0, ang, 0);
+        dummy.updateMatrix();
+        mats.push(dummy.matrix.clone());
+      }
+      // Two horizontal rails per run.
+      const railLen = len;
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, railLen), picketMat);
+      rail.position.set((x1 + x2) / 2, groundY + 0.75, (z1 + z2) / 2);
+      rail.rotation.y = ang;
+      g.add(rail);
+      const rail2 = rail.clone(); rail2.position.y = groundY + 0.35; g.add(rail2);
+    });
+    const picketGeo = new THREE.BoxGeometry(0.14, 1.1, 0.07);
+    // Pointed top: small cone merged visually by placing it atop each picket.
+    const inst = new THREE.InstancedMesh(picketGeo, picketMat, mats.length);
+    mats.forEach((m, idx) => inst.setMatrixAt(idx, m));
+    inst.instanceMatrix.needsUpdate = true;
+    g.add(inst);
+    const tipGeo = new THREE.ConeGeometry(0.1, 0.18, 4);
+    const tips = new THREE.InstancedMesh(tipGeo, picketMat, mats.length);
+    mats.forEach((m, idx) => {
+      const p = new THREE.Vector3().setFromMatrixPosition(m);
+      dummy.position.set(p.x, p.y + 0.64, p.z);
+      dummy.rotation.set(0, Math.PI / 4, 0);
+      dummy.updateMatrix();
+      tips.setMatrixAt(idx, dummy.matrix);
+    });
+    tips.instanceMatrix.needsUpdate = true;
+    g.add(tips);
+    // Cottage garden: two flower beds flanking the front path.
+    const rnd = mulberry32(seed * 77 + 5);
+    [-1, 1].forEach(side => {
+      const bx = cx + side * 3.2, bz = cz + sz / 2 + 2.2;
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.35, 1.8), soilMat);
+      bed.position.set(bx, groundY + 0.18, bz);
+      g.add(bed);
+      for (let f = 0; f < 7; f++) {
+        const fl = new THREE.Mesh(new THREE.SphereGeometry(0.22, 7, 6), flowerMats[Math.floor(rnd() * flowerMats.length)]);
+        fl.position.set(bx + (rnd() - 0.5) * 2.8, groundY + 0.55, bz + (rnd() - 0.5) * 1.2);
+        g.add(fl);
+        const lv = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 5), toon(0x4d976b));
+        lv.position.set(bx + (rnd() - 0.5) * 2.8, groundY + 0.42, bz + (rnd() - 0.5) * 1.2);
+        g.add(lv);
+      }
+    });
+  }
+
+  private makeWalledGarden(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
+    const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
+    const sx = s.max.x - s.min.x, sz = s.max.z - s.min.z;
+    const groundY = s.min.y;
+    const wallMat = toon(0xb8b0a0), hedgeMat = toon(0x3d8a5f), soilMat = toon(0x6b4a2f);
+    const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff)];
+    // Low stone wall around the property, 6m out, with a 3m driveway gap at front center.
+    const off = 6, wx1 = cx - sx / 2 - off, wx2 = cx + sx / 2 + off;
+    const wz1 = cz - sz / 2 - off, wz2 = cz + sz / 2 + off;
+    const wallH = 0.9, wallT = 0.5;
+    const walls: [number, number, number, number][] = [
+      // [centerX, centerZ, lengthX, lengthZ]
+      [(wx1 + cx - 1.5) / 2, wz2, (cx - 1.5) - wx1, wallT],
+      [(cx + 1.5 + wx2) / 2, wz2, wx2 - (cx + 1.5), wallT],
+      [cx, wz1, wx2 - wx1, wallT],
+      [wx1, cz, wallT, wz2 - wz1],
+      [wx2, cz, wallT, wz2 - wz1],
+    ];
+    walls.forEach(([x, z, lx, lz]) => {
+      const w = new THREE.Mesh(new THREE.BoxGeometry(lx, wallH, lz), wallMat);
+      w.position.set(x, groundY + wallH / 2, z);
+      w.castShadow = true;
+      g.add(w);
+      // Cap stones.
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(lx + 0.15, 0.12, lz + 0.15), toon(0xd8d0c0));
+      cap.position.set(x, groundY + wallH + 0.06, z);
+      g.add(cap);
+    });
+    // Formal hedges: rectangle inside the walls.
+    const hx1 = wx1 + 1.5, hx2 = wx2 - 1.5, hz1 = wz1 + 1.5, hz2 = wz2 - 1.5;
+    const hedgeH = 1.0, hedgeT = 0.8;
+    [
+      [(hx1 + hx2) / 2, hz1, hx2 - hx1, hedgeT],
+      [(hx1 + hx2) / 2, hz2, hx2 - hx1, hedgeT],
+      [hx1, (hz1 + hz2) / 2, hedgeT, hz2 - hz1],
+      [hx2, (hz1 + hz2) / 2, hedgeT, hz2 - hz1],
+    ].forEach(([x, z, lx, lz]) => {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(lx, hedgeH, lz), hedgeMat);
+      h.position.set(x, groundY + hedgeH / 2, z);
+      h.castShadow = true;
+      g.add(h);
+    });
+    // Four symmetric flower beds inside the hedges.
+    const rnd = mulberry32(seed * 131 + 11);
+    const bedOffX = (hx2 - hx1) * 0.22, bedOffZ = (hz2 - hz1) * 0.22;
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([qx, qz]) => {
+      const bx = cx + qx * bedOffX, bz = cz + qz * bedOffZ;
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.4, 2.4), soilMat);
+      bed.position.set(bx, groundY + 0.2, bz);
+      g.add(bed);
+      for (let f = 0; f < 8; f++) {
+        const fl = new THREE.Mesh(new THREE.SphereGeometry(0.24, 7, 6), flowerMats[Math.floor(rnd() * flowerMats.length)]);
+        fl.position.set(bx + (rnd() - 0.5) * 2.6, groundY + 0.6, bz + (rnd() - 0.5) * 1.8);
+        g.add(fl);
+      }
     });
   }
 
