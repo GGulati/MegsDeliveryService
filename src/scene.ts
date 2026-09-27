@@ -299,6 +299,28 @@ export class GameRenderer {
         door.position.copy(planeAt(0, s.min.y + Math.min(3.7, sy*.3)*.5, .06)); door.rotation.y=rot; g.add(door);
       };
       addFacade('north'); addFacade('south'); addFacade('east'); addFacade('west');
+      // Merchant-row shops get striped awnings over the south face (street side).
+      if (s.district === 'merchant-row') {
+        const awnColors: [string, string][] = [['#e86a6a', '#f5f0e1'], ['#5b7fa6', '#f5f0e1'], ['#6aa86a', '#f5f0e1']];
+        const [c1, c2] = awnColors[i % awnColors.length];
+        const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 16;
+        const ctx = cnv.getContext('2d')!;
+        for (let sIdx = 0; sIdx < 8; sIdx++) { ctx.fillStyle = sIdx % 2 ? c1 : c2; ctx.fillRect(sIdx * 16, 0, 16, 16); }
+        const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
+        const awnW = Math.min(sx * 0.7, 10), awnD = 2.2;
+        const awnGeo = new THREE.PlaneGeometry(awnW, awnD, 1, 1);
+        // Slope the awning: top edge at wall, front edge lower.
+        const pos = awnGeo.attributes.position;
+        for (let v = 0; v < pos.count; v++) {
+          if (pos.getY(v) < 0) pos.setZ(v, -0.7); // front edge dips
+        }
+        awnGeo.computeVertexNormals();
+        const awn = new THREE.Mesh(awnGeo, new THREE.MeshToonMaterial({ map: tex }));
+        const doorY = s.min.y + Math.min(3.7, sy * .3);
+        awn.position.set(center.x, doorY + 2.2, center.z + sz * .5 + awnD * .42);
+        awn.rotation.x = -0.15;
+        g.add(awn);
+      }
     });
   }
 
