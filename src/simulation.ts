@@ -348,9 +348,12 @@ function makeOffers(seed: number, delivery: number, from: string): import('./typ
     .map((stop) => ({ stop, distance: Math.hypot(stop.position.x - origin.position.x, stop.position.z - origin.position.z) }))
     .sort((a, b) => a.distance - b.distance);
   // One nearby and one distant choice makes the short/long decision legible, not cosmetic.
+  // Phase 1: the three-tier town spreads six stops across 0/10/20m tiers, so the
+  // bands cover three nearest / three farthest — with 2/2 banding, mid-distance
+  // stops (e.g. harbor-cafe from home) would be structurally unofferable.
   value = hash(value + 1);
-  const short = candidates[value % Math.min(2, candidates.length)];
-  const distant = candidates.slice(-Math.min(2, candidates.length));
+  const short = candidates[value % Math.min(3, candidates.length)];
+  const distant = candidates.slice(-Math.min(3, candidates.length));
   value = hash(value + 2);
   const long = distant[value % distant.length];
   return [short, long].sort((a, b) => a.distance - b.distance).map(({ stop, distance }, index) => {

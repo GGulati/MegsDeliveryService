@@ -666,29 +666,33 @@ export class GameRenderer {
     // place, not panorama dressing. The keeper's cottage (Beacon House, the delivery
     // pad) is SOLIDS[3], drawn by makeBuildings; the tower solid is the last SOLIDS
     // entry, drawn here as a cylinder. Beam rotation is driven in render().
-    const hx = 74, hz = 110; // headland center
+    // Positions follow the solids so the Phase 1 layout pass can move them.
+    const cottage = SOLIDS[3];
+    const towerS = SOLIDS[LIGHTHOUSE_TOWER_SOLID_INDEX];
+    const hx = (cottage.min.x + cottage.max.x) / 2, hz = (cottage.min.z + cottage.max.z) / 2;
     const rock = new THREE.Mesh(new THREE.CylinderGeometry(20, 24, 9, 18), toon(0x8a7f72));
-    rock.position.set(hx, 2.5, hz); rock.castShadow = true; g.add(rock);
-    const x = 88, z = 118; // tower
+    rock.position.set(hx, cottage.min.y + 2.5, hz); rock.castShadow = true; g.add(rock);
+    const x = (towerS.min.x + towerS.max.x) / 2, z = (towerS.min.z + towerS.max.z) / 2;
+    const dy = towerS.min.y; // visual tower base sat at y=3 when the solid base was y=0
     const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 5.2, 26, 16), toon(0xfff0d4));
-    tower.position.set(x, 16, z); tower.castShadow = true; g.add(tower);
+    tower.position.set(x, 16 + dy, z); tower.castShadow = true; g.add(tower);
     // Red bands track the tower's taper so they sit proud of the white shell.
     const towerR = (y: number) => 5.2 - (y - 3) * (1.6 / 26);
     for (const y of [8, 14, 20, 26]) {
       const stripe = new THREE.Mesh(
         new THREE.CylinderGeometry(towerR(y + 1.1) + 0.15, towerR(y - 1.1) + 0.15, 2.2, 16),
         toon(0xd25c51));
-      stripe.position.set(x, y, z); g.add(stripe);
+      stripe.position.set(x, y + dy, z); g.add(stripe);
     }
     const gallery = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 1.2, 16), toon(0x3e6680));
-    gallery.position.set(x, 29.6, z); g.add(gallery);
+    gallery.position.set(x, 29.6 + dy, z); g.add(gallery);
     const lampRoom = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 3.4, 12),
       new THREE.MeshBasicMaterial({ color: 0xffe9ad }));
-    lampRoom.position.set(x, 31.8, z); g.add(lampRoom);
+    lampRoom.position.set(x, 31.8 + dy, z); g.add(lampRoom);
     const cap = new THREE.Mesh(new THREE.ConeGeometry(3.4, 2.6, 12), toon(0xc9534e));
-    cap.position.set(x, 34.8, z); g.add(cap);
+    cap.position.set(x, 34.8 + dy, z); g.add(cap);
     // Rotating beam: two opposite translucent blades from the lamp room.
-    const beamGroup = new THREE.Group(); beamGroup.position.set(x, 31.8, z);
+    const beamGroup = new THREE.Group(); beamGroup.position.set(x, 31.8 + dy, z);
     const beamMat = new THREE.MeshBasicMaterial({ color: 0xffdf8e, transparent: true, opacity: .28, depthWrite: false, side: THREE.DoubleSide });
     [0, Math.PI].forEach(a => {
       const blade = new THREE.Mesh(new THREE.ConeGeometry(3.2, 26, 12, 1, true), beamMat);
@@ -697,7 +701,7 @@ export class GameRenderer {
       beamGroup.add(blade);
     });
     g.add(beamGroup); this.beamGroup = beamGroup;
-    this.beamLight = new THREE.PointLight(0xffdc92, 60, 90); this.beamLight.position.set(x, 32, z); g.add(this.beamLight);
+    this.beamLight = new THREE.PointLight(0xffdc92, 60, 90); this.beamLight.position.set(x, 32 + dy, z); g.add(this.beamLight);
     this.setLighthouseLit(true);
   }
 
@@ -715,13 +719,16 @@ export class GameRenderer {
   private makeClockTower(g: THREE.Group): void {
     // Old Town clock tower: tallest in the town core, shorter than the lighthouse.
     // Sandstone shaft, clock faces on all four sides, pointed terracotta roof.
-    const cx = 6, cz = -74; // center of the clock-tower SOLIDS
+    // Follows the clock-tower SOLIDS so the Phase 1 layout pass can move it.
+    const ct = SOLIDS[CLOCK_TOWER_SOLID_INDEX];
+    const cx = (ct.min.x + ct.max.x) / 2, cz = (ct.min.z + ct.max.z) / 2;
+    const by = ct.min.y; // base elevation; all visual heights hang off this
     const sandstone = toon(0xd4a574), terracotta = toon(0xb65c3f), trim = toon(0xffdfaa);
     const shaft = new THREE.Mesh(new THREE.BoxGeometry(8, 20, 8), sandstone);
-    shaft.position.set(cx, 10, cz); shaft.castShadow = true; g.add(shaft); // y: 0..20
+    shaft.position.set(cx, by + 10, cz); shaft.castShadow = true; g.add(shaft); // y: by..by+20
     // Belfry: slightly wider band with arched openings (dark insets).
     const belfry = new THREE.Mesh(new THREE.BoxGeometry(8.6, 3, 8.6), sandstone);
-    belfry.position.set(cx, 21.5, cz); belfry.castShadow = true; g.add(belfry); // y: 20..23
+    belfry.position.set(cx, by + 21.5, cz); belfry.castShadow = true; g.add(belfry); // y: by+20..by+23
     const openingMat = toon(0x2a2a35);
     const faceDefs: Array<[number, number, number]> = [
       [0, -4.32, Math.PI], [0, 4.32, 0], [-4.32, 0, -Math.PI / 2], [4.32, 0, Math.PI / 2],
@@ -731,35 +738,37 @@ export class GameRenderer {
       const face = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.3, 24),
         new THREE.MeshBasicMaterial({ color: 0xf8f0d8 }));
       face.rotation.x = Math.PI / 2; face.rotation.z = rot;
-      face.position.set(cx + ox, 17, cz + oz); g.add(face);
+      face.position.set(cx + ox, by + 17, cz + oz); g.add(face);
       // Hands: hour and minute, fixed at a charming time.
       const handMat = new THREE.MeshBasicMaterial({ color: 0x2a2a35 });
       const hour = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.1), handMat);
-      hour.position.set(cx + ox * 1.02, 17.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
+      hour.position.set(cx + ox * 1.02, by + 17.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
       const minute = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.6, 0.1), handMat);
-      minute.position.set(cx + ox * 1.02, 17.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
+      minute.position.set(cx + ox * 1.02, by + 17.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
       // Belfry opening (dark arch suggestion).
       const opening = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2), openingMat);
-      opening.position.set(cx + ox * 1.01, 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
+      opening.position.set(cx + ox * 1.01, by + 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
     }
-    // Pointed terracotta roof (pyramid). Collision tops at y=28 with the visual.
+    // Pointed terracotta roof (pyramid). Collision tops at by+28 with the visual.
     const roofGeo = new THREE.ConeGeometry(6.2, 5, 4);
     const roof = new THREE.Mesh(roofGeo, terracotta);
-    roof.position.set(cx, 25.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+    roof.position.set(cx, by + 25.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
     const finial = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), trim);
-    finial.position.set(cx, 28.2, cz); g.add(finial);
+    finial.position.set(cx, by + 28.2, cz); g.add(finial);
     // Corner trim for a finished look.
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const corner = new THREE.Mesh(new THREE.BoxGeometry(0.7, 20, 0.7), trim);
-      corner.position.set(cx + sx * 3.8, 10, cz + sz * 3.8); g.add(corner);
+      corner.position.set(cx + sx * 3.8, by + 10, cz + sz * 3.8); g.add(corner);
     }
   }
 
   private makeObservatoryDome(g: THREE.Group): void {
     // Observatory Rise: stone drum + copper-green dome on the Hill Observatory
     // roof, offset from the delivery pad. The dome is the landmark.
-    // Roof surface at (107,-63) on the pyramid: 28.76 (not the 31 apex).
-    const cx = 107, cz = -63, roofY = 28.76;
+    // Follows the dome SOLIDS so the Phase 1 layout pass can move it.
+    const ds = SOLIDS[OBSERVATORY_DOME_SOLID_INDEX];
+    const cx = (ds.min.x + ds.max.x) / 2, cz = (ds.min.z + ds.max.z) / 2;
+    const roofY = ds.min.y;
     const stone = toon(0x8a8a92), copper = toon(0x5c8a7a);
     const drum = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.8, 3, 18), stone);
     drum.position.set(cx, roofY + 1.5, cz); drum.castShadow = true; g.add(drum);
@@ -775,8 +784,15 @@ export class GameRenderer {
   private makeBakeryDormer(g: THREE.Group): void {
     // Merchant Row: the bakery (SOLIDS[0]) gets a distinctive attic dormer with
     // a warm lit window — "home" reads from the air. Offset from the pad.
-    // Roof surface at (-70,32) on the pyramid: 15.2 (not the 18 apex).
-    const cx = -70, cz = 32, roofY = 15.2;
+    // Follows the bakery SOLIDS so the Phase 1 layout pass can move it; the roof
+    // surface height is derived from the pyramid roof geometry in makeBuildings.
+    const b = SOLIDS[0];
+    const bcx = (b.min.x + b.max.x) / 2, bcz = (b.min.z + b.max.z) / 2;
+    const cx = bcx, cz = bcz - 8;
+    const sx = b.max.x - b.min.x, sy = b.max.y - b.min.y, sz = b.max.z - b.min.z;
+    const roofH = Math.min(4.2, sy * .28);
+    const f = Math.max(0, Math.min(1 - Math.abs(cx - bcx) / (sx / 2), 1 - Math.abs(cz - bcz) / (sz / 2)));
+    const roofY = (b.max.y - roofH) + f * roofH;
     const pastel = toon(0xf4e4a8), wood = toon(0x8b5a3a);
     const dormer = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.6, 3), pastel);
     dormer.position.set(cx, roofY + 1.3, cz); dormer.castShadow = true; g.add(dormer);
@@ -804,26 +820,29 @@ export class GameRenderer {
 
   private makeMansionTerraces(g: THREE.Group): void {
     // Mansion Hill: terraced garden platforms stepping down from each villa
-    // toward the bay. Stone retaining walls, green garden tops. Decorative.
+    // (SOLIDS[17] and SOLIDS[18]) toward the loop road. Stone retaining walls,
+    // green garden tops. Decorative. Follows the villa SOLIDS so the Phase 1
+    // layout pass can move them.
     // NOTE: no collision solids — MIN_ALTITUDE keeps Meg >=3m above terrain,
     // so she can only graze the tallest garden top (3.25m). If the flight
     // floor is ever lowered, add SOLIDS for these.
     const stone = toon(0x9a9a92), garden = toon(0x6aa86a);
-    const terrace = (x0: number, x1: number, yTop: number, z0: number, z1: number) => {
-      const h = yTop; // base at y=0 (terrain)
+    const terrace = (x0: number, x1: number, yBase: number, yTop: number, z0: number, z1: number) => {
+      const h = yTop - yBase; // wall rises from the terrain to yTop
       const wall = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, h, z1 - z0), stone);
-      wall.position.set((x0 + x1) / 2, h / 2, (z0 + z1) / 2);
+      wall.position.set((x0 + x1) / 2, yBase + h / 2, (z0 + z1) / 2);
       wall.castShadow = true; wall.receiveShadow = true; g.add(wall);
       const top = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 - 0.6, 0.25, z1 - z0 - 0.6), garden);
-      top.position.set((x0 + x1) / 2, h + 0.12, (z0 + z1) / 2);
+      top.position.set((x0 + x1) / 2, yTop + 0.12, (z0 + z1) / 2);
       top.receiveShadow = true; g.add(top);
     };
-    // Villa 1 (x:100..120, z:-15..5): terraces step west toward the bay.
-    terrace(90, 100, 1.5, -15, 5);
-    terrace(94, 100, 3, -11, 1);
-    // Villa 2 (x:125..140, z:5..25): terraces step west toward the bay.
-    terrace(115, 125, 1.5, 5, 25);
-    terrace(119, 125, 3, 9, 21);
+    // Villa 1 and Villa 2: terraces step north toward the loop road.
+    for (const vi of [17, 18]) {
+      const v = SOLIDS[vi];
+      const yBase = v.min.y;
+      terrace(v.min.x, v.max.x, yBase, yBase + 1.5, v.max.z, v.max.z + 4.5);
+      terrace(v.min.x + 4, v.max.x - 4, yBase, yBase + 3, v.max.z + 2.25, v.max.z + 4.5);
+    }
   }
 
   private makeHero(): void {

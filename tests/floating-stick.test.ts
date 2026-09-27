@@ -8,10 +8,10 @@ const drive: FlightInput = { turn: 0, climb: 0, throttle: 1 };
 const release: FlightInput = { turn: 0, climb: 0, throttle: 0, cutThrottle: true };
 const DT = 1 / 60;
 
-// Spawn faces Harbor Cafe, so driving straight ahead engages the arrival
-// auto-brake and confounds stop-timing asserts. Face away (south) so the
-// drone flies into open sky.
-function faceAway(state: ReturnType<typeof createState>): void { state.player.yaw = Math.PI; }
+// Phase 1: home is in midtown (-25,-48) and Harbor Cafe is far to the south
+// (-80,150), so flying south engages the arrival auto-brake and confounds
+// stop-timing asserts. Face north (yaw 0) so the drone flies into open sky.
+function faceAway(state: ReturnType<typeof createState>): void { state.player.yaw = 0; }
 
 function stepMany(state: ReturnType<typeof createState>, n: number, input: FlightInput): void {
   for (let i = 0; i < n; i++) step(state, input, DT);

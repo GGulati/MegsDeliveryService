@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay, OBSERVATORY_DOME_SOLID_INDEX } from '../src/world';
+import { TIERS } from '../src/terrain';
 import { buildBayShape } from '../src/shore';
 import * as THREE from 'three';
 
 // Harborlight geography: the bay is water cutting into the island, every stop
 // sits on land, and every pad sits above its building's roof.
+
+/** Phase 1: the "hill line" is the edge of the tier pads — buildings must sit
+ *  on flattened town land, not on wild hills. Checks containment in TIERS. */
+function inTierPad(x: number, z: number): boolean {
+  return TIERS.some(t => t.rects.some(([x0, z0, x1, z1]) => x >= x0 && x <= x1 && z >= z0 && z <= z1));
+}
 
 test('bay mouth reaches past the island edge to meet the sea', () => {
   // Island radius is 190; the shoreline must poke past it to join the ocean.
@@ -97,15 +104,14 @@ test('every pad sits above its building roof', () => {
   });
 });
 
-test('every building belongs to a district and sits inside the hill line', () => {
+test('every building belongs to a district and sits on a tier pad', () => {
   const districts = new Set(['harbor', 'old-town', 'merchant-row', 'mansion-hill', 'bungalow-lanes', 'observatory-rise', 'lighthouse-headland']);
   SOLIDS.forEach((b, i) => {
     if (i === SOLIDS.length - 1) return; // lighthouse tower: no district
     assert.ok(b.district, `building ${i} has no district`);
     assert.ok(districts.has(b.district!), `building ${i} has unknown district ${b.district}`);
     const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
-    const r = Math.hypot(cx, cz);
-    assert.ok(r < 145, `building ${i} (${b.district}) at r=${r.toFixed(0)} is past the hill line`);
+    assert.ok(inTierPad(cx, cz), `building ${i} (${b.district}) at (${cx.toFixed(0)},${cz.toFixed(0)}) is off the tier pads (on wild hills)`);
   });
 });
 
@@ -147,13 +153,13 @@ test('home is the bakery attic on the merchant row', () => {
   assert.ok(home.name.toLowerCase().includes('bakery'), 'home is the bakery');
 });
 
-test('Phase B landmarks sit on land inside the hill line', () => {
+test('Phase B landmarks sit on land on a tier pad', () => {
   // Clock tower and observatory dome solids (lighthouse tower is last).
   const landmarks = [SOLIDS[SOLIDS.length - 3], SOLIDS[SOLIDS.length - 2]];
   for (const b of landmarks) {
     const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
     assert.ok(!isInBay(cx, cz), `landmark at (${cx},${cz}) is in the bay`);
-    assert.ok(Math.hypot(cx, cz) < 145, `landmark at r=${Math.hypot(cx, cz).toFixed(0)} is past the hill line`);
+    assert.ok(inTierPad(cx, cz), `landmark at (${cx.toFixed(0)},${cz.toFixed(0)}) is off the tier pads`);
   }
 });
 
@@ -173,12 +179,19 @@ test('observatory dome sits on its building roof, clear of the pad', () => {
   const dome = SOLIDS[SOLIDS.length - 2];
   const base = SOLIDS[5]; // Hill Observatory building
   const pad = STOPS.find(s => s.id === 'observatory')!.position;
-  // Dome base sits on the pyramid roof surface at its (x,z), not the apex:
-  // roof slopes from base (26.8) to apex (31) over half-extents (15,15).
+  // Dome base sits on the pyramid roof surface at its (x,z), not the apex.
+  // The pyramid is built by makeBuildings: roofHeight = min(4.2, sy*.28),
+  // sloping from (base.min.y + sy - roofHeight) at the eaves to base.max.y
+  // at the apex over the half-extents — all derived from the solids, never
+  // hardcoded coordinates.
+  const dcx = (dome.min.x + dome.max.x) / 2, dcz = (dome.min.z + dome.max.z) / 2;
   const cx = (base.min.x + base.max.x) / 2, cz = (base.min.z + base.max.z) / 2;
   const hx = (base.max.x - base.min.x) / 2, hz = (base.max.z - base.min.z) / 2;
-  const dx = Math.abs(107 - cx) / hx, dz = Math.abs(-63 - cz) / hz;
-  const roofSurface = 26.8 + (31 - 26.8) * (1 - Math.max(dx, dz));
+  const sy = base.max.y - base.min.y;
+  const roofHeight = Math.min(4.2, sy * .28);
+  const eavesY = base.min.y + sy - roofHeight, apexY = base.max.y;
+  const dx = Math.abs(dcx - cx) / hx, dz = Math.abs(dcz - cz) / hz;
+  const roofSurface = eavesY + (apexY - eavesY) * (1 - Math.max(dx, dz));
   assert.ok(Math.abs(dome.min.y - roofSurface) < 0.5, `dome not on the roof surface (dome ${dome.min.y}, surface ${roofSurface.toFixed(2)})`);
   // Dome footprint is inside the building footprint.
   assert.ok(dome.min.x >= base.min.x && dome.max.x <= base.max.x, 'dome x outside building');
