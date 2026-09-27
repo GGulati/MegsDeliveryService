@@ -2,6 +2,10 @@ import type { Solid, Stop } from './types';
 
 export const WORLD_LIMIT = 230;
 
+/** Future park district rectangle: [minX, minZ, maxX, maxZ]. Procedural infill
+ *  (Task 5) excludes this area; Task 8 builds the Golden Gate Park equivalent here. */
+export const PARK_RECT: [number, number, number, number] = [-40, -195, 40, -155];
+
 /** Harbor bay shoreline: a hand-placed organic polygon of (x, z) points tracing
  *  the water's edge from the inner harbor, down the east shore, around the mouth
  *  (which opens past the island edge to meet the sea), and back up the west shore.
