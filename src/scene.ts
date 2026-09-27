@@ -109,7 +109,7 @@ export class GameRenderer {
     this.hero.rotation.z = 0;
     this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .62);
     this.hero.position.y += visual.bob;
-    this.animateSky(settings.reducedMotion);
+    this.animateSky(settings.reducedMotion, step);
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateGlowColumn(state, settings.reducedMotion);
     this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
@@ -844,10 +844,128 @@ export class GameRenderer {
 
   private makeSkyLife(): void {
     const cloudMat=toon(0xfffbeb); for(let i=0;i<12;i++){const c=new THREE.Group();for(let j=0;j<4;j++){const p=new THREE.Mesh(new THREE.SphereGeometry(3+j%2*1.5,10,7),cloudMat);p.position.set(j*3,Math.sin(j)*.8,0);c.add(p);}c.position.set(-190+(i*47)%380,38+(i%4)*16,-155+(i*71)%320);this.clouds.add(c);}
-    const birdMat=toon(0x583d50);for(let i=0;i<9;i++){const b=new THREE.Group();[-1,1].forEach(s=>{const wing=new THREE.Mesh(new THREE.ConeGeometry(.65,2,3),birdMat);wing.rotation.z=s*.9;wing.position.x=s*.55;b.add(wing)});b.position.set(-80+i*16,34+i%3*4,-45-i*11);this.birds.add(b);}
+    this.makeBirds();
   }
 
-  private animateSky(reduced: boolean): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.birds.children.forEach((b,i)=>{b.position.x+=.035;b.rotation.z=Math.sin(this.clock*5+i)*.18;}); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
+  private birdFlock: { group: THREE.Group; left: THREE.Group; right: THREE.Group; vel: THREE.Vector3; phase: number }[] = [];
+
+  private makeBirds(): void {
+    // Gull model: white body, gray wings on shoulder pivots (for flapping),
+    // head + orange beak, fanned tail. Faces +z; oriented to velocity each frame.
+    const bodyMat = toon(0xf5f5f0), wingMat = toon(0xd9d9d9), beakMat = toon(0xe8933c);
+    const rnd = mulberry32(1234);
+    for (let i = 0; i < 12; i++) {
+      const b = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), bodyMat);
+      body.scale.set(0.7, 0.6, 1.6);
+      b.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), bodyMat);
+      head.position.set(0, 0.22, 0.75);
+      b.add(head);
+      const beak = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.35, 8), beakMat);
+      beak.position.set(0, 0.18, 1.05);
+      beak.rotation.x = Math.PI / 2;
+      b.add(beak);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.6), wingMat);
+      tail.position.set(0, 0.05, -0.85);
+      b.add(tail);
+      // Wings: pivot groups at the shoulders; the mesh extends outward so
+      // rotating the pivot about z flaps the wing up/down.
+      const mkWing = (side: number) => {
+        const pivot = new THREE.Group();
+        pivot.position.set(side * 0.28, 0.12, 0.1);
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.07, 0.65), wingMat);
+        wing.position.x = side * 0.85;
+        // Taper the tip.
+        const tip = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.45), wingMat);
+        tip.position.x = side * 1.85;
+        pivot.add(wing, tip);
+        b.add(pivot);
+        return pivot;
+      };
+      const left = mkWing(-1), right = mkWing(1);
+      // Start scattered over the harbor.
+      b.position.set(-30 + rnd() * 80, 28 + rnd() * 12, 45 + rnd() * 55);
+      this.birds.add(b);
+      this.birdFlock.push({
+        group: b, left, right,
+        vel: new THREE.Vector3((rnd() - 0.5) * 8, 0, (rnd() - 0.5) * 8),
+        phase: rnd() * Math.PI * 2,
+      });
+    }
+  }
+
+  private updateBirds(dt: number): void {
+    // Classic boids: separation + alignment + cohesion, plus a pull toward
+    // the harbor home zone, altitude hold, and gentle wander.
+    const N = this.birdFlock.length;
+    if (!N || dt <= 0) return;
+    const PERC = 14, MAX_SPEED = 9, MIN_SPEED = 4.5, MAX_FORCE = 26;
+    const HOME = new THREE.Vector3(15, 33, 75), HOME_R = 42;
+    const steer = new THREE.Vector3(), diff = new THREE.Vector3();
+    for (let i = 0; i < N; i++) {
+      const a = this.birdFlock[i];
+      const sep = new THREE.Vector3(), ali = new THREE.Vector3(), coh = new THREE.Vector3();
+      let neighbors = 0;
+      for (let j = 0; j < N; j++) {
+        if (i === j) continue;
+        const b = this.birdFlock[j];
+        const d = a.group.position.distanceTo(b.group.position);
+        if (d < PERC && d > 0.001) {
+          neighbors++;
+          diff.copy(a.group.position).sub(b.group.position).divideScalar(d * d);
+          sep.add(diff);
+          ali.add(b.vel);
+          coh.add(b.group.position);
+        }
+      }
+      steer.set(0, 0, 0);
+      if (neighbors > 0) {
+        // Separation.
+        sep.divideScalar(neighbors).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        sep.clampLength(0, MAX_FORCE);
+        // Alignment.
+        ali.divideScalar(neighbors).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        ali.clampLength(0, MAX_FORCE);
+        // Cohesion.
+        coh.divideScalar(neighbors).sub(a.group.position).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        coh.clampLength(0, MAX_FORCE);
+        steer.addScaledVector(sep, 1.6).addScaledVector(ali, 1.0).addScaledVector(coh, 0.9);
+      }
+      // Home pull: steer back when outside the harbor zone.
+      const homeD = a.group.position.distanceTo(HOME);
+      if (homeD > HOME_R) {
+        diff.copy(HOME).sub(a.group.position).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        diff.clampLength(0, MAX_FORCE);
+        steer.addScaledVector(diff, 1.4 * Math.min(2, (homeD - HOME_R) / 15));
+      }
+      // Altitude hold toward y=33.
+      const altErr = 33 - a.group.position.y;
+      steer.y += THREE.MathUtils.clamp(altErr * 2.2, -MAX_FORCE * 0.6, MAX_FORCE * 0.6);
+      // Gentle wander.
+      steer.x += Math.sin(this.clock * 0.9 + a.phase) * 3;
+      steer.z += Math.cos(this.clock * 0.7 + a.phase * 1.3) * 3;
+      // Integrate.
+      a.vel.addScaledVector(steer, dt);
+      const speed = a.vel.length();
+      if (speed > MAX_SPEED) a.vel.multiplyScalar(MAX_SPEED / speed);
+      else if (speed < MIN_SPEED && speed > 0.001) a.vel.multiplyScalar(MIN_SPEED / speed);
+      a.group.position.addScaledVector(a.vel, dt);
+      // Face travel direction.
+      const look = a.group.position.clone().add(a.vel);
+      a.group.lookAt(look);
+      // Flap/glide cycle: flap ~2.5s, glide ~1.8s.
+      const cyc = (this.clock * 0.35 + a.phase * 0.15) % 1;
+      let amp: number, base: number;
+      if (cyc < 0.58) { amp = 0.75; base = 0; }       // flapping
+      else { amp = 0.06; base = 0.18; }               // gliding, wings slightly raised
+      const flap = base + Math.sin(this.clock * 11 + a.phase) * amp;
+      a.left.rotation.z = flap;
+      a.right.rotation.z = -flap;
+    }
+  }
+
+  private animateSky(reduced: boolean, dt: number): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.updateBirds(dt); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
   private destination(state: GameState): Stop | undefined {
     if(state.mode==='tutorial') return STOPS.find(s=>s.id==='harbor-cafe') || STOPS[1];
     const id=state.run?.returning ? 'home' : state.run?.job?.to;
