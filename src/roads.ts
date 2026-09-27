@@ -20,6 +20,21 @@ export const ROAD_NODES: RoadNode[] = [
   N('u1', -90, -160), N('u2', -30, -160), N('u3', 30, -160), N('u4', 90, -160),
   N('u5', 90, -195), N('u6', 30, -195), N('u7', -30, -195), N('u8', -90, -195),
   N('ob1', 95, -100), N('ob2', 110, -70),
+  // Phase 1 interior grids (user direction 2026-09-27): hand-authored streets
+  // inside the tier pads so infill fronts onto roads, not just block interiors.
+  // Midtown north lane (z=-25) + link down to m1; midtown south lane (z=-120,
+  // split around the old-town landmark block at x -50..-30).
+  N('mn1', -100, -25), N('mn2', -68, -25), N('mn3', -20, -25), N('mn4', 20, -25), N('mn5', 60, -25),
+  N('mn6', -68, -72),
+  N('ms1', -100, -120), N('ms2', -60, -120), N('ms3', -20, -120), N('ms4', 20, -120), N('ms5', 60, -120),
+  // Upper east-outside street (x=100) + east corner spur; no loop splits.
+  N('ue1', 100, -160), N('ue2', 100, -195),
+  N('ui5', 130, -160), // upper east corner
+  // Observatory rise spur.
+  N('ob3', 125, -100),
+  // Waterfront west strip (x=-15) and east strip (x=65).
+  N('wx1', -15, 10), N('wx2', -15, 70), N('wx3', -15, 130),
+  N('ex1', 65, -10), N('ex2', 65, 50), N('ex3', 65, 110),
 ];
 
 const E = (a: string, b: string, kind: RoadEdge['kind'] = 'street', deckY?: number): RoadEdge => ({ a, b, kind, deckY });
@@ -37,9 +52,21 @@ export const ROAD_EDGES: RoadEdge[] = [
   E('m5', 'm6'), E('m6', 'm7'), E('m7', 'm8'),
   E('m1', 'm5'), E('m2', 'm6'), E('m3', 'm7'), E('m4', 'm8'),
   E('m3', 'uc1', 'switchback'), E('uc1', 'uc2', 'switchback'), E('uc2', 'uc3', 'switchback'), E('uc3', 'u3', 'switchback'),
+  E('se4', 'ob1'), E('ob1', 'ob2'),
+  // Interior grids (see node block above).
+  E('mn1', 'mn2'), E('mn2', 'mn3'), E('mn3', 'mn4'), E('mn4', 'mn5'),
+  E('mn1', 'sw2'), E('mn5', 'se1'),
+  E('mn2', 'mn6'), E('mn6', 'm1'),
+  E('ms1', 'ms2'), E('ms3', 'ms4'), E('ms4', 'ms5'),
+  E('ms2', 'm5'), E('ms4', 'm7'),
   E('u1', 'u2'), E('u2', 'u3'), E('u3', 'u4'), E('u4', 'u5'),
   E('u5', 'u6'), E('u6', 'u7'), E('u7', 'u8'), E('u8', 'u1'),
-  E('se4', 'ob1'), E('ob1', 'ob2'),
+  E('u4', 'ue1'), E('ue1', 'ue2'), E('ue2', 'u5'), E('u4', 'ui5'),
+  E('ob1', 'ob3'),
+  E('wx1', 'wx2'), E('wx2', 'wx3'),
+  E('ww1b', 'wx1'), E('ww2b', 'wx2'), E('ww3b', 'wx3'),
+  E('ex1', 'ex2'), E('ex2', 'ex3'),
+  E('we1', 'ex1'), E('we2', 'ex2'), E('we3', 'ex3'),
 ];
 
 /** Pairs of node ids forming bridge edges, for the bridge renderer. */

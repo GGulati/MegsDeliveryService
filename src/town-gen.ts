@@ -12,8 +12,10 @@
 // the 6m other-road check blocks the rest. The 200-300 goal requires filling
 // block interiors, so the sampler walks a jittered grid over the pads instead,
 // keeping every one of the brief's rejection criteria (hero 2m pad, lot-lot,
-// bay, PARK_RECT, 6m road clearance) plus a land check. The road-clearance
-// filter keeps lots street-served (p90 road distance ~43m).
+// bay, PARK_RECT, rect-based 3.5m road clearance) plus a land check. The
+// road-clearance filter keeps lots street-served: the Phase 1 interior grids
+// (midtown lanes, upper east street, waterfront strips, observatory spur)
+// put most lots within a block of a street.
 import { heightAt, TIERS } from './terrain';
 import { ROAD_EDGES, nodeById } from './roads';
 import { SOLIDS, isInBay, PARK_RECT } from './world';
@@ -54,26 +56,41 @@ export const DISTRICT_LOT_PROFILES: Record<string, LotProfile> = {
   'bungalow-lanes': { w: [8, 12], d: [8, 12], floors: [1, 1], bayWindow: false, palettes: [1, 2, 3, 4] },
 };
 
-const GRID = 10;             // grid spacing over each tier pad (m)
-const GRID_SAMPLES = 2;       // jittered samples per grid cell
-const GRID_JITTER = 0.6;      // jitter amplitude as a fraction of GRID
+const GRID = 7;              // grid spacing over each tier pad (m)
+const GRID_SAMPLES = 4;       // jittered samples per grid cell
+const GRID_JITTER = 0.9;      // jitter amplitude as a fraction of GRID
 const MIN_LAND_Y = -0.4;      // lots must sit above water (waterfront pad is at y=0)
-const ROAD_CLEAR = 6;         // min distance from a lot center to any road corridor (m)
+const ROAD_HALF_TUBE = 2.8;   // widest road tube radius (street); switchbacks are narrower
+const ROAD_MARGIN = 0.7;      // extra clearance margin beyond the tube
+const ROAD_CLEAR_RECT = ROAD_HALF_TUBE + ROAD_MARGIN; // min centerline-to-lot-AABB distance (m)
 const HERO_PAD = 2;           // hero AABB expansion for overlap checks (m)
 const MAX_LOTS = 275;
 const FLOOR_H = 3.4;
 
-function distToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
-  const dx = bx - ax, dz = bz - az;
-  const lenSq = dx * dx + dz * dz;
-  let t = lenSq > 0 ? ((px - ax) * dx + (pz - az) * dz) / lenSq : 0;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
-}
-
 function aabbOverlap(ax0: number, az0: number, ax1: number, az1: number,
                      bx0: number, bz0: number, bx1: number, bz1: number): boolean {
   return ax0 < bx1 && ax1 > bx0 && az0 < bz1 && az1 > bz0;
+}
+
+function segsCross(ax: number, az: number, bx: number, bz: number,
+                   cx: number, cz: number, dx: number, dz: number): boolean {
+  const d1x = bx - ax, d1z = bz - az, d2x = dx - cx, d2z = dz - cz;
+  const denom = d1x * d2z - d1z * d2x;
+  if (Math.abs(denom) < 1e-9) return false; // parallel
+  const t = ((cx - ax) * d2z - (cz - az) * d2x) / denom;
+  const u = ((cx - ax) * d1z - (cz - az) * d1x) / denom;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+/** True when the segment touches the axis-aligned box (endpoints or crossing). */
+function segIntersectsAABB(ax: number, az: number, bx: number, bz: number,
+                            x0: number, z0: number, x1: number, z1: number): boolean {
+  if (ax >= x0 && ax <= x1 && az >= z0 && az <= z1) return true;
+  if (bx >= x0 && bx <= x1 && bz >= z0 && bz <= z1) return true;
+  return segsCross(ax, az, bx, bz, x0, z0, x1, z0)
+      || segsCross(ax, az, bx, bz, x1, z0, x1, z1)
+      || segsCross(ax, az, bx, bz, x1, z1, x0, z1)
+      || segsCross(ax, az, bx, bz, x0, z1, x0, z0);
 }
 
 /** Deterministic infill lots across the tier pads. */
@@ -89,11 +106,9 @@ export function generateLots(): Lot[] {
     const a = nodeById(e.a), b = nodeById(e.b);
     return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
   });
-  const minRoadDist = (cx: number, cz: number): number => {
-    let m = Infinity;
-    for (const s of segs) m = Math.min(m, distToSegment(cx, cz, s.x0, s.z0, s.x1, s.z1));
-    return m;
-  };
+  // Rect-based road clearance: the lot AABB, expanded by ROAD_CLEAR_RECT,
+  // must not touch any road centerline. Center-based checks let wide lots
+  // engulf the 2.8m road tube; this keeps the tube clear with margin.
 
   let midtownAccepted = 0;
   for (const tier of TIERS) {
@@ -132,8 +147,11 @@ export function generateLots(): Lot[] {
             if (heroBoxes.some(h => aabbOverlap(x, z, x + w, z + d, h.x0, h.z0, h.x1, h.z1))) continue;
             // Lot-lot overlap.
             if (lots.some(l => aabbOverlap(x, z, x + w, z + d, l.x, l.z, l.x + l.w, l.z + l.d))) continue;
-            // Lot center within 6m of a road corridor (streets + switchbacks).
-            if (minRoadDist(cx, cz) < ROAD_CLEAR) continue;
+            // Road clearance: lot AABB expanded by 3.5m must not touch any
+            // road centerline (clears the 2.8m street tube with margin).
+            const rx0 = x - ROAD_CLEAR_RECT, rz0 = z - ROAD_CLEAR_RECT;
+            const rx1 = x + w + ROAD_CLEAR_RECT, rz1 = z + d + ROAD_CLEAR_RECT;
+            if (segs.some(s => segIntersectsAABB(s.x0, s.z0, s.x1, s.z1, rx0, rz0, rx1, rz1))) continue;
 
             if (tierDistrict === 'midtown-mix') midtownAccepted++;
             lots.push({
