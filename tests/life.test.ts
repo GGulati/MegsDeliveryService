@@ -22,7 +22,8 @@ before(() => {
 
 import { Life, CAR_COUNT, PED_COUNT } from '../src/life.js';
 import { SOLIDS, MANSION_GROUNDS, isInBay } from '../src/world.js';
-import { heightAt } from '../src/terrain.js';
+import { ROAD_EDGES } from '../src/roads.js';
+import { deckHeightAt, roadWidth } from '../src/road-deck.js';
 
 describe('ambient life', () => {
   it('spawns exactly 16 cars and 44 pedestrians', () => {
@@ -145,28 +146,41 @@ describe('ambient life', () => {
       life.update(1 / 60, playerPos, 0, 0, i / 60);
     }
     const cars = (life as unknown as { cars: {
-      group: THREE.Group; curve: THREE.CatmullRomCurve3; t: number; edge: { kind: string };
+      group: THREE.Group; t: number; edge: { kind: string; a: string; b: string };
     }[] }).cars;
     for (const car of cars) {
       const pos = car.group.position;
       const t = THREE.MathUtils.clamp(car.t, 0, 1);
-      const p = car.curve.getPointAt(t);
-      const tan = car.curve.getTangentAt(t);
-      const nx = -tan.z, nz = tan.x;
-      const hw = car.edge.kind === 'switchback' ? 2.2 : 2.8;
-      // Same formula as scene.ts makeFlatRoad.
-      const expectedY = Math.max(
-        p.y,
-        heightAt(p.x, p.z),
-        heightAt(p.x + nx * hw, p.z + nz * hw),
-        heightAt(p.x - nx * hw, p.z - nz * hw),
-      ) + 0.15;
-      // Car is offset 1.4m right, but deck height is computed at centerline.
-      // The car's y should match the deck (within 1m for the offset difference).
-      assert.ok(Math.abs(pos.y - expectedY) < 1.0,
+      // Same continuous deck formula the mesh uses (node-pinned).
+      const expectedY = deckHeightAt(car.edge as never, t);
+      assert.ok(Math.abs(pos.y - expectedY) < 0.05,
         `car y=${pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }
     life.dispose();
+  });
+
+  it('deck height is continuous where edges meet (no car skipping)', () => {
+    // Every shared node: all incident edges must agree on the deck height.
+    const byNode = new Map<string, typeof ROAD_EDGES>();
+    for (const e of ROAD_EDGES) {
+      if (e.kind === 'bridge') continue;
+      for (const n of [e.a, e.b]) {
+        if (!byNode.has(n)) byNode.set(n, []);
+        byNode.get(n)!.push(e);
+      }
+    }
+    for (const [nodeId, edges] of byNode) {
+      if (edges.length < 2) continue;
+      const hs = edges.map(e => deckHeightAt(e, e.a === nodeId ? 0 : 1));
+      const spread = Math.max(...hs) - Math.min(...hs);
+      assert.ok(spread < 0.01, `node ${nodeId}: deck spread ${spread.toFixed(3)}m`);
+    }
+    // Road widths: town streets carry bike lanes + sidewalks.
+    for (const e of ROAD_EDGES) {
+      if (e.kind === 'bridge') continue;
+      const w = roadWidth(e);
+      assert.equal(w, e.kind === 'switchback' ? 4.4 : 8.8, `width for ${e.kind}`);
+    }
   });
 
   it('cooldowns prevent bubble spam', () => {

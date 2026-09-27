@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ROAD_EDGES, nodeById, nodePos, roadGraph, type RoadEdge } from './roads';
+import { roadCurve, deckHeightAt } from './road-deck';
 import { heightAt } from './terrain';
 import { PARK_RECT, SOLIDS, MANSION_GROUNDS, isInBay } from './world';
 import { mulberry32 } from './grain';
@@ -72,6 +73,7 @@ interface Ped {
   t: number;
   dir: 1 | -1;
   side: 1 | -1; // which side of the road
+  sideOff: number; // smoothed lateral offset (glides across at intersections)
   speed: number;
   inPark: boolean;
   parkTarget: THREE.Vector3; // for park wanderers
@@ -266,26 +268,7 @@ export class Life {
   }
 
   private makeCurve(e: RoadEdge): THREE.CatmullRomCurve3 {
-    const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
-    const mid = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.15, (a.z + b.z) / 2);
-    return new THREE.CatmullRomCurve3([
-      new THREE.Vector3(a.x, a.y + 0.18, a.z), mid, new THREE.Vector3(b.x, b.y + 0.18, b.z),
-    ]);
-  }
-
-  // Road deck height at a point: max(curve, terrain across width) + 0.15.
-  // Matches scene.ts makeFlatRoad exactly (C1 fix).
-  private deckHeight(curve: THREE.CatmullRomCurve3, t: number, hw: number, out: THREE.Vector3): number {
-    curve.getPointAt(t, out);
-    curve.getTangentAt(t, this.tmpT);
-    const nx = -this.tmpT.z, nz = this.tmpT.x;
-    const cx = out.x, cz = out.z;
-    return Math.max(
-      out.y,
-      heightAt(cx, cz),
-      heightAt(cx + nx * hw, cz + nz * hw),
-      heightAt(cx - nx * hw, cz - nz * hw),
-    ) + 0.15;
+    return roadCurve(e);
   }
 
   private spawnCars(): void {
@@ -374,6 +357,7 @@ export class Life {
       this.peds.push({
         edge: edge!, t: spawnT, dir: rnd() < 0.5 ? 1 : -1,
         side: spawnSide,
+        sideOff: spawnSide * 4,
         speed: 1.2 + rnd() * 0.6, inPark,
         parkTarget: new THREE.Vector3(x, 0, z),
         pos: new THREE.Vector3(x, y, z),
@@ -431,9 +415,10 @@ export class Life {
       car.speed = (car.variant === 'sports' ? 12 : 10) * (edge.kind === 'switchback' ? 0.6 : 1);
     }
     const t = THREE.MathUtils.clamp(car.t, 0, 1);
-    // Deck height across the full road width (C1 fix).
-    const hw = car.edge.kind === 'switchback' ? 2.2 : 2.8;
-    const deckY = this.deckHeight(car.curve, t, hw, this.tmpP);
+    // Node-pinned deck height — continuous across edge transitions, so cars
+    // never "skip" vertically at nodes (user feedback 2026-09-27).
+    const deckY = deckHeightAt(car.edge, t);
+    car.curve.getPointAt(t, this.tmpP);
     car.curve.getTangentAt(t, this.tmpT);
     if (car.dir === -1) this.tmpT.negate();
     // Right-hand offset: Right = (-tz, 0, tx).
@@ -519,9 +504,13 @@ export class Life {
     ped.curve.getPointAt(t, this.tmpP);
     ped.curve.getTangentAt(t, this.tmpT);
     if (ped.dir === -1) this.tmpT.negate();
-    // Sidewalk: 4m offset to the ped's side.
-    const px = this.tmpP.x + (-this.tmpT.z) * 4 * ped.side;
-    const pz = this.tmpP.z + (this.tmpT.x) * 4 * ped.side;
+    // Sidewalk offset glides smoothly when the side flips at intersections —
+    // no teleporting across the road (user feedback 2026-09-27).
+    const targetOff = ped.side * 4;
+    const dOff = targetOff - ped.sideOff;
+    ped.sideOff += THREE.MathUtils.clamp(dOff, -3 * dt, 3 * dt);
+    const px = this.tmpP.x + (-this.tmpT.z) * ped.sideOff;
+    const pz = this.tmpP.z + (this.tmpT.x) * ped.sideOff;
     ped.pos.set(px, heightAt(px, pz), pz);
     ped.group.position.copy(ped.pos);
     ped.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);

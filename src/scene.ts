@@ -4,7 +4,8 @@ import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, 
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
-import { ROAD_EDGES, nodeById, nodePos } from './roads';
+import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
+import { roadCurve, roadWidth, deckHeightAt, CAR_HALF, BIKE_HALF, WALK_HALF } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
@@ -125,7 +126,9 @@ export class GameRenderer {
     this.hero.rotation.y = modelRotation(state.player.yaw);
     this.hero.rotation.x = state.player.pitch * .4;
     this.hero.rotation.z = 0;
-    this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .62);
+    // Meg is scaled to the world: peds are ~1.75m, so the broom rig reads
+    // ~3m long (user feedback 2026-09-27 — she was 4x human scale before).
+    this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .28);
     this.hero.position.y += visual.bob;
     this.animateSky(settings.reducedMotion, step);
     // Ambient life: cars and pedestrians (Phase 2). Hidden at home with the world.
@@ -189,16 +192,48 @@ export class GameRenderer {
     // Roads are FLAT ribbons (not tubes) so they don't swallow nearby houses
     // (user feedback 2026-09-27). The deck follows the smooth curve grade;
     // earthwork skirts drop from the deck edges to the terrain on slopes.
+    // Deck heights are node-pinned (road-deck.ts) so adjacent edges meet
+    // exactly — no vertical steps at nodes (user feedback 2026-09-27).
     roadMat.side = THREE.DoubleSide;
+    const deckMat = toon(0xffffff);
+    deckMat.vertexColors = true;
+    deckMat.side = THREE.DoubleSide;
     const earthMat = toon(0x8a6f4d);
     earthMat.side = THREE.DoubleSide;
-    const makeFlatRoad = (curve: THREE.CatmullRomCurve3, width: number): THREE.Group => {
+    // Cross-section bands: [offset, color] verts from left edge to right edge.
+    // Town streets: car lanes + bike lanes + sidewalks. Switchbacks: plain.
+    const bandCache = new Map<string, [number, number][]>();
+    const bandLayout = (width: number): [number, number][] => {
+      const key = width.toFixed(1);
+      let bands = bandCache.get(key);
+      if (!bands) {
+        const asphalt = 0x43434a;
+        if (width > 5) {
+          const bike = 0xa85b4a, walk = 0xb8b0a0;
+          bands = [
+            [-WALK_HALF, walk], [-BIKE_HALF, walk],
+            [-BIKE_HALF, bike], [-CAR_HALF, bike],
+            [-CAR_HALF, asphalt], [CAR_HALF, asphalt],
+            [CAR_HALF, bike], [BIKE_HALF, bike],
+            [BIKE_HALF, walk], [WALK_HALF, walk],
+          ];
+        } else {
+          bands = [[-width / 2, asphalt], [width / 2, asphalt]];
+        }
+        bandCache.set(key, bands);
+      }
+      return bands;
+    };
+    const makeFlatRoad = (e: RoadEdge, curve: THREE.CatmullRomCurve3, width: number): THREE.Group => {
       const grp = new THREE.Group();
       const segs = 24, hw = width / 2;
-      const pos: number[] = [], nor: number[] = [], idx: number[] = [];
+      const bands = bandLayout(width);
+      const nv = bands.length;
+      const pos: number[] = [], nor: number[] = [], col: number[] = [], idx: number[] = [];
       // Skirts: [leftTop, leftBottom, rightTop, rightBottom] per station.
       // Collapsed (top==bottom) where the terrain meets the deck.
       const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+      const cc = new THREE.Color();
       for (let i = 0; i <= segs; i++) {
         const t = i / segs;
         const p = curve.getPointAt(t);
@@ -206,19 +241,24 @@ export class GameRenderer {
         const px = -tan.z, pz = tan.x;
         const plen = Math.hypot(px, pz) || 1;
         const nx = px / plen, nz = pz / plen;
+        // Deck clears the highest terrain across the road width and is pinned
+        // at shared nodes so neighboring edges meet exactly.
+        const roadY = deckHeightAt(e, t);
+        for (const [off, hex] of bands) {
+          pos.push(p.x + nx * off, roadY, p.z + nz * off);
+          nor.push(0, 1, 0);
+          cc.setHex(hex);
+          col.push(cc.r, cc.g, cc.b);
+        }
+        if (i < segs) {
+          for (let v = 0; v < nv - 1; v++) {
+            const a = i * nv + v, b = a + nv;
+            idx.push(a, b, a + 1, a + 1, b, b + 1);
+          }
+        }
+        // Skirt verts for this station (left edge, then right edge).
         const lx = p.x + nx * hw, lz = p.z + nz * hw;
         const rx = p.x - nx * hw, rz = p.z - nz * hw;
-        // Deck clears the highest terrain across the road width: the smooth
-        // curve grade can dip below terrain bulges between nodes (which
-        // swallowed segments). The skirts below handle the fill on the low side.
-        const roadY = Math.max(p.y, heightAt(p.x, p.z), heightAt(lx, lz), heightAt(rx, rz)) + 0.15;
-        pos.push(lx, roadY, lz, rx, roadY, rz);
-        nor.push(0, 1, 0, 0, 1, 0);
-        if (i < segs) {
-          const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
-          idx.push(a, c, b, b, c, d);
-        }
-        // Skirt verts for this station (left side, then right side).
         const sides: [number, number, number, number][] = [
           [lx, lz, nx, nz], [rx, rz, -nx, -nz],
         ];
@@ -238,8 +278,9 @@ export class GameRenderer {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       geo.setIndex(idx);
-      const deck = new THREE.Mesh(geo, roadMat);
+      const deck = new THREE.Mesh(geo, deckMat);
       deck.receiveShadow = true;
       grp.add(deck);
       const sgeo = new THREE.BufferGeometry();
@@ -253,13 +294,9 @@ export class GameRenderer {
     };
     for (const e of ROAD_EDGES) {
       if (e.kind === 'bridge') continue;
-      const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
-      const mid = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.15, (a.z + b.z) / 2);
-      const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(a.x, a.y + 0.18, a.z), mid, new THREE.Vector3(b.x, b.y + 0.18, b.z),
-      ]);
-      const width = e.kind === 'switchback' ? 4.4 : 5.6;
-      g.add(makeFlatRoad(curve, width));
+      const curve = roadCurve(e);
+      const width = roadWidth(e);
+      g.add(makeFlatRoad(e, curve, width));
       // Center dashes (flat, on the road surface).
       const dashMat = toon(0xfff6d8);
       dashMat.side = THREE.DoubleSide;
@@ -271,7 +308,7 @@ export class GameRenderer {
         dash.rotation.x = -Math.PI / 2;
         dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
         // Match the deck height (clears terrain bulges like the road itself).
-        const dy = Math.max(dp.y, heightAt(dp.x, dp.z)) + 0.18;
+        const dy = deckHeightAt(e, (d + 1) / len) + 0.03;
         dash.position.set(dp.x, dy, dp.z);
         g.add(dash);
       }
