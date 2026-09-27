@@ -188,11 +188,13 @@ export function surfaceColor(x: number, z: number): [number, number, number] {
   // Base: grass lowland, rock highland.
   let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
 
-  // Beach sand where land meets water.
-  c = lerp3(c, SAND, nearWater * (h > -1 ? 1 : 0));
+  // Beach sand where land meets water — smooth band, not a hard step, so the
+  // vertex-color interpolation doesn't draw the triangle grid.
+  c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
 
-  // Seabed under deeper water.
-  if (h < -1) c = [SEABED[0], SEABED[1], SEABED[2]];
+  // Seabed under deeper water — blend in smoothly.
+  const seabedT = smoothstep(-0.8, -1.6, h);
+  c = lerp3(c, SEABED, seabedT);
 
   // Steep slopes weather to rock regardless of height (cliffs, hill flanks).
   const rockT = smoothstep(0.45, 0.75, slope);
