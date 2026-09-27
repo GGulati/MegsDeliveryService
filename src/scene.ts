@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
@@ -203,11 +203,8 @@ export class GameRenderer {
     // east pier serves Marina Works.
     buildBridge(g);
     const dockMat = toon(0x9a6147);
-    [[-15, 50], [-15, 70], [-15, 90]].forEach(([x, z]) => {
-      const dock = new THREE.Mesh(new THREE.BoxGeometry(24, .7, 8), dockMat); dock.position.set(x, .8, z); g.add(dock);
-    });
-    [[50, 60], [50, 80], [50, 100]].forEach(([x, z]) => {
-      const dock = new THREE.Mesh(new THREE.BoxGeometry(24, .7, 8), dockMat); dock.position.set(x, .8, z); g.add(dock);
+    DOCKS.forEach(([x, z]) => {
+      const dock = new THREE.Mesh(new THREE.BoxGeometry(DOCK_W, .7, DOCK_D), dockMat); dock.position.set(x, .8, z); g.add(dock);
     });
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
     this.makeClockTower(g); this.makeObservatoryDome(g);
@@ -317,7 +314,7 @@ export class GameRenderer {
   private makeDockDressing(g: THREE.Group): void {
     // Crates, barrels, and coiled ropes on the harbor piers.
     const crateMat = toon(0xa8763e), barrelMat = toon(0x7a5230), ropeMat = toon(0xc9b489);
-    const docks: [number, number][] = [[-15, 50], [-15, 70], [-15, 90], [50, 60], [50, 80], [50, 100]];
+    const docks: [number, number][] = DOCKS;
     const rnd = mulberry32(7);
     docks.forEach(([dx, dz]) => {
       // Crates: stacked boxes near the dock edge.
@@ -401,13 +398,10 @@ export class GameRenderer {
     rimShape.holes.push(rimHole);
     const rimGeo = new THREE.ExtrudeGeometry(rimShape, { depth: 0.28, bevelEnabled: false });
     rimGeo.rotateX(-Math.PI / 2);
-    // Moored alongside the docks (docks are 24 x 8 at x=-15/50): offset in z
-    // so hulls sit beside the dock, not through it.
-    const spots: [number, number, number][] = [
-      // [x, z, rotation] — west pier docks at z=50/70/90, east pier at z=60/80/100
-      [-15, 58, 0.08], [-15, 78, -0.06], [-15, 98, 0.1],
-      [50, 68, -0.08], [50, 88, 0.06], [50, 108, -0.1],
-    ];
+    // Moored alongside the docks: offset in z so hulls sit beside the dock,
+    // not through it. DOCK_BOATS follows DOCKS (see src/world.ts).
+    const rots = [0.08, -0.06, 0.1, -0.08, 0.06, -0.1];
+    const spots: [number, number, number][] = DOCK_BOATS.map(([x, z], i) => [x, z, rots[i]]);
     spots.forEach(([x, z, rot], i) => {
       const boat = new THREE.Group();
       const hm = i % 2 ? hullMat2 : hullMat;

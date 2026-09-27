@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateLots, lotsToSolids, TOWN_SEED } from '../src/town-gen.js';
 import { ROAD_EDGES, nodeById } from '../src/roads.js';
-import { SOLIDS } from '../src/world.js';
+import { SOLIDS, isInBay } from '../src/world.js';
 
 const overlapsXZ = (a: { min: { x: number; z: number }; max: { x: number; z: number } },
                     b: { min: { x: number; z: number }; max: { x: number; z: number } }) =>
@@ -104,6 +104,44 @@ describe('town-gen', () => {
         const d = segRectDist(s.x0, s.z0, s.x1, s.z1, x0, z0, x1, z1);
         assert.ok(d >= 2.8, `lot at (${l.x.toFixed(1)},${l.z.toFixed(1)}) is ${d.toFixed(2)}m from road ${s.id} (< 2.8m)`);
       }
+    }
+  });
+  it('every lot is within 15m of a road centerline (road frontage)', () => {
+    // User feedback 2026-09-27: every house must front a road. The generator
+    // places lots along road edges, so each lot's AABB is near a centerline.
+    const segs = ROAD_EDGES.filter(e => e.kind !== 'bridge').map(e => {
+      const a = nodeById(e.a), b = nodeById(e.b);
+      return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
+    });
+    for (const l of generateLots()) {
+      const x0 = l.x, z0 = l.z, x1 = l.x + l.w, z1 = l.z + l.d;
+      let best = Infinity;
+      for (const s of segs) best = Math.min(best, segRectDist(s.x0, s.z0, s.x1, s.z1, x0, z0, x1, z1));
+      assert.ok(best <= 15, `lot at (${l.x.toFixed(1)},${l.z.toFixed(1)}) is ${best.toFixed(1)}m from the nearest road (> 15m)`);
+    }
+  });
+  it('no lot intersects the lighthouse rock exclusion circle', () => {
+    // The lighthouse rock (scene.ts makeLighthouse) is a cylinder radius 24
+    // at the SOLIDS[3] center; lots must clear it with margin (radius 26).
+    const c = SOLIDS[3];
+    const hx = (c.min.x + c.max.x) / 2, hz = (c.min.z + c.max.z) / 2;
+    const R = 26;
+    for (const l of generateLots()) {
+      const nx = Math.max(l.x, Math.min(hx, l.x + l.w));
+      const nz = Math.max(l.z, Math.min(hz, l.z + l.d));
+      const d2 = (hx - nx) * (hx - nx) + (hz - nz) * (hz - nz);
+      assert.ok(d2 >= R * R, `lot at (${l.x.toFixed(1)},${l.z.toFixed(1)}) intersects the lighthouse rock circle`);
+    }
+  });
+  it('no lot corner is in the bay water', () => {
+    // User feedback 2026-09-27: the center-only isInBay check let corners hang
+    // over the water. All four corners must be clear.
+    for (const l of generateLots()) {
+      const corners: [number, number][] = [
+        [l.x, l.z], [l.x + l.w, l.z], [l.x, l.z + l.d], [l.x + l.w, l.z + l.d],
+      ];
+      for (const [x, z] of corners)
+        assert.ok(!isInBay(x, z), `lot at (${l.x.toFixed(1)},${l.z.toFixed(1)}) has a corner in the bay`);
     }
   });
 });

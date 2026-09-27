@@ -32,6 +32,25 @@ export function isInBay(x: number, z: number): boolean {
   return inside;
 }
 
+/** Harbor dock footprint size (m). */
+export const DOCK_W = 24, DOCK_D = 8;
+
+/** Harbor docks: [x, z] centers of 24x8 wooden piers reaching into the bay.
+ *  West pier serves Harbor Cafe, east pier serves Marina Works. Each dock is
+ *  ~75% over water with its inner end at the shore. The east pier's third dock
+ *  sits at z=120 to clear the bridge span (deck z 96.5-103.5 at z=100). */
+export const DOCKS: [number, number][] = [
+  [-11, 50], [-6, 70], [1, 90],
+  [49, 60], [50, 80], [50, 120],
+];
+
+/** Moored boat positions: [x, z] alongside each dock. The (1,90) dock's boat
+ *  sits at z=82 (not z=98) to stay clear of the bridge deck. */
+export const DOCK_BOATS: [number, number][] = [
+  [-11, 58], [-6, 78], [1, 82],
+  [50, 68], [50, 88], [50, 128],
+];
+
 // The pads are deliberately separated by broad streets: they are landmarks, not gates.
 // Positions are the Harborlight layout: a crescent town around the harbor bay,
 // the lighthouse on its headland, and Meg's cottage site on the north-west rise.

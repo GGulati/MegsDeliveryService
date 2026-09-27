@@ -22,11 +22,11 @@ export const ROAD_NODES: RoadNode[] = [
   N('ob1', 95, -100), N('ob2', 110, -70),
   // Phase 1 interior grids (user direction 2026-09-27): hand-authored streets
   // inside the tier pads so infill fronts onto roads, not just block interiors.
-  // Midtown north lane (z=-25) + link down to m1; midtown south lane (z=-120,
-  // split around the old-town landmark block at x -50..-30).
+  // Midtown north lane (z=-25) + link down to the m-grid at m4 (x=60);
+  // midtown south lane (z=-120, split around the old-town landmark block at x -50..-30).
   N('mn1', -100, -25), N('mn2', -68, -25), N('mn3', -20, -25), N('mn4', 20, -25), N('mn5', 60, -25),
-  N('mn6', -68, -72),
-  N('ms1', -100, -120), N('ms2', -60, -120), N('ms3', -20, -120), N('ms4', 20, -120), N('ms5', 60, -120),
+  N('ms1', -100, -120), N('ms2', -60, -120), N('ms3', -20, -120), N('ms5', 60, -120),
+  // Note: the ms lane meets the uc switchback at uc1 (20,-120); no separate ms4 node.
   // Upper east-outside street (x=100) + east corner spur; no loop splits.
   N('ue1', 100, -160), N('ue2', 100, -195),
   N('ui5', 130, -160), // upper east corner
@@ -43,7 +43,7 @@ export const ROAD_EDGES: RoadEdge[] = [
   E('ww1', 'ww2'), E('ww2', 'ww3'), E('ww1b', 'ww2b'), E('ww2b', 'ww3b'),
   E('ww1', 'ww1b'), E('ww2', 'ww2b'), E('ww3', 'ww3b'),
   E('we1', 'we2'), E('we2', 'we3'), E('we1b', 'we2b'), E('we1', 'we1b'), E('we2', 'we2b'),
-  E('ww3b', 'bl-w'), E('bl-w', 'bl-e', 'bridge', 6), E('bl-e', 'we3'),
+  E('wx3', 'bl-w'), E('bl-w', 'bl-e', 'bridge', 6), E('bl-e', 'we3'),
   E('ww1', 'sw1', 'switchback'), E('sw1', 'sw2', 'switchback'), E('sw2', 'sw3', 'switchback'),
   E('sw3', 'sw4', 'switchback'), E('sw4', 'm1', 'switchback'),
   E('we1', 'se1', 'switchback'), E('se1', 'se2', 'switchback'), E('se2', 'se3', 'switchback'),
@@ -55,10 +55,10 @@ export const ROAD_EDGES: RoadEdge[] = [
   E('se4', 'ob1'), E('ob1', 'ob2'),
   // Interior grids (see node block above).
   E('mn1', 'mn2'), E('mn2', 'mn3'), E('mn3', 'mn4'), E('mn4', 'mn5'),
-  E('mn1', 'sw2'), E('mn5', 'se1'),
-  E('mn2', 'mn6'), E('mn6', 'm1'),
-  E('ms1', 'ms2'), E('ms3', 'ms4'), E('ms4', 'ms5'),
-  E('ms2', 'm5'), E('ms4', 'm7'),
+  E('mn5', 'se1'),
+  E('mn5', 'm4'),
+  E('ms1', 'ms2'), E('ms3', 'uc1'), E('uc1', 'ms5'),
+  E('ms2', 'm5'), E('uc1', 'm7'),
   E('u1', 'u2'), E('u2', 'u3'), E('u3', 'u4'), E('u4', 'u5'),
   E('u5', 'u6'), E('u6', 'u7'), E('u7', 'u8'), E('u8', 'u1'),
   E('u4', 'ue1'), E('ue1', 'ue2'), E('ue2', 'u5'), E('u4', 'ui5'),
