@@ -1,22 +1,28 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { heightAt, surfaceColor, bakeTerrainTexture, canGrow, SEA_LEVEL } from '../src/terrain';
+import { heightAt, surfaceColor, bakeTerrainTexture, canGrow, SEA_LEVEL, TIERS } from '../src/terrain';
 import { isInBay } from '../src/world';
+
+// True when (x, z) is inside a tier rect (with the 20m blend margin).
+const inTier = (x: number, z: number) =>
+  TIERS.some(t => t.rects.some(([x0, z0, x1, z1]) => x > x0 - 20 && x < x1 + 20 && z > z0 - 20 && z < z1 + 20));
 
 test('heightAt is deterministic', () => {
   assert.equal(heightAt(50, 60), heightAt(50, 60));
   assert.equal(heightAt(-120, 80), heightAt(-120, 80));
 });
 
-test('town core is flat (all stops/buildings on level ground)', () => {
-  // Farthest stop (Beacon House) is at ~134m; hills fade in past 145m.
+test('town tiers are flat within each tier (all stops/buildings on level pads)', () => {
+  // The town is carved into tiers at y=0/10/20; each pad is level.
   const spots: [number, number][] = [
     [-70, 40], [-45, 65], [-10, -50], [82, 106], [80, 70], [115, -55], [-125, 30],
     [0, 0], [50, -80], [-90, -60],
   ];
   for (const [x, z] of spots) {
     if (isInBay(x, z)) continue;
-    assert.ok(Math.abs(heightAt(x, z)) < 0.5, `town ground not flat at (${x},${z}): ${heightAt(x, z)}`);
+    const h = heightAt(x, z);
+    const onTier = [0, 10, 20].some(y => Math.abs(h - y) < 0.6);
+    assert.ok(onTier, `town ground not on a tier pad at (${x},${z}): ${h}`);
   }
 });
 
@@ -66,12 +72,17 @@ test('inland terrain never dips below sea level (no lagoon holes)', () => {
 });
 
 test('inland has hills', () => {
-  // North of town (z=-160), away from the coast, height should vary.
-  let min = Infinity, max = -Infinity;
-  for (let x = -120; x <= 120; x += 20) {
-    const h = heightAt(x, -170);
-    min = Math.min(min, h); max = Math.max(max, h);
+  // Outside the tier pads, inland height should still vary.
+  let min = Infinity, max = -Infinity, n = 0;
+  for (let x = -170; x <= 170; x += 10) {
+    for (let z = -220; z <= -140; z += 10) {
+      if (inTier(x, z)) continue;
+      const h = heightAt(x, z);
+      if (h < -1) continue; // skip ocean
+      min = Math.min(min, h); max = Math.max(max, h); n++;
+    }
   }
+  assert.ok(n > 10, 'no inland non-tier samples found');
   assert.ok(max - min > 2, `inland too flat: ${min} to ${max}`);
 });
 
@@ -88,18 +99,20 @@ test('surfaceColor: grass on the flat town core', () => {
 });
 
 test('surfaceColor: rock on high hilltops', () => {
-  // Find a high inland point and check it trends rocky (low saturation).
-  let best: [number, number, number] | null = null, bestH = -Infinity;
-  for (let x = -120; x <= 120; x += 20) {
-    for (let z = -170; z <= -150; z += 10) {
+  // Find a high inland point outside the tier pads and check it trends
+  // rocky (low saturation).
+  let best: [number, number, number] | null = null, bestH = -Infinity, bestX = 0, bestZ = 0;
+  for (let x = -170; x <= 170; x += 10) {
+    for (let z = -220; z <= -140; z += 10) {
+      if (inTier(x, z)) continue;
       const h = heightAt(x, z);
-      if (h > bestH) { bestH = h; best = surfaceColor(x, z); }
+      if (h > bestH) { bestH = h; bestX = x; bestZ = z; best = surfaceColor(x, z); }
     }
   }
-  assert.ok(bestH > 3, `no high hill found (best ${bestH})`);
+  assert.ok(bestH > 3, `no high hill found outside tiers (best ${bestH})`);
   const [r, g, b] = best!;
   const sat = Math.max(r, g, b) - Math.min(r, g, b);
-  assert.ok(sat < 0.12, `expected muted rock, got ${r},${g},${b} (sat ${sat})`);
+  assert.ok(sat < 0.12, `expected muted rock at (${bestX},${bestZ}), got ${r},${g},${b} (sat ${sat})`);
 });
 
 test('surfaceColor is deterministic', () => {
@@ -141,11 +154,14 @@ test('canGrow: true on inland grass, false on beach/water/rock', () => {
   assert.ok(grew > 5, `expected growable inland spots, got ${grew}`);
   // In the bay: no.
   assert.ok(!canGrow(20, 60), 'bay water should not grow trees');
-  // On a high hilltop: no (rock).
+  // On a high hilltop outside the tiers: no (rock).
   let highX = 0, highZ = -160, highH = -Infinity;
-  for (let x = -120; x <= 120; x += 20) {
-    const h = heightAt(x, -160);
-    if (h > highH) { highH = h; highX = x; }
+  for (let x = -170; x <= 170; x += 10) {
+    for (let z = -220; z <= -140; z += 10) {
+      if (inTier(x, z)) continue;
+      const h = heightAt(x, z);
+      if (h > highH) { highH = h; highX = x; highZ = z; }
+    }
   }
-  if (highH > 4.5) assert.ok(!canGrow(highX, -160), 'rock hilltop should not grow trees');
+  if (highH > 4.5) assert.ok(!canGrow(highX, highZ), `rock hilltop at (${highX},${highZ}) should not grow trees`);
 });

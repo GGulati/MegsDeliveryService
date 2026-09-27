@@ -89,8 +89,27 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 /** Sea level. The bay water inlay sits just above this. */
 export const SEA_LEVEL = 0;
 
+/**
+ * Town tiers: flat pads carved into the heightfield for the San Francisco-style
+ * multi-level town. Rects are [x0, z0, x1, z1] with a 20m smooth blend at each
+ * edge. Water is masked out — tiers never carve the bay or ocean.
+ */
+export const TIERS: { name: string; y: number; rects: [number, number, number, number][] }[] = [
+  { name: 'waterfront', y: 0, rects: [
+    [-95, -15, 5, 175],    // west shore of the bay
+    [50, -35, 150, 175],   // east shore + lighthouse headland
+  ]},
+  { name: 'midtown', y: 10, rects: [
+    [-115, -135, 75, -15], // old-town / merchant-row core
+  ]},
+  { name: 'upper', y: 20, rects: [
+    [-135, -215, 135, -135], // mansion hill / park / bungalows band
+    [55, -135, 155, -35],    // observatory rise
+  ]},
+];
+
 /** Internal: heightfield components so color can key off water proximity too. */
-function computeTerrain(x: number, z: number): { h: number; bayT: number; oceanT: number } {
+function computeTerrain(x: number, z: number): { h: number; bayT: number; oceanT: number; tierCover: number } {
   // Southern coastline with organic wobble (domain-warped).
   const coastZ = 175 + warpSimplex.noise(x * 0.01 + 3.7, 8.2) * 35;
 
@@ -122,10 +141,25 @@ function computeTerrain(x: number, z: number): { h: number; bayT: number; oceanT
   // Land height (hills fade out where the bay is carved).
   const landH = hills * hillMask * (1 - bayT);
 
+  // Tier carve: flatten town pads to their tier elevation (land only —
+  // water is masked out so the bay and ocean are untouched).
+  let tierY = 0, tierCover = 0;
+  for (const tier of TIERS) {
+    for (const [rx0, rz0, rx1, rz1] of tier.rects) {
+      const bx = smoothstep(rx0 - 20, rx0 + 20, x) * (1 - smoothstep(rx1 - 20, rx1 + 20, x));
+      const bz = smoothstep(rz0 - 20, rz0 + 20, z) * (1 - smoothstep(rz1 - 20, rz1 + 20, z));
+      const cover = bx * bz;
+      if (cover > tierCover) { tierCover = cover; tierY = tier.y; }
+    }
+  }
+  const landMask = (bayT < 0.5 && oceanT < 0.5) ? 1 : 0;
+  const flatLandH = tierY * tierCover + landH * (1 - tierCover);
+  const finalLandH = landH * (1 - landMask) + flatLandH * landMask;
+
   // Water carve: bay (-3.5) or ocean (-12), whichever is deeper.
   const carve = Math.min(bayT * -3.5, oceanT * -12);
 
-  return { h: landH + carve, bayT, oceanT };
+  return { h: finalLandH + carve, bayT, oceanT, tierCover };
 }
 
 /**
@@ -133,6 +167,8 @@ function computeTerrain(x: number, z: number): { h: number; bayT: number; oceanT
  *
  * - Coast: ocean to the south at z ≈ 175 (domain-warped ±35m); land is mainland
  *   extending north/east/west to the horizon — not an island.
+ * - Town tiers: flat pads carved at y=0 (waterfront), y=10 (midtown), y=20 (upper),
+ *   with 20m smooth blends at the edges; water is never carved.
  * - Hills: warped fBm, 0-8m, fading to flat in the town core (all stops/buildings).
  * - Bay: carved to -3.5 below sea level (water inlay sits at +0.18); the bay mouth
  *   opens past the coast to the ocean (-12).
@@ -157,8 +193,11 @@ function lerp3(a: readonly number[], b: readonly number[], t: number): [number, 
  * Pure function of the heightfield — scatter and color can never disagree.
  */
 export function canGrow(x: number, z: number): boolean {
-  const { h, bayT, oceanT } = computeTerrain(x, z);
-  if (h < 0.2 || h > 4.5) return false; // grass band (town lowland to hillfoot)
+  const { h, bayT, oceanT, tierCover } = computeTerrain(x, z);
+  if (h < 0.2) return false;
+  // Grass band upper bound is lifted on town tiers (gardens and the park
+  // sit at y=10/20); wild hills still stop at the hillfoot.
+  if (h > 4.5 && tierCover < 0.5) return false;
   if (bayT > 0 || oceanT > 0.05) return false; // not on the beach
   const e = 1.5;
   const sx = (computeTerrain(x + e, z).h - computeTerrain(x - e, z).h) / (2 * e);
@@ -176,6 +215,7 @@ export function bakeTerrainTexture(TEX: number): Uint8ClampedArray {
   const hs = new Float32Array(TEX * TEX);
   const bays = new Float32Array(TEX * TEX);
   const oceans = new Float32Array(TEX * TEX);
+  const tiers = new Float32Array(TEX * TEX);
   const step = 440 / (TEX - 1);
   for (let py = 0; py < TEX; py++) {
     for (let px = 0; px < TEX; px++) {
@@ -183,7 +223,7 @@ export function bakeTerrainTexture(TEX: number): Uint8ClampedArray {
       const z = (0.5 - py / (TEX - 1)) * 440;
       const t = computeTerrain(x, z);
       const i = py * TEX + px;
-      hs[i] = t.h; bays[i] = t.bayT; oceans[i] = t.oceanT;
+      hs[i] = t.h; bays[i] = t.bayT; oceans[i] = t.oceanT; tiers[i] = t.tierCover;
     }
   }
   const data = new Uint8ClampedArray(TEX * TEX * 4);
@@ -199,7 +239,7 @@ export function bakeTerrainTexture(TEX: number): Uint8ClampedArray {
       const xm = hs[py * TEX + Math.max(px - K, 0)], xp = hs[py * TEX + Math.min(px + K, TEX - 1)];
       const zm = hs[Math.max(py - K, 0) * TEX + px], zp = hs[Math.min(py + K, TEX - 1) * TEX + px];
       const slope = Math.hypot((xp - xm) / (2 * K * step), (zp - zm) / (2 * K * step));
-      const [r, g, b] = shade(hs[i], bays[i], oceans[i], slope, x, z);
+      const [r, g, b] = shade(hs[i], bays[i], oceans[i], slope, x, z, tiers[i]);
       const o = i * 4;
       data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255;
     }
@@ -208,9 +248,11 @@ export function bakeTerrainTexture(TEX: number): Uint8ClampedArray {
 }
 
 /** Shared color-ramp: height/water/slope → [r,g,b] 0-255. Used by both surfaceColor and bakeTerrainTexture. */
-function shade(h: number, bayT: number, oceanT: number, slope: number, x: number, z: number): [number, number, number] {
+function shade(h: number, bayT: number, oceanT: number, slope: number, x: number, z: number, tierCover: number): [number, number, number] {
   const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
-  let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
+  // Height-based rock is suppressed on town tier pads (flat inhabited ground
+  // stays grass); steep slopes still read as rock via rockT below.
+  let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h) * (1 - tierCover));
   c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
   const seabedT = smoothstep(-0.8, -1.6, h);
   c = lerp3(c, SEABED, seabedT);
@@ -227,7 +269,7 @@ function shade(h: number, bayT: number, oceanT: number, slope: number, x: number
  * Pure function of the heightfield.
  */
 export function surfaceColor(x: number, z: number): [number, number, number] {
-  const { h, bayT, oceanT } = computeTerrain(x, z);
+  const { h, bayT, oceanT, tierCover } = computeTerrain(x, z);
 
   // Slope via finite differences of the heightfield.
   const e = 1.5;
@@ -237,7 +279,9 @@ export function surfaceColor(x: number, z: number): [number, number, number] {
 
   // Water proximity: in/near the bay, or in the open-coast transition.
   const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
-  let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
+  // Height-based rock is suppressed on town tier pads (flat inhabited ground
+  // stays grass); steep slopes still read as rock via rockT below.
+  let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h) * (1 - tierCover));
   c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
   const seabedT = smoothstep(-0.8, -1.6, h);
   c = lerp3(c, SEABED, seabedT);
