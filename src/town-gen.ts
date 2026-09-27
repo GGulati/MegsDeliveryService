@@ -7,7 +7,7 @@
 // yields the same town. Static data only — no per-frame work.
 import { heightAt, TIERS } from './terrain';
 import { ROAD_EDGES, nodeById } from './roads';
-import { SOLIDS, isInBay, PARK_RECT } from './world';
+import { SOLIDS, isInBay, PARK_RECT, MANSION_GROUNDS } from './world';
 import { mulberry32 } from './grain';
 import type { Solid } from './types';
 
@@ -212,6 +212,8 @@ export function generateLots(): Lot[] {
           if (isInBay(x, z) || isInBay(x + w, z) || isInBay(x, z + d) || isInBay(x + w, z + d)) continue;
           // Future park rectangle.
           if (aabbOverlap(x, z, x + w, z + d, PARK_RECT[0], PARK_RECT[1], PARK_RECT[2], PARK_RECT[3])) continue;
+          // Mansion grounds: part of the house footprint (user feedback 2026-09-27).
+          if (MANSION_GROUNDS.some(gr => aabbOverlap(x, z, x + w, z + d, gr[0], gr[1], gr[2], gr[3]))) continue;
           // Lighthouse rock exclusion circle.
           if (circleHitsAABB(rockX, rockZ, ROCK_R, x, z, x + w, z + d)) continue;
           // Hero overlap (AABB expanded 2m).
@@ -278,6 +280,7 @@ export function generateLots(): Lot[] {
             if (heightAt(cx, cz) < MIN_LAND_Y) continue;
             if (isInBay(x, z) || isInBay(x + w, z) || isInBay(x, z + d) || isInBay(x + w, z + d)) continue;
             if (aabbOverlap(x, z, x + w, z + d, PARK_RECT[0], PARK_RECT[1], PARK_RECT[2], PARK_RECT[3])) continue;
+            if (MANSION_GROUNDS.some(gr => aabbOverlap(x, z, x + w, z + d, gr[0], gr[1], gr[2], gr[3]))) continue;
             if (circleHitsAABB(rockX, rockZ, ROCK_R, x, z, x + w, z + d)) continue;
             if (heroBoxes.some(h => aabbOverlap(x, z, x + w, z + d, h.x0, h.z0, h.x1, h.z1))) continue;
             if (lots.some(l => aabbOverlap(x, z, x + w, z + d, l.x, l.z, l.x + l.w, l.z + l.d))) continue;

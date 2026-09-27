@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, MANSION_GROUNDS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
@@ -644,42 +644,60 @@ export class GameRenderer {
   }
 
   private makeWalledGarden(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
-    // Per-villa layouts: the west side is open to the existing terraced platforms
-    // (which step down toward the bay), and walls stop short of the neighboring villa.
-    // Villa 1: x 100..120, z -15..5. Villa 2: x 125..140, z 5..25.
-    const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
+    // Formal walled garden around a Mansion Hill villa, built relative to the
+    // villa's MANSION_GROUNDS rect (not hardcoded): walls on south/west/east,
+    // north side open to the terraced platforms stepping to the loop road.
+    // The shared boundary between the two villas' grounds gets a hedge, not
+    // two coincident walls.
+    const grounds = MANSION_GROUNDS.find(gr =>
+      s.min.x >= gr[0] - 1 && s.max.x <= gr[2] + 1 &&
+      s.min.z >= gr[1] - 1 && s.max.z <= gr[3] + 1);
+    if (!grounds) return;
+    const [gx0, gz0, gx1, gz1] = grounds;
     const groundY = s.min.y;
     const wallMat = toon(0xb8b0a0), capMat = toon(0xd8d0c0), hedgeMat = toon(0x3d8a5f), soilMat = toon(0x6b4a2f);
     const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff)];
-    const isVilla1 = cx < 120;
-    // Walls: [centerX, centerZ, lenX, lenZ]. Hedges: same format. Beds: [x, z].
-    let walls: [number, number, number, number][];
-    let hedges: [number, number, number, number][];
-    let beds: [number, number][];
-    if (isVilla1) {
-      walls = [
-        [109, -21, 30, 0.5],   // north
-        [108, 11, 28, 0.5],    // south (stops before villa 2's zone)
-        [124, -5, 0.5, 32],    // east
-      ];
-      hedges = [
-        [109, -19.5, 26, 0.8],
-        [108, 9.5, 24, 0.8],
-        [122.5, -5, 0.8, 28],
-      ];
-      beds = [[104, -17.5], [114, -17.5], [104, 7.5], [114, 7.5]];
-    } else {
-      walls = [
-        [136, -1, 20, 0.5],    // north (starts clear of villa 1)
-        [132.5, 31, 27, 0.5],  // south
-        [146, 15, 0.5, 32],    // east
-      ];
-      hedges = [
-        [136, 0.5, 16, 0.8],
-        [132.5, 29.5, 23, 0.8],
-        [144.5, 15, 0.8, 28],
-      ];
-      beds = [[131, 2.8], [139, 2.8], [131, 27.2], [139, 27.2]];
+    // Shared boundary with the neighboring grounds? (avoids coincident walls)
+    const sharedWest = MANSION_GROUNDS.some(gr => gr !== grounds && Math.abs(gr[2] - gx0) < 0.01);
+    const sharedEast = MANSION_GROUNDS.some(gr => gr !== grounds && Math.abs(gr[0] - gx1) < 0.01);
+    // Walls: [centerX, centerZ, lenX, lenZ]. Hedges: same format.
+    const walls: [number, number, number, number][] = [
+      [(gx0 + gx1) / 2, gz0, gx1 - gx0, 0.5], // south
+    ];
+    const hedges: [number, number, number, number][] = [
+      [(gx0 + gx1) / 2, gz0 + 1.5, gx1 - gx0 - 3, 0.8],
+    ];
+    // West wall (or hedge on a shared boundary), from the south grounds edge
+    // up to the villa's north edge; the terraces take over beyond that.
+    const sideLen = s.max.z - gz0;
+    const sideCz = (gz0 + s.max.z) / 2;
+    if (sharedWest) hedges.push([gx0 + 0.75, sideCz, 0.8, sideLen - 2]);
+    else {
+      walls.push([gx0, sideCz, 0.5, sideLen]);
+      hedges.push([gx0 + 1.5, sideCz, 0.8, sideLen - 3]);
+    }
+    if (sharedEast) hedges.push([gx1 - 0.75, sideCz, 0.8, sideLen - 2]);
+    else {
+      walls.push([gx1, sideCz, 0.5, sideLen]);
+      hedges.push([gx1 - 1.5, sideCz, 0.8, sideLen - 3]);
+    }
+    // Flower beds in the side garden strips (between the villa and the side walls).
+    const beds: [number, number][] = [];
+    const bedStripZ0 = gz0 + 3, bedStripZ1 = s.max.z - 2;
+    if (bedStripZ1 - bedStripZ0 >= 5) {
+      const sideStrips: [number, number][] = [];
+      // West strip (if not a shared boundary and wide enough).
+      if (!sharedWest && s.min.x - gx0 >= 5) sideStrips.push([gx0 + 2.5, s.min.x - 2.5]);
+      // East strip.
+      if (!sharedEast && gx1 - s.max.x >= 5) sideStrips.push([s.max.x + 2.5, gx1 - 2.5]);
+      for (const [sx0, sx1] of sideStrips) {
+        const bx = (sx0 + sx1) / 2;
+        const n = Math.max(1, Math.floor((bedStripZ1 - bedStripZ0) / 8));
+        for (let bi = 0; bi < n; bi++) {
+          const bz = bedStripZ0 + (bi + 0.5) * ((bedStripZ1 - bedStripZ0) / n);
+          beds.push([bx, bz]);
+        }
+      }
     }
     const wallH = 0.9;
     walls.forEach(([x, z, lx, lz]) => {

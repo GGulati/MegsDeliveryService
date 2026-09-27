@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateLots, lotsToSolids, TOWN_SEED } from '../src/town-gen.js';
 import { ROAD_EDGES, nodeById } from '../src/roads.js';
-import { SOLIDS, isInBay } from '../src/world.js';
+import { SOLIDS, isInBay, MANSION_GROUNDS } from '../src/world.js';
 
 const overlapsXZ = (a: { min: { x: number; z: number }; max: { x: number; z: number } },
                     b: { min: { x: number; z: number }; max: { x: number; z: number } }) =>
@@ -118,6 +118,16 @@ describe('town-gen', () => {
       let best = Infinity;
       for (const s of segs) best = Math.min(best, segRectDist(s.x0, s.z0, s.x1, s.z1, x0, z0, x1, z1));
       assert.ok(best <= 15, `lot at (${l.x.toFixed(1)},${l.z.toFixed(1)}) is ${best.toFixed(1)}m from the nearest road (> 15m)`);
+    }
+  });
+  it('no lot intersects the mansion grounds', () => {
+    // User feedback 2026-09-27: the mansion gardens are part of the house
+    // footprint. No infill lot may overlap the MANSION_GROUNDS rects.
+    for (const l of generateLots()) {
+      for (const gr of MANSION_GROUNDS) {
+        const hit = l.x < gr[2] && l.x + l.w > gr[0] && l.z < gr[3] && l.z + l.d > gr[1];
+        assert.ok(!hit, `lot at (${l.x.toFixed(1)},${l.z.toFixed(1)}) overlaps mansion grounds`);
+      }
     }
   });
   it('no lot intersects the lighthouse rock exclusion circle', () => {

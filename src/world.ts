@@ -51,6 +51,16 @@ export const DOCK_BOATS: [number, number][] = [
   [50, 68], [50, 88], [50, 128],
 ];
 
+/** Mansion Hill villa grounds: [x0, z0, x1, z1] formal walled gardens around
+ *  each villa (SOLIDS[17], SOLIDS[18]). Part of the mansion footprint —
+ *  infill lots are excluded, so the grounds read as the house's estate.
+ *  The north edge includes the terraced platforms stepping to the loop road;
+ *  the shared east/west boundary splits the gap between the villas. */
+export const MANSION_GROUNDS: [number, number, number, number][] = [
+  [-86, -193.5, -58.75, -163],   // Villa 1 grounds
+  [-58.75, -193.5, -36.5, -163], // Villa 2 grounds
+];
+
 // The pads are deliberately separated by broad streets: they are landmarks, not gates.
 // Positions are the Harborlight layout: a crescent town around the harbor bay,
 // the lighthouse on its headland, and Meg's cottage site on the north-west rise.
