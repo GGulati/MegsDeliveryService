@@ -5,6 +5,7 @@ import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
+import { buildBridge } from './bridge';
 import { generateLots } from './town-gen';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
@@ -191,6 +192,7 @@ export class GameRenderer {
     }
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
     // east pier serves Marina Works.
+    buildBridge(g);
     const dockMat = toon(0x9a6147);
     [[-15, 50], [-15, 70], [-15, 90]].forEach(([x, z]) => {
       const dock = new THREE.Mesh(new THREE.BoxGeometry(24, .7, 8), dockMat); dock.position.set(x, .8, z); g.add(dock);
