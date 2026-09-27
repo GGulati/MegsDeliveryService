@@ -199,9 +199,12 @@ export class GameRenderer {
         const px = -tan.z, pz = tan.x;
         const plen = Math.hypot(px, pz) || 1;
         const nx = px / plen, nz = pz / plen;
-        const roadY = p.y + 0.15;
         const lx = p.x + nx * hw, lz = p.z + nz * hw;
         const rx = p.x - nx * hw, rz = p.z - nz * hw;
+        // Deck clears the highest terrain across the road width: the smooth
+        // curve grade can dip below terrain bulges between nodes (which
+        // swallowed segments). The skirts below handle the fill on the low side.
+        const roadY = Math.max(p.y, heightAt(p.x, p.z), heightAt(lx, lz), heightAt(rx, rz)) + 0.15;
         pos.push(lx, roadY, lz, rx, roadY, rz);
         nor.push(0, 1, 0, 0, 1, 0);
         if (i < segs) {
@@ -260,7 +263,9 @@ export class GameRenderer {
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
         dash.rotation.x = -Math.PI / 2;
         dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
-        dash.position.set(dp.x, dp.y + 0.18, dp.z);
+        // Match the deck height (clears terrain bulges like the road itself).
+        const dy = Math.max(dp.y, heightAt(dp.x, dp.z)) + 0.18;
+        dash.position.set(dp.x, dy, dp.z);
         g.add(dash);
       }
     }
