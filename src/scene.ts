@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, surfaceColor, canGrow } from './terrain';
 import { mulberry32 } from './grain';
@@ -195,8 +195,6 @@ export class GameRenderer {
   }
 
   private makeBuildings(g: THREE.Group): void {
-    const palette = [0xf8d8ad, 0x78b9ae, 0x80516c, 0xf3b16b, 0xdce2c5];
-    const roofColors = [0xb64d45, 0x3e6680, 0xc36a43, 0x6b507b];
     SOLIDS.forEach((s, i) => {
       const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
       const center = new THREE.Vector3((s.min.x+s.max.x)/2, (s.min.y+s.max.y)/2, (s.min.z+s.max.z)/2);
@@ -206,8 +204,10 @@ export class GameRenderer {
       // The lighthouse tower solid is drawn as a cylinder by makeLighthouse,
       // so the generic box pass skips its visuals (camera blocker already pushed).
       if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
+      // District palette: each district paints its own bodies and roofs.
+      const pal = (s.district && DISTRICT_PALETTES[s.district]) || DISTRICT_PALETTES['old-town'];
       const roofHeight = Math.min(4.2, sy * .28);
-      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy-roofHeight, sz), toon(palette[i % palette.length]));
+      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy-roofHeight, sz), toon(pal.bodies[i % pal.bodies.length]));
       body.position.set(center.x, s.min.y + (sy-roofHeight)*.5, center.z); body.castShadow = true; body.receiveShadow = true;
       g.add(body);
       // These roofs replace the final few metres of each painted box, entirely within
@@ -220,7 +220,7 @@ export class GameRenderer {
          halfX, roofBase,  halfZ,-halfX, roofBase,  halfZ, 0, sy*.5, 0,
         -halfX, roofBase,  halfZ,-halfX, roofBase, -halfZ, 0, sy*.5, 0,
       ], 3)); roofGeo.setIndex([0,2,1,3,5,4,6,8,7,9,11,10]); roofGeo.computeVertexNormals();
-      const roof = new THREE.Mesh(roofGeo, toon(roofColors[i % roofColors.length]));
+      const roof = new THREE.Mesh(roofGeo, toon(pal.roofs[i % pal.roofs.length]));
       roof.position.copy(center); roof.castShadow = true; g.add(roof);
       const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), doorMat = toon(0x704638);
       const windowW = Math.min(2.6, sx * .18), windowH = Math.min(2.7, sy * .2);

@@ -1,6 +1,6 @@
 export interface Vec3 { x: number; y: number; z: number }
 export interface Stop { id: string; name: string; subtitle: string; position: Vec3; color: string }
-export interface Solid { min: Vec3; max: Vec3 }
+export interface Solid { min: Vec3; max: Vec3; district?: string }
 export interface FlightInput {
   turn: number; climb: number; throttle: number;
   // One-shot: the touch stick was just released, so the cruise trim the stick
