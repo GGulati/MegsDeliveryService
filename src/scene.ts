@@ -299,9 +299,9 @@ export class GameRenderer {
           : new THREE.Vector3(body.position.x + outward * (sx*.5 + depth), y, body.position.z + alongOffset);
         const winRow = (story: number, y: number) => {
           positions.forEach((offset, pi) => {
-            // Deterministic per-window variation.
+            // Deterministic per-window variation (no horizontal jitter — keep rows aligned).
             const rnd = mulberry32(i * 1000 + sideIdx[side] * 100 + story * 10 + pi);
-            const jx = (rnd() - 0.5) * 0.9;           // horizontal jitter
+            const jx = 0;
             const w = baseW * (0.88 + rnd() * 0.24);    // width variation
             const h = baseH * (0.88 + rnd() * 0.24);    // height variation
             // Keep the window top below the body top (no ceiling clipping).
