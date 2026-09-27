@@ -5,7 +5,7 @@ import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
-import { roadCurve, roadWidth, deckHeightAt, CAR_HALF, BIKE_HALF, WALK_HALF } from './road-deck';
+import { roadCurve, roadWidth, deckHeightAt, CAR_HALF, BIKE_HALF, WALK_HALF, junctionPatches, patchContains } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
@@ -295,6 +295,11 @@ export class GameRenderer {
       const curve = roadCurve(e);
       const width = roadWidth(e);
       g.add(makeFlatRoad(e, curve, width));
+    }
+    const patches = junctionPatches();
+    for (const e of ROAD_EDGES) {
+      if (e.kind === 'bridge') continue;
+      const curve = roadCurve(e);
       // Center dashes (flat, on the road surface).
       const dashMat = toon(0xfff6d8);
       dashMat.side = THREE.DoubleSide;
@@ -302,6 +307,8 @@ export class GameRenderer {
       for (let d = 0; d < len - 2; d += 4) {
         const p0 = curve.getPointAt(d / len), p1 = curve.getPointAt(Math.min(1, (d + 2) / len));
         const dp = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
+        // No dashes inside junction patches (the junction is one clean surface).
+        if (patches.some(jp => patchContains(jp, dp.x, dp.z))) continue;
         const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
         dash.rotation.x = -Math.PI / 2;
         dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
@@ -310,6 +317,57 @@ export class GameRenderer {
         dash.position.set(dp.x, dy, dp.z);
         g.add(dash);
       }
+    }
+    // Junction patches: single draped asphalt surfaces over every road
+    // intersection so overlapping ribbons can't clip through each other
+    // (user feedback 2026-09-27).
+    const patchCol = new THREE.Color(0x43434a);
+    for (const jp of patches) {
+      const pos: number[] = [];
+      const nor: number[] = [];
+      const col: number[] = [];
+      const idx: number[] = [];
+      for (const [a, b, c] of jp.tris) {
+        const base = pos.length / 3;
+        for (const v of [a, b, c]) {
+          pos.push(v.x, v.h, v.z); nor.push(0, 1, 0);
+          col.push(patchCol.r, patchCol.g, patchCol.b);
+        }
+        idx.push(base, base + 1, base + 2);
+      }
+      // Skirt wall around the patch perimeter down to the terrain. The top edge
+      // sits 2cm below the deck surface (ring h = deck + 0.05) so no dirt wall
+      // ever pokes through the road it borders (review 2026-09-27).
+      const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+      const n = jp.ring.length;
+      for (let i = 0; i < n; i++) {
+        const a = jp.ring[i], b = jp.ring[(i + 1) % n];
+        const ex = b.x - a.x, ez = b.z - a.z;
+        const el = Math.hypot(ex, ez) || 1;
+        const ox = ez / el, oz = -ex / el;
+        const ty = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z));
+        const topY = Math.min(a.h, b.h) - 0.07;
+        const by = ty < topY - 0.3 ? Math.max(ty - 0.1, topY - 3) : topY;
+        const base = spos.length / 3;
+        spos.push(a.x, topY, a.z, a.x, by, a.z, b.x, topY, b.z, b.x, by, b.z);
+        snor.push(ox, 0, oz, ox, 0, oz, ox, 0, oz, ox, 0, oz);
+        sidx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      }
+      const pgeo = new THREE.BufferGeometry();
+      pgeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      pgeo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      pgeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      pgeo.setIndex(idx);
+      const pm = new THREE.Mesh(pgeo, deckMat);
+      pm.receiveShadow = true;
+      g.add(pm);
+      const sgeo = new THREE.BufferGeometry();
+      sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
+      sgeo.setAttribute('normal', new THREE.Float32BufferAttribute(snor, 3));
+      sgeo.setIndex(sidx);
+      const sm = new THREE.Mesh(sgeo, earthMat);
+      sm.receiveShadow = true;
+      g.add(sm);
     }
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
     // east pier serves Marina Works.

@@ -23,7 +23,7 @@ before(() => {
 import { Life, CAR_COUNT, PED_COUNT } from '../src/life.js';
 import { SOLIDS, MANSION_GROUNDS, isInBay } from '../src/world.js';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from '../src/roads.js';
-import { deckHeightAt, roadWidth, nodeDeckHeights, roadCurve } from '../src/road-deck.js';
+import { deckHeightAt, roadWidth, nodeDeckHeights, roadCurve, patchSurfaceHeight } from '../src/road-deck.js';
 import { heightAt } from '../src/terrain.js';
 
 describe('ambient life', () => {
@@ -169,7 +169,10 @@ describe('ambient life', () => {
       ) + 0.15;
       const yA = nodes.get(car.edge.a) ?? -Infinity;
       const yB = nodes.get(car.edge.b) ?? -Infinity;
-      const expectedY = Math.max(raw, yA + (yB - yA) * t);
+      const deckOnly = Math.max(raw, yA + (yB - yA) * t);
+      // Inside intersections cars ride the junction patch surface (~5cm above
+      // the deck); elsewhere they ride the deck itself.
+      const expectedY = patchSurfaceHeight(pos.x, pos.z) ?? deckOnly;
       assert.ok(Math.abs(pos.y - expectedY) < 0.05,
         `car y=${pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }
@@ -189,7 +192,8 @@ describe('ambient life', () => {
     for (const ped of peds) {
       if (ped.inPark) continue;
       const t = THREE.MathUtils.clamp(ped.t, 0, 1);
-      const expectedY = deckHeightAt(ped.edge, t);
+      // Inside intersections peds stand on the junction patch surface.
+      const expectedY = patchSurfaceHeight(ped.pos.x, ped.pos.z) ?? deckHeightAt(ped.edge, t);
       assert.ok(Math.abs(ped.pos.y - expectedY) < 0.1,
         `ped y=${ped.pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }

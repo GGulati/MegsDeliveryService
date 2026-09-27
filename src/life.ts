@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ROAD_EDGES, nodeById, nodePos, roadGraph, type RoadEdge } from './roads';
-import { roadCurve, deckHeightAt } from './road-deck';
+import { roadCurve, roadGroundHeight } from './road-deck';
 import { heightAt } from './terrain';
 import { PARK_RECT, SOLIDS, MANSION_GROUNDS, isInBay } from './world';
 import { mulberry32 } from './grain';
@@ -426,7 +426,6 @@ export class Life {
     const t = THREE.MathUtils.clamp(car.t, 0, 1);
     // Node-pinned deck height — continuous across edge transitions, so cars
     // never "skip" vertically at nodes (user feedback 2026-09-27).
-    const deckY = deckHeightAt(car.edge, t);
     car.curve.getPointAt(t, this.tmpP);
     car.curve.getTangentAt(t, this.tmpT);
     if (car.dir === -1) this.tmpT.negate();
@@ -436,6 +435,9 @@ export class Life {
     car.offZ += ((this.tmpT.x) * 1.4 - car.offZ) * k;
     const px = this.tmpP.x + car.offX;
     const pz = this.tmpP.z + car.offZ;
+    // Ride the junction patch surface inside intersections so wheels stay on
+    // the rendered asphalt (the patch sits ~5cm above the deck).
+    const deckY = roadGroundHeight(car.edge, t, px, pz);
     car.group.position.set(px, deckY, pz);
     car.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
   }
@@ -530,7 +532,8 @@ export class Life {
     const pz = this.tmpP.z + ped.offZ;
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
     // under it — the deck can ride meters above the terrain on fills.
-    ped.pos.set(px, deckHeightAt(ped.edge, t), pz);
+    // Inside intersections they stand on the junction patch surface.
+    ped.pos.set(px, roadGroundHeight(ped.edge, t, px, pz), pz);
     ped.group.position.copy(ped.pos);
     ped.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
     // Bob.
