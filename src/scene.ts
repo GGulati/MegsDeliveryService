@@ -242,23 +242,17 @@ export class GameRenderer {
   }
 
   private makeGreenery(g: THREE.Group): void {
-    const trunk = toon(0x744a36), leaf = toon(0x4d976b), flower = toon(0xff8baa);
-    // Rejection-sampled forest: trees only where the heightfield says vegetation
-    // grows (grass band, gentle slope, off the beach). Deterministic seed.
+    const trunk = toon(0x744a36), leaf = toon(0x4d976b), leaf2 = toon(0x3d8a5f), flower = toon(0xff8baa);
+    // Two-zone forest: dense woods on the northern hills (the town's natural
+    // boundary — a visual wall of green), sparse elsewhere. Deterministic seed.
     const rand = mulberry32(1337);
-    let placed = 0, tries = 0;
-    while (placed < 140 && tries < 3000) {
-      tries++;
-      const x = (rand() - 0.5) * 400, z = (rand() - 0.5) * 400;
-      if (!canGrow(x, z)) continue;
-      if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
-      // Keep the town center airy: thin out trees in the built-up core.
-      if (Math.hypot(x, z) < 100 && rand() < 0.7) continue;
+    const placeTree = (x: number, z: number) => {
       const t = new THREE.Group();
       const h = 3 + rand() * 2.5;
       const b = new THREE.Mesh(new THREE.CylinderGeometry(.35, .55, h, 7), trunk);
       b.position.y = h / 2; t.add(b);
-      const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.2 + rand() * 1.2, 1), leaf);
+      const lm = rand() < 0.5 ? leaf : leaf2;
+      const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.2 + rand() * 1.2, 1), lm);
       crown.position.y = h + 1.5; t.add(crown);
       t.position.set(x, heightAt(x, z), z);
       t.rotation.y = rand() * Math.PI * 2;
@@ -268,6 +262,29 @@ export class GameRenderer {
         f.position.set(x + .8, heightAt(x, z) + .5, z + .6);
         g.add(f);
       }
+    };
+    // Dense woods: northern hills (z > 60, outside town core). 260 trees.
+    let placed = 0, tries = 0;
+    while (placed < 260 && tries < 6000) {
+      tries++;
+      const x = (rand() - 0.5) * 400, z = 60 + rand() * 160; // z in [60, 220]
+      if (!canGrow(x, z)) continue;
+      if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
+      if (Math.hypot(x, z) < 145) continue; // outside the flat town core
+      placeTree(x, z);
+      placed++;
+    }
+    // Sparse elsewhere: 60 trees, town center kept airy.
+    placed = 0; tries = 0;
+    while (placed < 60 && tries < 3000) {
+      tries++;
+      const x = (rand() - 0.5) * 400, z = (rand() - 0.5) * 400;
+      if (!canGrow(x, z)) continue;
+      if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
+      if (Math.hypot(x, z) < 100 && rand() < 0.7) continue;
+      // Don't double-plant in the woods zone.
+      if (z > 60 && Math.hypot(x, z) >= 145) continue;
+      placeTree(x, z);
       placed++;
     }
   }
