@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
 import { buildBridge } from './bridge';
 import { generateLots } from './town-gen';
+import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
@@ -204,7 +205,63 @@ export class GameRenderer {
     this.makeClockTower(g); this.makeObservatoryDome(g);
     this.makeBakeryDormer(g); this.makeMansionTerraces(g); this.makeBoats(g);
     this.makeLaundryLines(g); this.makeDockDressing(g); this.makeStreetLamps(g);
+    this.makePark(g);
     return g;
+  }
+
+  private makePark(g: THREE.Group): void {
+    // Golden Gate Park-style rectangle on the upper tier: manicured lawn, two
+    // tree allées, crossing gravel paths, and a glass conservatory centerpiece.
+    // Layout data comes from src/park.ts (tested); this only renders it.
+    const [x0, z0, x1, z1] = PARK_RECT;
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const y = heightAt(cx, cz);
+    const lawn = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), toon(0x7fae5c));
+    lawn.rotation.x = -Math.PI / 2;
+    lawn.position.set(cx, y + 0.1, cz);
+    g.add(lawn);
+    // Tree allées: one InstancedMesh for trunks, one for crowns.
+    const dummy = new THREE.Object3D();
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.35, 0.55, 4, 7), toon(0x744a36), PARK_TREES.length);
+    const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(2.6, 1), toon(0x4d976b), PARK_TREES.length);
+    PARK_TREES.forEach((t, i) => {
+      const ty = heightAt(t.x, t.z);
+      dummy.rotation.set(0, i * 2.39996, 0); // deterministic golden-angle spin
+      dummy.scale.setScalar(t.s);
+      dummy.position.set(t.x, ty + 2 * t.s, t.z);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(i, dummy.matrix);
+      dummy.position.set(t.x, ty + 5.5 * t.s, t.z);
+      dummy.updateMatrix();
+      crowns.setMatrixAt(i, dummy.matrix);
+    });
+    trunks.instanceMatrix.needsUpdate = true;
+    crowns.instanceMatrix.needsUpdate = true;
+    g.add(trunks, crowns);
+    // Crossing pale-gravel paths.
+    const pathMat = toon(0xe8dcc0);
+    for (const p of PARK_PATHS) {
+      const path = new THREE.Mesh(new THREE.BoxGeometry(p.x1 - p.x0, 0.2, p.z1 - p.z0), pathMat);
+      path.position.set((p.x0 + p.x1) / 2, y + 0.15, (p.z0 + p.z1) / 2);
+      g.add(path);
+    }
+    // Conservatory: glass box body with a ribbed glass dome at the crossing.
+    const c = PARK_CONSERVATORY;
+    const glass = new THREE.MeshToonMaterial({ color: 0xcfe8e4, transparent: true, opacity: 0.5 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(c.w, c.h, c.d), glass);
+    body.position.set(c.x, y + c.h / 2, c.z);
+    g.add(body);
+    const domeR = c.d / 2;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(domeR, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), glass);
+    dome.position.set(c.x, y + c.h, c.z);
+    g.add(dome);
+    const ribMat = toon(0x7a8a8a);
+    for (let i = 0; i < 6; i++) {
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(domeR, 0.15, 6, 12, Math.PI), ribMat);
+      rib.position.set(c.x, y + c.h, c.z);
+      rib.rotation.y = (i / 6) * Math.PI;
+      g.add(rib);
+    }
   }
 
   private makeLaundryLines(g: THREE.Group): void {
