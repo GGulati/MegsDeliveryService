@@ -278,7 +278,12 @@ export class GameRenderer {
       const roof = new THREE.Mesh(roofGeo, toon(pal.roofs[i % pal.roofs.length]));
       roof.position.copy(center); roof.castShadow = true; g.add(roof);
       const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), doorMat = toon(0x704638);
-      const windowW = Math.min(2.6, sx * .18), windowH = Math.min(2.7, sy * .2);
+      // Story-aware facades: door on the ground floor, one window row per story above.
+      // Stories are counted against the body height (below the roof), not total height.
+      const storyH = 3.4;
+      const bodyH = sy - roofHeight;
+      const stories = Math.max(1, Math.round(bodyH / storyH));
+      const windowW = Math.min(2.6, sx * .18), windowH = Math.min(2.4, storyH * .55);
       const addFacade = (side: 'north'|'south'|'east'|'west') => {
         const along = side==='north'||side==='south' ? sx : sz;
         const positions = along > 29 ? [-.27, .27] : [-.2, .2];
@@ -288,18 +293,26 @@ export class GameRenderer {
         const planeAt = (alongOffset: number, y: number, depth: number) => isZ
           ? new THREE.Vector3(body.position.x + alongOffset, y, body.position.z + outward * (sz*.5 + depth))
           : new THREE.Vector3(body.position.x + outward * (sx*.5 + depth), y, body.position.z + alongOffset);
-        positions.forEach(offset => {
-          const p = planeAt(along * offset, center.y + sy*.03, .055);
-          const win = new THREE.Mesh(new THREE.PlaneGeometry(windowW, windowH), glassMat); win.position.copy(p); win.rotation.y=rot; g.add(win);
-          const sill = new THREE.Mesh(new THREE.BoxGeometry(windowW + .38, .18, .16), trimMat); sill.position.copy(planeAt(along * offset, p.y-windowH*.5-.08, .1)); if(!isZ)sill.rotation.y=Math.PI/2; g.add(sill);
-          const canopy = new THREE.Mesh(new THREE.BoxGeometry(windowW + .42, .22, .5), trimMat); canopy.position.copy(planeAt(along * offset, p.y+windowH*.5+.18, .18)); if(!isZ)canopy.rotation.y=Math.PI/2; g.add(canopy);
-        });
-        // One strong, dark doorway per face gives the otherwise simple painted boxes a scale cue.
-        const door = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(2.5, along*.13), Math.min(3.7, sy*.3)), doorMat);
-        door.position.copy(planeAt(0, s.min.y + Math.min(3.7, sy*.3)*.5, .06)); door.rotation.y=rot; g.add(door);
+        const winRow = (y: number) => {
+          positions.forEach(offset => {
+            const p = planeAt(along * offset, y, .055);
+            const win = new THREE.Mesh(new THREE.PlaneGeometry(windowW, windowH), glassMat); win.position.copy(p); win.rotation.y=rot; g.add(win);
+            const sill = new THREE.Mesh(new THREE.BoxGeometry(windowW + .38, .18, .16), trimMat); sill.position.copy(planeAt(along * offset, p.y-windowH*.5-.08, .1)); if(!isZ)sill.rotation.y=Math.PI/2; g.add(sill);
+          });
+        };
+        // Ground floor: centered door with flanking windows.
+        const doorH = Math.min(3.0, storyH * .82);
+        const door = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(2.4, along*.13), doorH), doorMat);
+        door.position.copy(planeAt(0, s.min.y + doorH*.5, .06)); door.rotation.y=rot; g.add(door);
+        winRow(s.min.y + storyH * .58);
+        // Upper stories: one window row per story.
+        for (let st = 1; st < stories; st++) {
+          winRow(s.min.y + storyH * st + storyH * .58);
+        }
       };
       addFacade('north'); addFacade('south'); addFacade('east'); addFacade('west');
       // Merchant-row shops get striped awnings over the south face (street side).
+      // The awning is a sloped quad: top edge at the wall, front edge lower and outward.
       if (s.district === 'merchant-row') {
         const awnColors: [string, string][] = [['#e86a6a', '#f5f0e1'], ['#5b7fa6', '#f5f0e1'], ['#6aa86a', '#f5f0e1']];
         const [c1, c2] = awnColors[i % awnColors.length];
@@ -309,16 +322,17 @@ export class GameRenderer {
         const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
         const awnW = Math.min(sx * 0.7, 10), awnD = 2.2;
         const awnGeo = new THREE.PlaneGeometry(awnW, awnD, 1, 1);
-        // Slope the awning: top edge at wall, front edge lower.
         const pos = awnGeo.attributes.position;
         for (let v = 0; v < pos.count; v++) {
-          if (pos.getY(v) < 0) pos.setZ(v, -0.7); // front edge dips
+          if (pos.getY(v) < 0) pos.setZ(v, -0.7); // front (outward) edge dips down
         }
         awnGeo.computeVertexNormals();
-        const awn = new THREE.Mesh(awnGeo, new THREE.MeshToonMaterial({ map: tex }));
-        const doorY = s.min.y + Math.min(3.7, sy * .3);
-        awn.position.set(center.x, doorY + 2.2, center.z + sz * .5 + awnD * .42);
-        awn.rotation.x = -0.15;
+        const awn = new THREE.Mesh(awnGeo, new THREE.MeshToonMaterial({ map: tex, side: THREE.DoubleSide }));
+        const doorH = Math.min(3.0, storyH * .82);
+        // Plane local +y maps to world -z after rotation.x=-PI/2, so the dipped
+        // edge (local y<0) lands outward (+z, street side) and lower.
+        awn.position.set(center.x, s.min.y + doorH + 0.55, center.z + sz * .5 + awnD * .5 - 0.15);
+        awn.rotation.x = -Math.PI / 2;
         g.add(awn);
       }
     });
