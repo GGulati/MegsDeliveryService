@@ -30,7 +30,7 @@ export function solidBlocker(s: Solid): THREE.Mesh {
 }
 export class GameRenderer {
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.PerspectiveCamera(62, 1, .1, 900);
+  readonly camera = new THREE.PerspectiveCamera(62, 1, .5, 600);
   private renderer: THREE.WebGLRenderer;
   private effects: FlightEffects;
   private hero = new THREE.Group();
@@ -388,32 +388,36 @@ export class GameRenderer {
           quad(walkPos, walkNor, walkIdx, H + 0.085, q[0], q[1], q[2], q[3]);
       }
       // Emit the merged marking meshes.
+      // Depth-independent: lines render after opaque roads with depth test
+      // off, so mobile 16-bit depth precision can't cause flicker. renderOrder
+      // 1 draws them after roads (0); cars/buildings (opaque, depth-tested)
+      // still occlude correctly via the road depth in the buffer.
       const markMat = toon(0xf5f1e6);
       markMat.side = THREE.DoubleSide;
-      markMat.polygonOffset = true;
-      markMat.polygonOffsetFactor = -4;
-      markMat.polygonOffsetUnits = -4;
+      markMat.depthTest = false;
+      markMat.depthWrite = false;
       if (whiteIdx.length) {
         const wgeo = new THREE.BufferGeometry();
         wgeo.setAttribute('position', new THREE.Float32BufferAttribute(whitePos, 3));
         wgeo.setAttribute('normal', new THREE.Float32BufferAttribute(whiteNor, 3));
         wgeo.setIndex(whiteIdx);
         const wm = new THREE.Mesh(wgeo, markMat);
-        wm.receiveShadow = true;
+        wm.receiveShadow = false;
+        wm.renderOrder = 1;
         g.add(wm);
       }
       const walkMat = toon(0xb8b0a0);
       walkMat.side = THREE.DoubleSide;
-      walkMat.polygonOffset = true;
-      walkMat.polygonOffsetFactor = -4;
-      walkMat.polygonOffsetUnits = -4;
+      walkMat.depthTest = false;
+      walkMat.depthWrite = false;
       if (walkIdx.length) {
         const fgeo = new THREE.BufferGeometry();
         fgeo.setAttribute('position', new THREE.Float32BufferAttribute(walkPos, 3));
         fgeo.setAttribute('normal', new THREE.Float32BufferAttribute(walkNor, 3));
         fgeo.setIndex(walkIdx);
         const fm = new THREE.Mesh(fgeo, walkMat);
-        fm.receiveShadow = true;
+        fm.receiveShadow = false;
+        fm.renderOrder = 1;
         g.add(fm);
       }
     };
@@ -437,8 +441,11 @@ export class GameRenderer {
       // Center dashes (flat, on the road surface). Dashes TERMINATE at
       // intersection clip lines (with a 1m margin) — they never enter the
       // intersection, like real lane markings.
+      // Depth-independent (see intersection markings): no mobile flicker.
       const dashMat = toon(0xfff6d8);
       dashMat.side = THREE.DoubleSide;
+      dashMat.depthTest = false;
+      dashMat.depthWrite = false;
       const len = curve.getLength();
       const clips = edgeClips(e);
       const cA = clips.a ? clips.a.dist : 0;
@@ -450,9 +457,9 @@ export class GameRenderer {
         dash.rotation.x = -Math.PI / 2;
         dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
         // Match the ribbon height (follows the clip ramp like the road itself).
-        // 8cm lift: mobile GPUs (16-bit depth) need more separation.
-        const dy = ribbonHeightAt(e, (d + 1) / len) + 0.08;
+        const dy = ribbonHeightAt(e, (d + 1) / len) + 0.02;
         dash.position.set(dp.x, dy, dp.z);
+        dash.renderOrder = 1;
         g.add(dash);
       }
     }
