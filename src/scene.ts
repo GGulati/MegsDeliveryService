@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
-import { heightAt, surfaceColor, canGrow } from './terrain';
+import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
@@ -153,19 +153,8 @@ export class GameRenderer {
     canvas.width = TEX; canvas.height = TEX;
     const ctx = canvas.getContext('2d')!;
     const img = ctx.createImageData(TEX, TEX);
-    for (let py = 0; py < TEX; py++) {
-      for (let px = 0; px < TEX; px++) {
-        // Canvas y=0 is north (-z); plane UV v=1 is north after rotateX.
-        const x = (px / (TEX - 1) - 0.5) * 440;
-        const z = (0.5 - py / (TEX - 1)) * 440;
-        const [r, g, b] = surfaceColor(x, z);
-        const o = (py * TEX + px) * 4;
-        img.data[o] = Math.round(r * 255);
-        img.data[o + 1] = Math.round(g * 255);
-        img.data[o + 2] = Math.round(b * 255);
-        img.data[o + 3] = 255;
-      }
-    }
+    // Grid-baked: 1 noise eval per texel instead of 5 (see bakeTerrainTexture).
+    img.data.set(bakeTerrainTexture(TEX));
     ctx.putImageData(img, 0, 0);
     const colorTex = new THREE.CanvasTexture(canvas);
     colorTex.colorSpace = THREE.SRGBColorSpace;

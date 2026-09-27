@@ -173,6 +173,56 @@ export function canGrow(x: number, z: number): boolean {
  * grass on the town lowland and gentle hills, rock on hilltops and steep slopes.
  * Pure function of the heightfield.
  */
+/**
+ * Bake the ground texture from a precomputed terrain grid. Runs computeTerrain
+ * once per texel instead of 5x per texel (the slope finite differences reuse
+ * the grid) — same visual result, ~5x faster. Startup-only.
+ */
+export function bakeTerrainTexture(TEX: number): Uint8ClampedArray {
+  const N = TEX;
+  const hs = new Float32Array(N * N);
+  const bays = new Float32Array(N * N);
+  const oceans = new Float32Array(N * N);
+  const step = 440 / (TEX - 1);
+  for (let py = 0; py < N; py++) {
+    for (let px = 0; px < N; px++) {
+      const x = (px / (TEX - 1) - 0.5) * 440;
+      const z = (0.5 - py / (TEX - 1)) * 440;
+      const t = computeTerrain(x, z);
+      const i = py * N + px;
+      hs[i] = t.h; bays[i] = t.bayT; oceans[i] = t.oceanT;
+    }
+  }
+  const data = new Uint8ClampedArray(TEX * TEX * 4);
+  for (let py = 0; py < TEX; py++) {
+    for (let px = 0; px < TEX; px++) {
+      const i = py * N + px;
+      const h = hs[i], bayT = bays[i], oceanT = oceans[i];
+      const x = (px / (TEX - 1) - 0.5) * 440;
+      const z = (0.5 - py / (TEX - 1)) * 440;
+      // Slope from grid central differences (clamped at edges).
+      const xm = hs[py * N + Math.max(px - 1, 0)], xp = hs[py * N + Math.min(px + 1, N - 1)];
+      const zm = hs[Math.max(py - 1, 0) * N + px], zp = hs[Math.min(py + 1, N - 1) * N + px];
+      const slope = Math.hypot((xp - xm) / (2 * step), (zp - zm) / (2 * step));
+
+      const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
+      let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
+      c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
+      const seabedT = smoothstep(-0.8, -1.6, h);
+      c = lerp3(c, SEABED, seabedT);
+      const rockT = smoothstep(0.45, 0.75, slope);
+      if (rockT > 0) c = lerp3(c, ROCK, rockT);
+      const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9, 3) * 0.07;
+      const o = (py * TEX + px) * 4;
+      data[o] = Math.round(c[0] * m * 255);
+      data[o + 1] = Math.round(c[1] * m * 255);
+      data[o + 2] = Math.round(c[2] * m * 255);
+      data[o + 3] = 255;
+    }
+  }
+  return data;
+}
+
 export function surfaceColor(x: number, z: number): [number, number, number] {
   const { h, bayT, oceanT } = computeTerrain(x, z);
 
