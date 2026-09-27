@@ -551,8 +551,14 @@ export class Life {
     // Collision avoidance: don't tailgate the car ahead on the same edge.
     // (User feedback 2026-09-27: traffic should not collide.)
     car.speed = this.carFollowSpeed(car);
+    const prevT = car.t;
     car.t += (car.dir * car.speed * dt) / car.edgeLen;
-    if (car.t >= 1 || car.t <= 0) {
+    // Arrival fires only when t CROSSES the node boundary this frame — not
+    // when sitting exactly at 0/1. Collision avoidance can hold speed at 0
+    // right after mounting (t=0/1), and the old >=/<= check then re-fired
+    // arriveNode every frame at the WRONG node (dir=1, t=0 → edge.b),
+    // teleporting cars across the edge (2026-09-27: 19m/35m jumps).
+    if ((car.dir === 1 && prevT < 1 && car.t >= 1) || (car.dir === -1 && prevT > 0 && car.t <= 0)) {
       // The node reached is determined by travel direction alone: dir=1 runs
       // t up to edge.b, dir=-1 runs t down to edge.a. (The old code keyed off
       // t>=1 vs t<=0 and sent dir=-1 arrivals to the wrong end — teleporting
@@ -654,8 +660,11 @@ export class Life {
     // Collision avoidance: don't walk through the ped ahead on the same
     // sidewalk. (User feedback 2026-09-27: traffic should not collide.)
     ped.speed = this.pedFollowSpeed(ped);
+    const pedPrevT = ped.t;
     ped.t += (ped.dir * ped.speed * dt) / ped.edgeLen;
-    if (ped.t >= 1 || ped.t <= 0) {
+    // Same crossing-only arrival as cars: pedFollowSpeed can hold a ped at
+    // t=0/1, and the old >=/<= check re-fired arriveNode at the wrong node.
+    if ((ped.dir === 1 && pedPrevT < 1 && ped.t >= 1) || (ped.dir === -1 && pedPrevT > 0 && ped.t <= 0)) {
       // Same fix as cars: the node reached is determined by travel direction
       // alone (dir=1 → edge.b, dir=-1 → edge.a).
       const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
