@@ -10,10 +10,11 @@ import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
+import { toon } from './materials';
+import { Life } from './life';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
-import { grainSpeckles, GRAIN_SEED, GRAIN_SIZE } from './grain';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 /** Pastel Painted-Ladies body colors for bungalow-lanes infill (lot.palette 1-4). */
@@ -47,6 +48,7 @@ export class GameRenderer {
   private ray = new THREE.Raycaster();
   private blockers: THREE.Object3D[] = [];
   private outlines: THREE.Mesh[] = [];
+  private life!: Life;
   private beamGroup: THREE.Group | null = null;
   private beamLight: THREE.PointLight | null = null;
   private lighthouseLit = true;
@@ -78,6 +80,7 @@ export class GameRenderer {
     this.sun.position.set(-80, 115, 48);
     this.scene.add(this.sun);
     this.world=this.makeWorld();
+    this.life = new Life(this.world);
     this.scene.add(this.world, this.hero, this.dropParcel, this.glowColumn, this.targetRing, this.clouds, this.birds, this.room.group);
     this.makeHero(); this.makeDropParcel(); this.makeGlowColumn(); this.makeSkyLife(); this.resize();
   }
@@ -125,6 +128,10 @@ export class GameRenderer {
     this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .62);
     this.hero.position.y += visual.bob;
     this.animateSky(settings.reducedMotion, step);
+    // Ambient life: cars and pedestrians (Phase 2). Hidden at home with the world.
+    if (!atHome && step > 0) {
+      this.life.update(step, player, state.player.speed, state.player.velocity.y, this.clock);
+    }
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateGlowColumn(state, settings.reducedMotion);
     this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
@@ -1395,8 +1402,3 @@ export class GameRenderer {
     this.camPos.copy(wanted);this.camLook.copy(look);this.camera.position.copy(this.camPos);this.camera.up.set(0,1,0);this.camera.lookAt(this.camLook);
   }
 }
-
-function toon(color: THREE.ColorRepresentation): THREE.MeshToonMaterial { return new THREE.MeshToonMaterial({color, map: grainTexture(), gradientMap: gradientTexture()}); }
-let grain:THREE.CanvasTexture|undefined, gradient:THREE.CanvasTexture|undefined;
-function grainTexture(): THREE.CanvasTexture { if(grain)return grain;const c=document.createElement('canvas');c.width=c.height=GRAIN_SIZE;const x=c.getContext('2d')!;x.fillStyle='rgba(255,255,255,.9)';x.fillRect(0,0,GRAIN_SIZE,GRAIN_SIZE);for(const s of grainSpeckles(GRAIN_SEED)){x.fillStyle=`rgba(85,55,45,${s.alpha})`;x.fillRect(s.x,s.y,1,1)}grain=new THREE.CanvasTexture(c);grain.colorSpace=THREE.SRGBColorSpace;grain.wrapS=grain.wrapT=THREE.RepeatWrapping;return grain;}
-function gradientTexture(): THREE.CanvasTexture {if(gradient)return gradient;const c=document.createElement('canvas');c.width=1;c.height=3;const x=c.getContext('2d')!;x.fillStyle='#202020';x.fillRect(0,0,1,1);x.fillStyle='#9a9a9a';x.fillRect(0,1,1,1);x.fillStyle='#fff';x.fillRect(0,2,1,1);gradient=new THREE.CanvasTexture(c);gradient.minFilter=gradient.magFilter=THREE.NearestFilter;return gradient;}
