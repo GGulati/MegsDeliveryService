@@ -820,6 +820,31 @@ export class GameRenderer {
     // Two-zone forest: dense woods on the northern hills (the town's natural
     // boundary — a visual wall of green), sparse elsewhere. Deterministic seed.
     const rand = mulberry32(1337);
+    // Tree exclusion: keep crowns off roads, out of houses/buildings, and out
+    // of the formal mansion gardens (user feedback 2026-09-27: trees were
+    // colliding with roads, houses, terrain).
+    const lots = generateLots();
+    const roadSegs = ROAD_EDGES.map(e => {
+      const a = nodeById(e.a), b = nodeById(e.b);
+      return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
+    });
+    const treeClear = (x: number, z: number): boolean => {
+      for (const s of roadSegs) {
+        const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+        const len2 = dx * dx + dz * dz;
+        let t = len2 > 0 ? ((x - s.x0) * dx + (z - s.z0) * dz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        if (Math.hypot(x - (s.x0 + t * dx), z - (s.z0 + t * dz)) < 4.5) return false;
+      }
+      for (const l of lots) {
+        if (x > l.x - 2 && x < l.x + l.w + 2 && z > l.z - 2 && z < l.z + l.d + 2) return false;
+      }
+      for (const s of SOLIDS) {
+        if (x > s.min.x - 2 && x < s.max.x + 2 && z > s.min.z - 2 && z < s.max.z + 2) return false;
+      }
+      if (MANSION_GROUNDS.some(gr => x > gr[0] && x < gr[2] && z > gr[1] && z < gr[3])) return false;
+      return true;
+    };
     const placeTree = (x: number, z: number) => {
       const t = new THREE.Group();
       const h = 3 + rand() * 2.5;
@@ -843,6 +868,7 @@ export class GameRenderer {
       tries++;
       const x = (rand() - 0.5) * 400, z = 60 + rand() * 160; // z in [60, 220]
       if (!canGrow(x, z)) continue;
+      if (!treeClear(x, z)) continue;
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
       if (Math.hypot(x, z) < 145) continue; // outside the flat town core
       placeTree(x, z);
@@ -854,6 +880,7 @@ export class GameRenderer {
       tries++;
       const x = (rand() - 0.5) * 400, z = (rand() - 0.5) * 400;
       if (!canGrow(x, z)) continue;
+      if (!treeClear(x, z)) continue;
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
       if (x > PARK_RECT[0] && x < PARK_RECT[2] && z > PARK_RECT[1] && z < PARK_RECT[3]) continue; // keep the park clear
       if (Math.hypot(x, z) < 100 && rand() < 0.7) continue;
