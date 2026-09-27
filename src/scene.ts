@@ -896,12 +896,11 @@ export class GameRenderer {
   }
 
   private updateBirds(dt: number): void {
-    // Classic boids: separation + alignment + cohesion, plus a pull toward
-    // the harbor home zone, altitude hold, and gentle wander.
+    // Classic boids: separation + alignment + cohesion, plus altitude hold
+    // and wander. No leash — the flock roams freely.
     const N = this.birdFlock.length;
     if (!N || dt <= 0) return;
     const PERC = 14, MAX_SPEED = 9, MIN_SPEED = 4.5, MAX_FORCE = 26;
-    const HOME = new THREE.Vector3(15, 33, 75), HOME_R = 42;
     const steer = new THREE.Vector3(), diff = new THREE.Vector3();
     for (let i = 0; i < N; i++) {
       const a = this.birdFlock[i];
@@ -932,19 +931,12 @@ export class GameRenderer {
         coh.clampLength(0, MAX_FORCE);
         steer.addScaledVector(sep, 1.6).addScaledVector(ali, 1.0).addScaledVector(coh, 0.9);
       }
-      // Home pull: steer back when outside the harbor zone.
-      const homeD = a.group.position.distanceTo(HOME);
-      if (homeD > HOME_R) {
-        diff.copy(HOME).sub(a.group.position).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
-        diff.clampLength(0, MAX_FORCE);
-        steer.addScaledVector(diff, 1.4 * Math.min(2, (homeD - HOME_R) / 15));
-      }
       // Altitude hold toward y=33.
       const altErr = 33 - a.group.position.y;
       steer.y += THREE.MathUtils.clamp(altErr * 2.2, -MAX_FORCE * 0.6, MAX_FORCE * 0.6);
-      // Gentle wander.
-      steer.x += Math.sin(this.clock * 0.9 + a.phase) * 3;
-      steer.z += Math.cos(this.clock * 0.7 + a.phase * 1.3) * 3;
+      // Wander: layered sines so the flock roams instead of circling a point.
+      steer.x += Math.sin(this.clock * 0.9 + a.phase) * 4 + Math.sin(this.clock * 0.23 + a.phase * 2.1) * 3;
+      steer.z += Math.cos(this.clock * 0.7 + a.phase * 1.3) * 4 + Math.cos(this.clock * 0.31 + a.phase * 0.7) * 3;
       // Integrate.
       a.vel.addScaledVector(steer, dt);
       const speed = a.vel.length();
