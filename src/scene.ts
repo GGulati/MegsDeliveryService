@@ -4,6 +4,7 @@ import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOC
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
+import { ROAD_EDGES, nodeById, nodePos } from './roads';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -163,14 +164,27 @@ export class GameRenderer {
     const groundMat = toon(0xffffff);
     groundMat.map = colorTex;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
-    // Curving pale paths are tubes so they remain charming from the chase camera.
-    // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
-    // serves the merchant row and mansion hill, meeting in the north.
-    // Control points snap to the heightfield so roads ride the hills, not through them.
-    [[[-150,0,90],[-116,0,40],[-80,0,-10],[-70,0,-70],[-40,0,-110],[0,0,-120]], [[150,0,90],[110,0,50],[90,0,0],[106,0,-60],[60,0,-110],[0,0,-120]]].forEach(points => {
-      const curve = new THREE.CatmullRomCurve3(points.map(([x, , z]) => new THREE.Vector3(x, heightAt(x, z) + .18, z)));
-      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 2.8, 8, false), roadMat));
-    });
+    // Roads ride the hand-authored graph; bridge edges are drawn by the bridge module.
+    for (const e of ROAD_EDGES) {
+      if (e.kind === 'bridge') continue;
+      const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
+      const mid = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.15, (a.z + b.z) / 2);
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(a.x, a.y + 0.18, a.z), mid, new THREE.Vector3(b.x, b.y + 0.18, b.z),
+      ]);
+      const radius = e.kind === 'switchback' ? 2.2 : 2.8;
+      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 24, radius, 8, false), roadMat));
+      // Center dashes.
+      const dashPts: THREE.Vector3[] = [];
+      const len = curve.getLength();
+      for (let d = 0; d < len - 2; d += 4) {
+        dashPts.push(curve.getPointAt(d / len), curve.getPointAt(Math.min(1, (d + 2) / len)));
+      }
+      for (let i = 0; i < dashPts.length; i += 2) {
+        const dc = new THREE.CatmullRomCurve3([dashPts[i], dashPts[i + 1]]);
+        g.add(new THREE.Mesh(new THREE.TubeGeometry(dc, 4, 0.12, 6, false), toon(0xfff6d8)));
+      }
+    }
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
     // east pier serves Marina Works.
     const dockMat = toon(0x9a6147);
