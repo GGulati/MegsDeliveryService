@@ -77,8 +77,10 @@ export const SOLIDS: Solid[] = [
   // Observatory Rise townhouses (2-3 story).
   { min: { x: 85, y: 0, z: -30 }, max: { x: 98, y: 14, z: -15 }, district: 'observatory-rise' },
   // Phase B landmarks (collision only; visuals drawn by dedicated scene methods).
+  // APPEND NEW SOLIDS BEFORE THIS POINT — CLOCK_TOWER_SOLID_INDEX and
+  // OBSERVATORY_DOME_SOLID_INDEX are computed from SOLIDS.length.
   // Clock tower: tallest in the town core, shorter than the lighthouse.
-  { min: { x: 1, y: 0, z: -79 }, max: { x: 11, y: 25, z: -69 }, district: 'old-town' },
+  { min: { x: 1, y: 0, z: -79 }, max: { x: 11, y: 28, z: -69 }, district: 'old-town' },
   // Observatory dome: sits on the Hill Observatory roof, offset from the pad.
   { min: { x: 102.5, y: 28.5, z: -67.5 }, max: { x: 111.5, y: 37, z: -58.5 }, district: 'observatory-rise' },
   { min: { x: 83, y: 0, z: 113 }, max: { x: 93, y: 29, z: 123 } },

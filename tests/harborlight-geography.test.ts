@@ -121,8 +121,11 @@ test('district buildings do not significantly overlap each other', () => {
       const oz = Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z);
       // Attached buildings may touch by a metre; vertical stacking (dome on a
       // roof) is not an intersection. Flag only real 3D overlaps.
-      // The observatory dome sits on its building's pyramid roof by design.
-      const isDomeStack = (i === OBSERVATORY_DOME_SOLID_INDEX || j === OBSERVATORY_DOME_SOLID_INDEX);
+      // The observatory dome sits on its building's pyramid roof by design —
+      // only that specific pair is exempt, so a genuine dome/neighbor overlap
+      // still fails.
+      const isDomeStack = (i === 5 && j === OBSERVATORY_DOME_SOLID_INDEX) ||
+        (j === 5 && i === OBSERVATORY_DOME_SOLID_INDEX);
       const overlap3d = ox >= 2 && oy > 0 && oz >= 2 && !isDomeStack;
       assert.ok(!overlap3d, `buildings ${i} and ${j} overlap by ${ox.toFixed(1)}x${oy.toFixed(1)}x${oz.toFixed(1)}m`);
     }

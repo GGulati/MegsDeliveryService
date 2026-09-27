@@ -364,7 +364,7 @@ export class GameRenderer {
       const opening = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2), openingMat);
       opening.position.set(cx + ox * 1.01, 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
     }
-    // Pointed terracotta roof (pyramid). Visual only; collision tops at y=25.
+    // Pointed terracotta roof (pyramid). Collision tops at y=28 with the visual.
     const roofGeo = new THREE.ConeGeometry(6.2, 5, 4);
     const roof = new THREE.Mesh(roofGeo, terracotta);
     roof.position.set(cx, 25.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
@@ -389,7 +389,7 @@ export class GameRenderer {
     dome.position.set(cx, roofY + 3, cz); dome.castShadow = true; g.add(dome);
     // Slit opening (dark) facing the sky, plus a small finial.
     const slit = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3.5, 0.4), toon(0x1a1a25));
-    slit.position.set(cx, roofY + 4.2, cz + 4.1); slit.rotation.x = -0.25; g.add(slit);
+    slit.position.set(cx, roofY + 4.85, cz + 4.1); slit.rotation.x = -0.25; g.add(slit);
     const finial = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), toon(0x8a6a3a));
     finial.position.set(cx, roofY + 7.7, cz); g.add(finial);
   }
@@ -413,10 +413,10 @@ export class GameRenderer {
     // Little pitched cap on the dormer.
     const capGeo = new THREE.BufferGeometry();
     capGeo.setAttribute('position', new THREE.Float32BufferAttribute([
-      -2.45, 0, -1.7, 2.45, 0, -1.7, 0, 1.4, 0,
-      2.45, 0, -1.7, 2.45, 0, 1.7, 0, 1.4, 0,
-      2.45, 0, 1.7, -2.45, 0, 1.7, 0, 1.4, 0,
-      -2.45, 0, 1.7, -2.45, 0, -1.7, 0, 1.4, 0,
+      -2.45, 0, -1.7, 2.45, 0, -1.7, 0, 0.2, 0,
+      2.45, 0, -1.7, 2.45, 0, 1.7, 0, 0.2, 0,
+      2.45, 0, 1.7, -2.45, 0, 1.7, 0, 0.2, 0,
+      -2.45, 0, 1.7, -2.45, 0, -1.7, 0, 0.2, 0,
     ], 3));
     capGeo.setIndex([0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10]);
     capGeo.computeVertexNormals();
@@ -427,6 +427,9 @@ export class GameRenderer {
   private makeMansionTerraces(g: THREE.Group): void {
     // Mansion Hill: terraced garden platforms stepping down from each villa
     // toward the bay. Stone retaining walls, green garden tops. Decorative.
+    // NOTE: no collision solids — MIN_ALTITUDE keeps Meg >=3m above terrain,
+    // so she can only graze the tallest garden top (3.25m). If the flight
+    // floor is ever lowered, add SOLIDS for these.
     const stone = toon(0x9a9a92), garden = toon(0x6aa86a);
     const terrace = (x0: number, x1: number, yTop: number, z0: number, z1: number) => {
       const h = yTop; // base at y=0 (terrain)
