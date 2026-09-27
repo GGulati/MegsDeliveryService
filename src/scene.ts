@@ -179,6 +179,68 @@ export class GameRenderer {
     groundMat.map = colorTex;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
     // Roads ride the hand-authored graph; bridge edges are drawn by the bridge module.
+    // Roads are FLAT ribbons (not tubes) so they don't swallow nearby houses
+    // (user feedback 2026-09-27). The deck follows the smooth curve grade;
+    // earthwork skirts drop from the deck edges to the terrain on slopes.
+    roadMat.side = THREE.DoubleSide;
+    const earthMat = toon(0x8a6f4d);
+    earthMat.side = THREE.DoubleSide;
+    const makeFlatRoad = (curve: THREE.CatmullRomCurve3, width: number): THREE.Group => {
+      const grp = new THREE.Group();
+      const segs = 24, hw = width / 2;
+      const pos: number[] = [], nor: number[] = [], idx: number[] = [];
+      // Skirts: [leftTop, leftBottom, rightTop, rightBottom] per station.
+      // Collapsed (top==bottom) where the terrain meets the deck.
+      const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const p = curve.getPointAt(t);
+        const tan = curve.getTangentAt(t);
+        const px = -tan.z, pz = tan.x;
+        const plen = Math.hypot(px, pz) || 1;
+        const nx = px / plen, nz = pz / plen;
+        const roadY = p.y + 0.15;
+        const lx = p.x + nx * hw, lz = p.z + nz * hw;
+        const rx = p.x - nx * hw, rz = p.z - nz * hw;
+        pos.push(lx, roadY, lz, rx, roadY, rz);
+        nor.push(0, 1, 0, 0, 1, 0);
+        if (i < segs) {
+          const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+          idx.push(a, c, b, b, c, d);
+        }
+        // Skirt verts for this station (left side, then right side).
+        const sides: [number, number, number, number][] = [
+          [lx, lz, nx, nz], [rx, rz, -nx, -nz],
+        ];
+        for (const [ex, ez, ox, oz] of sides) {
+          const ty = heightAt(ex, ez);
+          const by = ty < roadY - 0.35 ? Math.max(ty - 0.1, roadY - 4) : roadY;
+          spos.push(ex, roadY, ez, ex, by, ez);
+          snor.push(ox, 0, oz, ox, 0, oz);
+        }
+        if (i < segs) {
+          const a = i * 4;
+          // Left strip: verts (a, a+1) -> (a+4, a+5). Right: (a+2, a+3) -> (a+6, a+7).
+          sidx.push(a, a + 4, a + 1, a + 1, a + 4, a + 5);
+          sidx.push(a + 2, a + 3, a + 6, a + 3, a + 7, a + 6);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      geo.setIndex(idx);
+      const deck = new THREE.Mesh(geo, roadMat);
+      deck.receiveShadow = true;
+      grp.add(deck);
+      const sgeo = new THREE.BufferGeometry();
+      sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
+      sgeo.setAttribute('normal', new THREE.Float32BufferAttribute(snor, 3));
+      sgeo.setIndex(sidx);
+      const skirt = new THREE.Mesh(sgeo, earthMat);
+      skirt.receiveShadow = true;
+      grp.add(skirt);
+      return grp;
+    };
     for (const e of ROAD_EDGES) {
       if (e.kind === 'bridge') continue;
       const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
@@ -186,17 +248,20 @@ export class GameRenderer {
       const curve = new THREE.CatmullRomCurve3([
         new THREE.Vector3(a.x, a.y + 0.18, a.z), mid, new THREE.Vector3(b.x, b.y + 0.18, b.z),
       ]);
-      const radius = e.kind === 'switchback' ? 2.2 : 2.8;
-      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 24, radius, 8, false), roadMat));
-      // Center dashes.
-      const dashPts: THREE.Vector3[] = [];
+      const width = e.kind === 'switchback' ? 4.4 : 5.6;
+      g.add(makeFlatRoad(curve, width));
+      // Center dashes (flat, on the road surface).
+      const dashMat = toon(0xfff6d8);
+      dashMat.side = THREE.DoubleSide;
       const len = curve.getLength();
       for (let d = 0; d < len - 2; d += 4) {
-        dashPts.push(curve.getPointAt(d / len), curve.getPointAt(Math.min(1, (d + 2) / len)));
-      }
-      for (let i = 0; i < dashPts.length; i += 2) {
-        const dc = new THREE.CatmullRomCurve3([dashPts[i], dashPts[i + 1]]);
-        g.add(new THREE.Mesh(new THREE.TubeGeometry(dc, 4, 0.12, 6, false), toon(0xfff6d8)));
+        const p0 = curve.getPointAt(d / len), p1 = curve.getPointAt(Math.min(1, (d + 2) / len));
+        const dp = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+        dash.position.set(dp.x, dp.y + 0.18, dp.z);
+        g.add(dash);
       }
     }
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
