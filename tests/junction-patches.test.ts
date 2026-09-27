@@ -53,7 +53,7 @@ const drapeOf = (id: string, dirs: ReturnType<typeof dirsOf>) =>
 
 // Stub length: mirror of road-deck.ts (covers the pairwise overlap zone).
 function stubLenOf(dirs: ReturnType<typeof dirsOf>): number {
-  let stubLen = 8;
+  let stubLen = 6;
   for (let i = 0; i < dirs.length; i++) {
     for (let j = i + 1; j < dirs.length; j++) {
       const a = dirs[i], b = dirs[j];
@@ -65,7 +65,7 @@ function stubLenOf(dirs: ReturnType<typeof dirsOf>): number {
   }
   let minLen = Infinity;
   for (const d of dirs) minLen = Math.min(minLen, d.len);
-  return Math.min(stubLen, minLen * 0.9, 40);
+  return Math.min(stubLen, minLen * 0.9, 14);
 }
 
 // Mirror of the build decision: >=2 incident dirs, not a near-collinear

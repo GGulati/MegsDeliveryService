@@ -62,6 +62,7 @@ interface Car {
   t: number;
   dir: 1 | -1;
   speed: number;
+  baseSpeed: number; // cruising speed (collision avoidance modulates `speed`)
   variant: CarVariant;
   group: THREE.Group;
   curve: THREE.CatmullRomCurve3;
@@ -86,6 +87,7 @@ interface Ped {
   offX: number; // smoothed 2D offset vector (no snap when the tangent turns)
   offZ: number;
   speed: number;
+  baseSpeed: number; // cruising speed (collision avoidance modulates `speed`)
   inPark: boolean;
   parkTarget: THREE.Vector3; // for park wanderers
   pos: THREE.Vector3;
@@ -315,7 +317,7 @@ export class Life {
       const speed = variant === 'sports' ? 12 : 8 + rnd() * 4;
       this.cars.push({
         edge, t: rnd(), dir: rnd() < 0.5 ? 1 : -1,
-        speed, variant, group, curve, edgeLen: curve.getLength(),
+        speed, baseSpeed: speed, variant, group, curve, edgeLen: curve.getLength(),
         offX: 0, offZ: 0,
         destNode: null, route: [], dwellT: 0, dwellNode: null,
       });
@@ -375,12 +377,13 @@ export class Life {
       bubble.position.set(x, y + 2.2, z); // 2.2m above head per design (M9)
       bubble.visible = false; // I3: hidden, not just transparent
       this.group.add(bubble);
+      const pedSpeed = 1.2 + rnd() * 0.6;
       this.peds.push({
         edge: edge!, t: spawnT, dir: rnd() < 0.5 ? 1 : -1,
         side: spawnSide,
         sideOff: spawnSide * 4,
         offX: spawnOffX, offZ: spawnOffZ,
-        speed: 1.2 + rnd() * 0.6, inPark,
+        speed: pedSpeed, baseSpeed: pedSpeed, inPark,
         parkTarget: new THREE.Vector3(x, 0, z),
         pos: new THREE.Vector3(x, y, z),
         group, armR, bubble,
@@ -471,6 +474,10 @@ export class Life {
     if (e.destNode !== null && nodeId === e.destNode) {
       e.dwellT = 2 + Math.random() * 3; // pause at the destination building
       e.dwellNode = nodeId;
+      // Clamp t to the node exactly — the car may have overshot slightly
+      // (t=-0.003) before arriveNode was called. Without this, the dwell
+      // position and the next edge's start can differ, causing a teleport.
+      e.t = THREE.MathUtils.clamp(e.t, 0, 1);
       return 'dwell';
     }
     const n = this.nextEdge(e.edge, nodeId);
@@ -493,16 +500,57 @@ export class Life {
     }
   }
 
+  /** Speed for a car considering the car ahead on the same edge/direction.
+   * Maintains a safe following gap; stops if too close. (User feedback
+   * 2026-09-27: traffic should not collide.) */
+  private carFollowSpeed(car: Car): number {
+    const SAFE_GAP = 7; // meters: desired following distance
+    const MIN_GAP = 3.5; // meters: hard stop below this
+    let speed = car.baseSpeed;
+    for (const other of this.cars) {
+      if (other === car || other.dwellT > 0) continue;
+      if (other.edge !== car.edge || other.dir !== car.dir) continue;
+      // Distance ahead along the direction of travel.
+      const dist = (other.t - car.t) * car.dir * car.edgeLen;
+      if (dist <= 0 || dist > SAFE_GAP) continue;
+      if (dist < MIN_GAP) return 0; // too close: stop
+      // Slow proportionally as the gap closes.
+      speed = Math.min(speed, other.speed * (dist / SAFE_GAP));
+    }
+    return speed;
+  }
+
+  /** Speed for a sidewalk ped considering the ped ahead on the same edge,
+   * direction, and side. Smaller gaps than cars. */
+  private pedFollowSpeed(ped: Ped): number {
+    const SAFE_GAP = 2.5; // meters
+    const MIN_GAP = 1.2; // meters
+    let speed = ped.baseSpeed;
+    for (const other of this.peds) {
+      if (other === ped || other.inPark || other.dwellT > 0) continue;
+      if (other.edge !== ped.edge || other.dir !== ped.dir || other.side !== ped.side) continue;
+      const dist = (other.t - ped.t) * ped.dir * ped.edgeLen;
+      if (dist <= 0 || dist > SAFE_GAP) continue;
+      if (dist < MIN_GAP) return 0;
+      speed = Math.min(speed, other.speed * (dist / SAFE_GAP));
+    }
+    return speed;
+  }
+
   private updateCar(car: Car, dt: number): void {
     // Parked at a destination: count down, then chain the next trip from here.
     if (car.dwellT > 0) {
       car.dwellT -= dt;
       if (car.dwellT <= 0) {
         this.beginNextLeg(car);
-        car.speed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+        car.baseSpeed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+        car.speed = car.baseSpeed;
       }
       return;
     }
+    // Collision avoidance: don't tailgate the car ahead on the same edge.
+    // (User feedback 2026-09-27: traffic should not collide.)
+    car.speed = this.carFollowSpeed(car);
     car.t += (car.dir * car.speed * dt) / car.edgeLen;
     if (car.t >= 1 || car.t <= 0) {
       // The node reached is determined by travel direction alone: dir=1 runs
@@ -512,7 +560,8 @@ export class Life {
       const nodeId = car.dir === 1 ? car.edge.b : car.edge.a;
       this.arriveNode(car, nodeId);
       // Switchbacks are slower (M5 fix: apply on transition, not just spawn).
-      car.speed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+      car.baseSpeed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+      car.speed = car.baseSpeed;
     }
     const t = THREE.MathUtils.clamp(car.t, 0, 1);
     // Node-pinned deck height — continuous across edge transitions, so cars
@@ -602,6 +651,9 @@ export class Life {
       if (ped.dwellT <= 0) this.beginNextLeg(ped);
       return;
     }
+    // Collision avoidance: don't walk through the ped ahead on the same
+    // sidewalk. (User feedback 2026-09-27: traffic should not collide.)
+    ped.speed = this.pedFollowSpeed(ped);
     ped.t += (ped.dir * ped.speed * dt) / ped.edgeLen;
     if (ped.t >= 1 || ped.t <= 0) {
       // Same fix as cars: the node reached is determined by travel direction

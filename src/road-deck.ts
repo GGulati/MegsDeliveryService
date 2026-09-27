@@ -186,8 +186,11 @@ export function junctionPatches(): JunctionPatch[] {
     }
     const p = nodePos(nodeById(id));
     // Stub length: cover the pairwise ribbon-overlap zone so the patch spans
-    // the full "mess" where ribbons intersect.
-    let stubLen = 8;
+    // the full "mess" where ribbons intersect. Capped small: the overlap zone
+    // for acute merges can be tens of meters long, but the visible clipping
+    // is confined to the intersection core — a huge plain-asphalt patch reads
+    // as a parking lot, not a clean junction (user feedback 2026-09-27).
+    let stubLen = 6;
     for (let i = 0; i < dirs.length; i++) {
       for (let j = i + 1; j < dirs.length; j++) {
         const a = dirs[i], b = dirs[j];
@@ -199,7 +202,7 @@ export function junctionPatches(): JunctionPatch[] {
     }
     let minLen = Infinity;
     for (const d of dirs) minLen = Math.min(minLen, d.len);
-    stubLen = Math.min(stubLen, minLen * 0.9, 40);
+    stubLen = Math.min(stubLen, minLen * 0.9, 14);
     // Grade-separated check: if the incident roads differ too much in height
     // across the patch area, this is not a flat intersection — skip it.
     // Samples each road along its stub; compares individual road heights
