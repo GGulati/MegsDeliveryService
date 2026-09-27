@@ -76,6 +76,11 @@ export const SOLIDS: Solid[] = [
   { min: { x: -105, y: 3, z: 68 }, max: { x: -90, y: 8, z: 82 }, district: 'bungalow-lanes' },
   // Observatory Rise townhouses (2-3 story).
   { min: { x: 85, y: 3, z: -30 }, max: { x: 98, y: 14, z: -15 }, district: 'observatory-rise' },
+  // Phase B landmarks (collision only; visuals drawn by dedicated scene methods).
+  // Clock tower: tallest in the town core, shorter than the lighthouse.
+  { min: { x: 3, y: 3, z: -79 }, max: { x: 13, y: 25, z: -69 }, district: 'old-town' },
+  // Observatory dome: sits on the Hill Observatory roof, offset from the pad.
+  { min: { x: 102.5, y: 31, z: -67.5 }, max: { x: 111.5, y: 38.5, z: -58.5 }, district: 'observatory-rise' },
   { min: { x: 83, y: 3, z: 113 }, max: { x: 93, y: 29, z: 123 } },
 ];
 
@@ -114,6 +119,11 @@ export const DISTRICT_PALETTES: Record<string, { bodies: number[]; roofs: number
 /** Index of the lighthouse tower solid: drawn as a cylinder by makeLighthouse,
  *  not as a generic box. Keep last so the tower-skip stays obvious. */
 export const LIGHTHOUSE_TOWER_SOLID_INDEX = SOLIDS.length - 1;
+
+/** Phase B landmark solids: drawn by dedicated scene methods, not as generic
+ *  boxes. Indices are relative to the end (lighthouse tower is last). */
+export const CLOCK_TOWER_SOLID_INDEX = SOLIDS.length - 3;
+export const OBSERVATORY_DOME_SOLID_INDEX = SOLIDS.length - 2;
 
 /** Invisible walls: collision only, never rendered. They close the bay mouth at
  *  the island edge so flight stays over the town — you can't fly out to sea. */

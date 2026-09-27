@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, DISTRICT_PALETTES } from './world';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, surfaceColor, canGrow } from './terrain';
 import { mulberry32 } from './grain';
@@ -191,6 +191,8 @@ export class GameRenderer {
       const dock = new THREE.Mesh(new THREE.BoxGeometry(24, .7, 8), dockMat); dock.position.set(x, .8, z); g.add(dock);
     });
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
+    this.makeClockTower(g); this.makeObservatoryDome(g);
+    this.makeBakeryDormer(g); this.makeMansionTerraces(g);
     return g;
   }
 
@@ -204,6 +206,9 @@ export class GameRenderer {
       // The lighthouse tower solid is drawn as a cylinder by makeLighthouse,
       // so the generic box pass skips its visuals (camera blocker already pushed).
       if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
+      // Phase B landmarks get dedicated visuals (clock tower, observatory dome),
+      // not generic boxes. Collision blocker already pushed above.
+      if (i === CLOCK_TOWER_SOLID_INDEX || i === OBSERVATORY_DOME_SOLID_INDEX) return;
       // District palette: each district paints its own bodies and roofs.
       const pal = (s.district && DISTRICT_PALETTES[s.district]) || DISTRICT_PALETTES['old-town'];
       const roofHeight = Math.min(4.2, sy * .28);
@@ -326,6 +331,118 @@ export class GameRenderer {
     this.lighthouseLit = lit;
     if (this.beamGroup) this.beamGroup.visible = lit;
     if (this.beamLight) this.beamLight.intensity = lit ? 60 : 0;
+  }
+
+  // Phase B landmarks: each district's skyline anchor. Collision comes from
+  // SOLIDS; these are the dedicated visuals (generic box pass skips them).
+
+  private makeClockTower(g: THREE.Group): void {
+    // Old Town clock tower: tallest in the town core, shorter than the lighthouse.
+    // Sandstone shaft, clock faces on all four sides, pointed terracotta roof.
+    const cx = 8, cz = -74; // center of the clock-tower SOLIDS
+    const sandstone = toon(0xd4a574), terracotta = toon(0xb65c3f), trim = toon(0xffdfaa);
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(8, 20, 8), sandstone);
+    shaft.position.set(cx, 13, cz); shaft.castShadow = true; g.add(shaft); // y: 3..23
+    // Belfry: slightly wider band with arched openings (dark insets).
+    const belfry = new THREE.Mesh(new THREE.BoxGeometry(8.6, 3, 8.6), sandstone);
+    belfry.position.set(cx, 24.5, cz); belfry.castShadow = true; g.add(belfry); // y: 23..26
+    const openingMat = toon(0x2a2a35);
+    const faceDefs: Array<[number, number, number]> = [
+      [0, -4.32, Math.PI], [0, 4.32, 0], [-4.32, 0, -Math.PI / 2], [4.32, 0, Math.PI / 2],
+    ];
+    for (const [ox, oz, rot] of faceDefs) {
+      // Clock face: light disc with hands, set into the shaft near the top.
+      const face = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.3, 24),
+        new THREE.MeshBasicMaterial({ color: 0xf8f0d8 }));
+      face.rotation.x = Math.PI / 2; face.rotation.z = rot;
+      face.position.set(cx + ox, 20, cz + oz); g.add(face);
+      // Hands: hour and minute, fixed at a charming time.
+      const handMat = new THREE.MeshBasicMaterial({ color: 0x2a2a35 });
+      const hour = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.1), handMat);
+      hour.position.set(cx + ox * 1.02, 20.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
+      const minute = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.6, 0.1), handMat);
+      minute.position.set(cx + ox * 1.02, 20.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
+      // Belfry opening (dark arch suggestion).
+      const opening = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2), openingMat);
+      opening.position.set(cx + ox * 1.01, 24.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
+    }
+    // Pointed terracotta roof (pyramid). Visual only; collision tops at y=25.
+    const roofGeo = new THREE.ConeGeometry(6.2, 5, 4);
+    const roof = new THREE.Mesh(roofGeo, terracotta);
+    roof.position.set(cx, 28.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+    const finial = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), trim);
+    finial.position.set(cx, 31.2, cz); g.add(finial);
+    // Corner trim for a finished look.
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const corner = new THREE.Mesh(new THREE.BoxGeometry(0.7, 20, 0.7), trim);
+      corner.position.set(cx + sx * 3.8, 13, cz + sz * 3.8); g.add(corner);
+    }
+  }
+
+  private makeObservatoryDome(g: THREE.Group): void {
+    // Observatory Rise: stone drum + copper-green dome on the Hill Observatory
+    // roof, offset from the delivery pad. The dome is the landmark.
+    const cx = 107, cz = -63, roofY = 31;
+    const stone = toon(0x8a8a92), copper = toon(0x5c8a7a);
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.8, 3, 18), stone);
+    drum.position.set(cx, roofY + 1.5, cz); drum.castShadow = true; g.add(drum);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(4.5, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), copper);
+    dome.position.set(cx, roofY + 3, cz); dome.castShadow = true; g.add(dome);
+    // Slit opening (dark) facing the sky, plus a small finial.
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(1.2, 3.5, 0.4), toon(0x1a1a25));
+    slit.position.set(cx, roofY + 4.2, cz + 4.1); slit.rotation.x = -0.25; g.add(slit);
+    const finial = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 6), toon(0x8a6a3a));
+    finial.position.set(cx, roofY + 7.7, cz); g.add(finial);
+  }
+
+  private makeBakeryDormer(g: THREE.Group): void {
+    // Merchant Row: the bakery (SOLIDS[0]) gets a distinctive attic dormer with
+    // a warm lit window — "home" reads from the air. Offset from the pad.
+    const cx = -70, cz = 32, roofY = 18;
+    const pastel = toon(0xf4e4a8), wood = toon(0x8b5a3a);
+    const dormer = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.6, 3), pastel);
+    dormer.position.set(cx, roofY + 1.3, cz); dormer.castShadow = true; g.add(dormer);
+    // Warm emissive window: Meg's attic light.
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 1.6),
+      new THREE.MeshBasicMaterial({ color: 0xffd88a }));
+    win.position.set(cx, roofY + 1.3, cz + 1.52); g.add(win);
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 0.15), wood);
+    frame.position.set(cx, roofY + 1.3, cz + 1.45); g.add(frame);
+    // Re-cut the window in front of the frame (frame is a border illusion).
+    win.position.z = cz + 1.54;
+    // Little pitched cap on the dormer.
+    const capGeo = new THREE.BufferGeometry();
+    capGeo.setAttribute('position', new THREE.Float32BufferAttribute([
+      -2.45, 0, -1.7, 2.45, 0, -1.7, 0, 1.4, 0,
+      2.45, 0, -1.7, 2.45, 0, 1.7, 0, 1.4, 0,
+      2.45, 0, 1.7, -2.45, 0, 1.7, 0, 1.4, 0,
+      -2.45, 0, 1.7, -2.45, 0, -1.7, 0, 1.4, 0,
+    ], 3));
+    capGeo.setIndex([0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10]);
+    capGeo.computeVertexNormals();
+    const cap = new THREE.Mesh(capGeo, wood);
+    cap.position.set(cx, roofY + 2.6, cz); cap.castShadow = true; g.add(cap);
+  }
+
+  private makeMansionTerraces(g: THREE.Group): void {
+    // Mansion Hill: terraced garden platforms stepping down from each villa
+    // toward the bay. Stone retaining walls, green garden tops. Decorative.
+    const stone = toon(0x9a9a92), garden = toon(0x6aa86a);
+    const terrace = (x0: number, x1: number, yTop: number, z0: number, z1: number) => {
+      const h = yTop; // base at y=0 (terrain)
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, h, z1 - z0), stone);
+      wall.position.set((x0 + x1) / 2, h / 2, (z0 + z1) / 2);
+      wall.castShadow = true; wall.receiveShadow = true; g.add(wall);
+      const top = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 - 0.6, 0.25, z1 - z0 - 0.6), garden);
+      top.position.set((x0 + x1) / 2, h + 0.12, (z0 + z1) / 2);
+      top.receiveShadow = true; g.add(top);
+    };
+    // Villa 1 (x:100..120, z:-15..5): terraces step west toward the bay.
+    terrace(90, 100, 1.5, -15, 5);
+    terrace(94, 100, 3, -11, 1);
+    // Villa 2 (x:125..140, z:5..25): terraces step west toward the bay.
+    terrace(115, 125, 1.5, 5, 25);
+    terrace(119, 125, 3, 9, 21);
   }
 
   private makeHero(): void {
