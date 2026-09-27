@@ -607,19 +607,28 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // roof-edge contact was a dead stop — which also made turning feel frozen
   // while pinned against a building. Now the into-surface component stops at
   // the contact point but the tangential remainder still applies, so a
-  // glancing hit slides along the surface. One sweep is enough: the slide
-  // runs parallel to the hit face (it can't enter that box), and the boxes
-  // are far enough apart that a single frame's remainder can't reach another.
-  const hit = sweep(player.position, delta);
-  if (hit && (hit.normal.x || hit.normal.y || hit.normal.z)) {
+  // glancing hit slides along the surface. The sweep iterates (up to 3 hits
+  // per frame): in a narrow corridor the slide remainder can reach the
+  // opposite wall in the same frame, and a single sweep would let it
+  // penetrate — the next iteration re-sweeps the remainder so Meg slides
+  // through or stops cleanly instead of rattling between the walls.
+  let remaining = { ...delta };
+  for (let sweepIter = 0; sweepIter < 3; sweepIter++) {
+    const hit = sweep(player.position, remaining);
+    if (!hit) {
+      player.position.x += remaining.x; player.position.y += remaining.y; player.position.z += remaining.z;
+      break;
+    }
+    if (!(hit.normal.x || hit.normal.y || hit.normal.z)) break; // degenerate: de-penetration handles it
     const safeT = Math.max(0, hit.t - 0.0001);
-    player.position.x += delta.x * safeT; player.position.y += delta.y * safeT; player.position.z += delta.z * safeT;
+    player.position.x += remaining.x * safeT; player.position.y += remaining.y * safeT; player.position.z += remaining.z * safeT;
     const rest = 1 - safeT;
-    if (!hit.normal.x) player.position.x += delta.x * rest;
-    if (!hit.normal.y) player.position.y += delta.y * rest;
-    if (!hit.normal.z) player.position.z += delta.z * rest;
-  } else if (!hit) {
-    player.position.x += delta.x; player.position.y += delta.y; player.position.z += delta.z;
+    remaining = {
+      x: hit.normal.x ? 0 : remaining.x * rest,
+      y: hit.normal.y ? 0 : remaining.y * rest,
+      z: hit.normal.z ? 0 : remaining.z * rest,
+    };
+    if (!remaining.x && !remaining.y && !remaining.z) break;
   }
   // else: degenerate contact with no surface normal (already inside a box) —
   // fall through to the de-penetration pass below, which pushes out along

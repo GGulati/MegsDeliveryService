@@ -115,3 +115,24 @@ test('de-penetration resolves a narrow-gap wedge', () => {
   const in16 = p.x > -56 && p.x < -39 && p.y > 2 && p.y < 12 && p.z > 19 && p.z < 36;
   assert.ok(!in0 && !in16, `stuck in gap at (${p.x},${p.y},${p.z})`);
 });
+
+test('iterated sweep slides through a narrow corridor without penetrating', () => {
+  const state = createState();
+  // Fly along the 3m merchant-row corridor (x ~ -57.5 between solid 0 and 16).
+  // The corridor is 3m wide, player 2m — she should slide through, never
+  // ending a frame inside either expanded box.
+  state.mode = 'flight';
+  state.player.position = { x: -57.5, y: 8, z: 10 };
+  state.player.yaw = Math.PI; // facing +z? yaw 0 = -z; use yaw PI for +z
+  state.player.yaw = 0;
+  state.player.speed = 8; state.player.throttle = 8;
+  state.player.hover = false; state.player.velocity = { x: 0, y: 0, z: 0 };
+  // Step several frames moving in -z through the corridor region z 27..36.
+  for (let i = 0; i < 30; i++) {
+    step(state, idle, 0.016);
+    const p = state.player.position;
+    const in0 = p.x > -83 && p.x < -57 && p.y > 2 && p.y < 19 && p.z > 27 && p.z < 53;
+    const in16 = p.x > -56 && p.x < -39 && p.y > 2 && p.y < 12 && p.z > 19 && p.z < 36;
+    assert.ok(!in0 && !in16, `penetrated on frame ${i} at (${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)})`);
+  }
+});
