@@ -109,7 +109,7 @@ export class GameRenderer {
     this.hero.rotation.z = 0;
     this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .62);
     this.hero.position.y += visual.bob;
-    this.animateSky(settings.reducedMotion);
+    this.animateSky(settings.reducedMotion, step);
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateGlowColumn(state, settings.reducedMotion);
     this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
@@ -183,7 +183,105 @@ export class GameRenderer {
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
     this.makeClockTower(g); this.makeObservatoryDome(g);
     this.makeBakeryDormer(g); this.makeMansionTerraces(g); this.makeBoats(g);
+    this.makeLaundryLines(g); this.makeDockDressing(g); this.makeStreetLamps(g);
     return g;
+  }
+
+  private makeLaundryLines(g: THREE.Group): void {
+    // Clotheslines strung between old-town buildings, with colorful cloth.
+    const lineMat = toon(0x4a3f35);
+    const clothMats = [toon(0xff8baa), toon(0x7fb8e8), toon(0xffffff), toon(0xffd94a), toon(0x9ad67f)];
+    const lines: [number, number, number, number, number, number][] = [
+      // [x1, y1, z1, x2, y2, z2] — between neighboring old-town facades
+      [-25, 9, -50, -20, 9, -32],  // bldg(-45..-25) to bldg(-40..-20)
+      [5, 11, -50, 15, 11, -45],   // bldg(-25..5) to bldg(15..35)
+      [-20, 8, -22, 15, 8, -28],   // bldg(-40..-20) to bldg(15..35)
+    ];
+    const rnd = mulberry32(42);
+    lines.forEach(([x1, y1, z1, x2, y2, z2]) => {
+      const a = new THREE.Vector3(x1, y1, z1), b = new THREE.Vector3(x2, y2, z2);
+      const len = a.distanceTo(b);
+      // Sagging line: thin cylinder segments.
+      const segs = 12;
+      let prev = a.clone();
+      for (let sIdx = 1; sIdx <= segs; sIdx++) {
+        const t = sIdx / segs;
+        const p = a.clone().lerp(b, t); p.y -= Math.sin(t * Math.PI) * 0.8;
+        const segLen = prev.distanceTo(p);
+        const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, segLen, 4), lineMat);
+        seg.position.copy(prev).lerp(p, 0.5);
+        seg.lookAt(p); seg.rotateX(Math.PI / 2);
+        g.add(seg);
+        prev = p;
+      }
+      // Cloth pieces hanging from the line.
+      const nCloth = Math.floor(len / 3);
+      for (let c = 0; c < nCloth; c++) {
+        const t = (c + 0.7) / (nCloth + 0.4);
+        const p = a.clone().lerp(b, t); p.y -= Math.sin(t * Math.PI) * 0.8;
+        const w = 0.9 + rnd() * 0.5, h = 1.1 + rnd() * 0.5;
+        const cloth = new THREE.Mesh(new THREE.PlaneGeometry(w, h), clothMats[Math.floor(rnd() * clothMats.length)]);
+        cloth.position.set(p.x, p.y - h / 2, p.z);
+        cloth.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) + Math.PI / 2;
+        (cloth.material as THREE.Material).side = THREE.DoubleSide;
+        g.add(cloth);
+      }
+    });
+  }
+
+  private makeDockDressing(g: THREE.Group): void {
+    // Crates, barrels, and coiled ropes on the harbor piers.
+    const crateMat = toon(0xa8763e), barrelMat = toon(0x7a5230), ropeMat = toon(0xc9b489);
+    const docks: [number, number][] = [[-15, 50], [-15, 70], [-15, 90], [50, 60], [50, 80], [50, 100]];
+    const rnd = mulberry32(7);
+    docks.forEach(([dx, dz]) => {
+      // Crates: stacked boxes near the dock edge.
+      const nCrates = 2 + Math.floor(rnd() * 3);
+      for (let c = 0; c < nCrates; c++) {
+        const s = 1.1 + rnd() * 0.5;
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
+        crate.position.set(dx - 10 + rnd() * 20, 1.15 + s / 2 + (c === 2 ? 1.4 : 0), dz - 3 + rnd() * 6);
+        crate.rotation.y = rnd() * 0.6;
+        crate.castShadow = true;
+        g.add(crate);
+      }
+      // Barrels: cylinders.
+      for (let b = 0; b < 2; b++) {
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 1.5, 10), barrelMat);
+        barrel.position.set(dx - 8 + rnd() * 16, 1.9, dz - 2.5 + rnd() * 5);
+        barrel.castShadow = true;
+        g.add(barrel);
+      }
+      // Coiled rope: flat torus.
+      const rope = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.18, 8, 16), ropeMat);
+      rope.position.set(dx - 6 + rnd() * 12, 1.25, dz - 2 + rnd() * 4);
+      rope.rotation.x = Math.PI / 2;
+      g.add(rope);
+    });
+  }
+
+  private makeStreetLamps(g: THREE.Group): void {
+    // Warm lamp posts along merchant row and the old-town square.
+    const poleMat = toon(0x3a3a42), lampMat = toon(0xffd98a);
+    const spots: [number, number][] = [
+      [-70, 30], [-62, 42], [-78, 48],          // merchant row west
+      [-92, 12], [-92, 20],                      // merchant row north
+      [-47, 24], [-47, 32],                      // merchant row east
+      [-10, -40], [10, -40], [-10, -55], [10, -55], // old-town square
+    ];
+    spots.forEach(([x, z]) => {
+      const y0 = 0; // town core is flat
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 4.2, 8), poleMat);
+      pole.position.set(x, y0 + 2.1, z);
+      pole.castShadow = true;
+      g.add(pole);
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.35, 8), poleMat);
+      cap.position.set(x, y0 + 4.55, z);
+      g.add(cap);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), lampMat);
+      lamp.position.set(x, y0 + 4.2, z);
+      g.add(lamp);
+    });
   }
 
   private makeBoats(g: THREE.Group): void {
@@ -356,6 +454,147 @@ export class GameRenderer {
         awn.position.set(center.x, s.min.y + doorH + 0.55, center.z + sz * .5 + awnD * .5 - 0.15);
         awn.rotation.x = -Math.PI / 2;
         g.add(awn);
+      }
+      // District dressing: bungalow lanes get picket fences + cottage gardens,
+      // mansion hill gets low stone walls + formal walled gardens.
+      if (s.district === 'bungalow-lanes') this.makePicketFence(g, s, i);
+      if (s.district === 'mansion-hill') this.makeWalledGarden(g, s, i);
+    });
+  }
+
+  private makePicketFence(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
+    const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
+    const sx = s.max.x - s.min.x, sz = s.max.z - s.min.z;
+    const groundY = s.min.y;
+    const picketMat = toon(0xf5f0e1), soilMat = toon(0x6b4a2f);
+    const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff), toon(0xe86a6a)];
+    // Fence runs: [x1, z1, x2, z2]. Front has a 2.4m gap at center for the path.
+    const off = 4, fx1 = cx - sx / 2 - off, fx2 = cx + sx / 2 + off, fz = cz + sz / 2 + off;
+    const runs: [number, number, number, number][] = [
+      [fx1, fz, cx - 1.2, fz], [cx + 1.2, fz, fx2, fz], // front (with path gap)
+      [fx1, cz - sz / 2, fx1, fz], [fx2, cz - sz / 2, fx2, fz], // sides
+    ];
+    // Collect picket transforms, then instance them.
+    const mats: THREE.Matrix4[] = [];
+    const dummy = new THREE.Object3D();
+    runs.forEach(([x1, z1, x2, z2]) => {
+      const len = Math.hypot(x2 - x1, z2 - z1);
+      const n = Math.max(2, Math.floor(len / 0.38));
+      const ang = Math.atan2(x2 - x1, z2 - z1);
+      for (let k = 0; k <= n; k++) {
+        const t = k / n;
+        dummy.position.set(x1 + (x2 - x1) * t, groundY + 0.55, z1 + (z2 - z1) * t);
+        dummy.rotation.set(0, ang, 0);
+        dummy.updateMatrix();
+        mats.push(dummy.matrix.clone());
+      }
+      // Two horizontal rails per run.
+      const railLen = len;
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, railLen), picketMat);
+      rail.position.set((x1 + x2) / 2, groundY + 0.75, (z1 + z2) / 2);
+      rail.rotation.y = ang;
+      g.add(rail);
+      const rail2 = rail.clone(); rail2.position.y = groundY + 0.35; g.add(rail2);
+    });
+    const picketGeo = new THREE.BoxGeometry(0.14, 1.1, 0.07);
+    // Pointed top: small cone merged visually by placing it atop each picket.
+    const inst = new THREE.InstancedMesh(picketGeo, picketMat, mats.length);
+    mats.forEach((m, idx) => inst.setMatrixAt(idx, m));
+    inst.instanceMatrix.needsUpdate = true;
+    g.add(inst);
+    const tipGeo = new THREE.ConeGeometry(0.1, 0.18, 4);
+    const tips = new THREE.InstancedMesh(tipGeo, picketMat, mats.length);
+    mats.forEach((m, idx) => {
+      const p = new THREE.Vector3().setFromMatrixPosition(m);
+      dummy.position.set(p.x, p.y + 0.64, p.z);
+      dummy.rotation.set(0, Math.PI / 4, 0);
+      dummy.updateMatrix();
+      tips.setMatrixAt(idx, dummy.matrix);
+    });
+    tips.instanceMatrix.needsUpdate = true;
+    g.add(tips);
+    // Cottage garden: two flower beds flanking the front path.
+    const rnd = mulberry32(seed * 77 + 5);
+    [-1, 1].forEach(side => {
+      const bx = cx + side * 3.2, bz = cz + sz / 2 + 2.2;
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.35, 1.8), soilMat);
+      bed.position.set(bx, groundY + 0.18, bz);
+      g.add(bed);
+      for (let f = 0; f < 7; f++) {
+        const fl = new THREE.Mesh(new THREE.SphereGeometry(0.22, 7, 6), flowerMats[Math.floor(rnd() * flowerMats.length)]);
+        fl.position.set(bx + (rnd() - 0.5) * 2.8, groundY + 0.55, bz + (rnd() - 0.5) * 1.2);
+        g.add(fl);
+        const lv = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 5), toon(0x4d976b));
+        lv.position.set(bx + (rnd() - 0.5) * 2.8, groundY + 0.42, bz + (rnd() - 0.5) * 1.2);
+        g.add(lv);
+      }
+    });
+  }
+
+  private makeWalledGarden(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
+    // Per-villa layouts: the west side is open to the existing terraced platforms
+    // (which step down toward the bay), and walls stop short of the neighboring villa.
+    // Villa 1: x 100..120, z -15..5. Villa 2: x 125..140, z 5..25.
+    const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
+    const groundY = s.min.y;
+    const wallMat = toon(0xb8b0a0), capMat = toon(0xd8d0c0), hedgeMat = toon(0x3d8a5f), soilMat = toon(0x6b4a2f);
+    const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff)];
+    const isVilla1 = cx < 120;
+    // Walls: [centerX, centerZ, lenX, lenZ]. Hedges: same format. Beds: [x, z].
+    let walls: [number, number, number, number][];
+    let hedges: [number, number, number, number][];
+    let beds: [number, number][];
+    if (isVilla1) {
+      walls = [
+        [109, -21, 30, 0.5],   // north
+        [108, 11, 28, 0.5],    // south (stops before villa 2's zone)
+        [124, -5, 0.5, 32],    // east
+      ];
+      hedges = [
+        [109, -19.5, 26, 0.8],
+        [108, 9.5, 24, 0.8],
+        [122.5, -5, 0.8, 28],
+      ];
+      beds = [[104, -17.5], [114, -17.5], [104, 7.5], [114, 7.5]];
+    } else {
+      walls = [
+        [136, -1, 20, 0.5],    // north (starts clear of villa 1)
+        [132.5, 31, 27, 0.5],  // south
+        [146, 15, 0.5, 32],    // east
+      ];
+      hedges = [
+        [136, 0.5, 16, 0.8],
+        [132.5, 29.5, 23, 0.8],
+        [144.5, 15, 0.8, 28],
+      ];
+      beds = [[131, 2.8], [139, 2.8], [131, 27.2], [139, 27.2]];
+    }
+    const wallH = 0.9;
+    walls.forEach(([x, z, lx, lz]) => {
+      const w = new THREE.Mesh(new THREE.BoxGeometry(lx, wallH, lz), wallMat);
+      w.position.set(x, groundY + wallH / 2, z);
+      w.castShadow = true;
+      g.add(w);
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(lx + 0.15, 0.12, lz + 0.15), capMat);
+      cap.position.set(x, groundY + wallH + 0.06, z);
+      g.add(cap);
+    });
+    const hedgeH = 1.0;
+    hedges.forEach(([x, z, lx, lz]) => {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(lx, hedgeH, lz), hedgeMat);
+      h.position.set(x, groundY + hedgeH / 2, z);
+      h.castShadow = true;
+      g.add(h);
+    });
+    const rnd = mulberry32(seed * 131 + 11);
+    beds.forEach(([bx, bz]) => {
+      const bed = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.4, 2.4), soilMat);
+      bed.position.set(bx, groundY + 0.2, bz);
+      g.add(bed);
+      for (let f = 0; f < 8; f++) {
+        const fl = new THREE.Mesh(new THREE.SphereGeometry(0.24, 7, 6), flowerMats[Math.floor(rnd() * flowerMats.length)]);
+        fl.position.set(bx + (rnd() - 0.5) * 2.6, groundY + 0.6, bz + (rnd() - 0.5) * 1.8);
+        g.add(fl);
       }
     });
   }
@@ -605,10 +844,128 @@ export class GameRenderer {
 
   private makeSkyLife(): void {
     const cloudMat=toon(0xfffbeb); for(let i=0;i<12;i++){const c=new THREE.Group();for(let j=0;j<4;j++){const p=new THREE.Mesh(new THREE.SphereGeometry(3+j%2*1.5,10,7),cloudMat);p.position.set(j*3,Math.sin(j)*.8,0);c.add(p);}c.position.set(-190+(i*47)%380,38+(i%4)*16,-155+(i*71)%320);this.clouds.add(c);}
-    const birdMat=toon(0x583d50);for(let i=0;i<9;i++){const b=new THREE.Group();[-1,1].forEach(s=>{const wing=new THREE.Mesh(new THREE.ConeGeometry(.65,2,3),birdMat);wing.rotation.z=s*.9;wing.position.x=s*.55;b.add(wing)});b.position.set(-80+i*16,34+i%3*4,-45-i*11);this.birds.add(b);}
+    this.makeBirds();
   }
 
-  private animateSky(reduced: boolean): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.birds.children.forEach((b,i)=>{b.position.x+=.035;b.rotation.z=Math.sin(this.clock*5+i)*.18;}); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
+  private birdFlock: { group: THREE.Group; left: THREE.Group; right: THREE.Group; vel: THREE.Vector3; phase: number }[] = [];
+
+  private makeBirds(): void {
+    // Gull model: white body, gray wings on shoulder pivots (for flapping),
+    // head + orange beak, fanned tail. Faces +z; oriented to velocity each frame.
+    const bodyMat = toon(0xf5f5f0), wingMat = toon(0xd9d9d9), beakMat = toon(0xe8933c);
+    const rnd = mulberry32(1234);
+    for (let i = 0; i < 12; i++) {
+      const b = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), bodyMat);
+      body.scale.set(0.7, 0.6, 1.6);
+      b.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), bodyMat);
+      head.position.set(0, 0.22, 0.75);
+      b.add(head);
+      const beak = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.35, 8), beakMat);
+      beak.position.set(0, 0.18, 1.05);
+      beak.rotation.x = Math.PI / 2;
+      b.add(beak);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.07, 0.6), wingMat);
+      tail.position.set(0, 0.05, -0.85);
+      b.add(tail);
+      // Wings: pivot groups at the shoulders; the mesh extends outward so
+      // rotating the pivot about z flaps the wing up/down.
+      const mkWing = (side: number) => {
+        const pivot = new THREE.Group();
+        pivot.position.set(side * 0.28, 0.12, 0.1);
+        const wing = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.07, 0.65), wingMat);
+        wing.position.x = side * 0.85;
+        // Taper the tip.
+        const tip = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.06, 0.45), wingMat);
+        tip.position.x = side * 1.85;
+        pivot.add(wing, tip);
+        b.add(pivot);
+        return pivot;
+      };
+      const left = mkWing(-1), right = mkWing(1);
+      // Start scattered over the harbor.
+      b.position.set(-30 + rnd() * 80, 28 + rnd() * 12, 45 + rnd() * 55);
+      this.birds.add(b);
+      this.birdFlock.push({
+        group: b, left, right,
+        vel: new THREE.Vector3((rnd() - 0.5) * 8, 0, (rnd() - 0.5) * 8),
+        phase: rnd() * Math.PI * 2,
+      });
+    }
+  }
+
+  private updateBirds(dt: number): void {
+    // Classic boids: separation + alignment + cohesion, plus a pull toward
+    // the harbor home zone, altitude hold, and gentle wander.
+    const N = this.birdFlock.length;
+    if (!N || dt <= 0) return;
+    const PERC = 14, MAX_SPEED = 9, MIN_SPEED = 4.5, MAX_FORCE = 26;
+    const HOME = new THREE.Vector3(15, 33, 75), HOME_R = 42;
+    const steer = new THREE.Vector3(), diff = new THREE.Vector3();
+    for (let i = 0; i < N; i++) {
+      const a = this.birdFlock[i];
+      const sep = new THREE.Vector3(), ali = new THREE.Vector3(), coh = new THREE.Vector3();
+      let neighbors = 0;
+      for (let j = 0; j < N; j++) {
+        if (i === j) continue;
+        const b = this.birdFlock[j];
+        const d = a.group.position.distanceTo(b.group.position);
+        if (d < PERC && d > 0.001) {
+          neighbors++;
+          diff.copy(a.group.position).sub(b.group.position).divideScalar(d * d);
+          sep.add(diff);
+          ali.add(b.vel);
+          coh.add(b.group.position);
+        }
+      }
+      steer.set(0, 0, 0);
+      if (neighbors > 0) {
+        // Separation.
+        sep.divideScalar(neighbors).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        sep.clampLength(0, MAX_FORCE);
+        // Alignment.
+        ali.divideScalar(neighbors).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        ali.clampLength(0, MAX_FORCE);
+        // Cohesion.
+        coh.divideScalar(neighbors).sub(a.group.position).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        coh.clampLength(0, MAX_FORCE);
+        steer.addScaledVector(sep, 1.6).addScaledVector(ali, 1.0).addScaledVector(coh, 0.9);
+      }
+      // Home pull: steer back when outside the harbor zone.
+      const homeD = a.group.position.distanceTo(HOME);
+      if (homeD > HOME_R) {
+        diff.copy(HOME).sub(a.group.position).normalize().multiplyScalar(MAX_SPEED).sub(a.vel);
+        diff.clampLength(0, MAX_FORCE);
+        steer.addScaledVector(diff, 1.4 * Math.min(2, (homeD - HOME_R) / 15));
+      }
+      // Altitude hold toward y=33.
+      const altErr = 33 - a.group.position.y;
+      steer.y += THREE.MathUtils.clamp(altErr * 2.2, -MAX_FORCE * 0.6, MAX_FORCE * 0.6);
+      // Gentle wander.
+      steer.x += Math.sin(this.clock * 0.9 + a.phase) * 3;
+      steer.z += Math.cos(this.clock * 0.7 + a.phase * 1.3) * 3;
+      // Integrate.
+      a.vel.addScaledVector(steer, dt);
+      const speed = a.vel.length();
+      if (speed > MAX_SPEED) a.vel.multiplyScalar(MAX_SPEED / speed);
+      else if (speed < MIN_SPEED && speed > 0.001) a.vel.multiplyScalar(MIN_SPEED / speed);
+      a.group.position.addScaledVector(a.vel, dt);
+      // Face travel direction.
+      const look = a.group.position.clone().add(a.vel);
+      a.group.lookAt(look);
+      // Flap/glide cycle: flap ~2.5s, glide ~1.8s.
+      const cyc = (this.clock * 0.35 + a.phase * 0.15) % 1;
+      let amp: number, base: number;
+      if (cyc < 0.58) { amp = 0.75; base = 0; }       // flapping
+      else { amp = 0.06; base = 0.18; }               // gliding, wings slightly raised
+      const flap = base + Math.sin(this.clock * 11 + a.phase) * amp;
+      a.left.rotation.z = flap;
+      a.right.rotation.z = -flap;
+    }
+  }
+
+  private animateSky(reduced: boolean, dt: number): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.updateBirds(dt); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
   private destination(state: GameState): Stop | undefined {
     if(state.mode==='tutorial') return STOPS.find(s=>s.id==='harbor-cafe') || STOPS[1];
     const id=state.run?.returning ? 'home' : state.run?.job?.to;
