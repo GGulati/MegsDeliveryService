@@ -22,8 +22,9 @@ before(() => {
 
 import { Life, CAR_COUNT, PED_COUNT } from '../src/life.js';
 import { SOLIDS, MANSION_GROUNDS, isInBay } from '../src/world.js';
-import { ROAD_EDGES } from '../src/roads.js';
-import { deckHeightAt, roadWidth } from '../src/road-deck.js';
+import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from '../src/roads.js';
+import { deckHeightAt, roadWidth, nodeDeckHeights, roadCurve } from '../src/road-deck.js';
+import { heightAt } from '../src/terrain.js';
 
 describe('ambient life', () => {
   it('spawns exactly 16 cars and 44 pedestrians', () => {
@@ -146,15 +147,51 @@ describe('ambient life', () => {
       life.update(1 / 60, playerPos, 0, 0, i / 60);
     }
     const cars = (life as unknown as { cars: {
-      group: THREE.Group; t: number; edge: { kind: string; a: string; b: string };
+      group: THREE.Group; t: number; edge: RoadEdge;
     }[] }).cars;
+    const nodes = nodeDeckHeights();
     for (const car of cars) {
       const pos = car.group.position;
       const t = THREE.MathUtils.clamp(car.t, 0, 1);
-      // Same continuous deck formula the mesh uses (node-pinned).
-      const expectedY = deckHeightAt(car.edge as never, t);
+      // Independently recompute the deck height (same math as road-deck.ts,
+      // but through separate code): raw max-across-width + node pin.
+      const curve = roadCurve(car.edge);
+      const p = curve.getPointAt(t);
+      const tan = curve.getTangentAt(t);
+      const l = Math.hypot(tan.x, tan.z) || 1;
+      const nx = -tan.z / l, nz = tan.x / l;
+      const hw = roadWidth(car.edge) / 2;
+      const raw = Math.max(
+        p.y,
+        heightAt(p.x, p.z),
+        heightAt(p.x + nx * hw, p.z + nz * hw),
+        heightAt(p.x - nx * hw, p.z - nz * hw),
+      ) + 0.15;
+      const yA = nodes.get(car.edge.a) ?? -Infinity;
+      const yB = nodes.get(car.edge.b) ?? -Infinity;
+      const expectedY = Math.max(raw, yA + (yB - yA) * t);
       assert.ok(Math.abs(pos.y - expectedY) < 0.05,
         `car y=${pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
+    }
+    life.dispose();
+  });
+
+  it('sidewalk peds stand on the deck, not under it', () => {
+    const scene = new THREE.Group();
+    const life = new Life(scene);
+    const playerPos = new THREE.Vector3(0, 50, 0);
+    for (let i = 0; i < 300; i++) {
+      life.update(1 / 60, playerPos, 0, 0, i / 60);
+    }
+    const peds = (life as unknown as { peds: {
+      pos: THREE.Vector3; t: number; edge: RoadEdge; inPark: boolean;
+    }[] }).peds;
+    for (const ped of peds) {
+      if (ped.inPark) continue;
+      const t = THREE.MathUtils.clamp(ped.t, 0, 1);
+      const expectedY = deckHeightAt(ped.edge, t);
+      assert.ok(Math.abs(ped.pos.y - expectedY) < 0.1,
+        `ped y=${ped.pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }
     life.dispose();
   });

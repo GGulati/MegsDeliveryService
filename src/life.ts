@@ -65,6 +65,8 @@ interface Car {
   group: THREE.Group;
   curve: THREE.CatmullRomCurve3;
   edgeLen: number;
+  offX: number; // smoothed lateral offset (right-hand lane, no snap on turns)
+  offZ: number;
 }
 
 interface Ped {
@@ -74,6 +76,8 @@ interface Ped {
   dir: 1 | -1;
   side: 1 | -1; // which side of the road
   sideOff: number; // smoothed lateral offset (glides across at intersections)
+  offX: number; // smoothed 2D offset vector (no snap when the tangent turns)
+  offZ: number;
   speed: number;
   inPark: boolean;
   parkTarget: THREE.Vector3; // for park wanderers
@@ -300,6 +304,7 @@ export class Life {
       this.cars.push({
         edge, t: rnd(), dir: rnd() < 0.5 ? 1 : -1,
         speed, variant, group, curve, edgeLen: curve.getLength(),
+        offX: 0, offZ: 0,
       });
     }
   }
@@ -336,13 +341,16 @@ export class Life {
       ]);
       let spawnT = 0;
       let spawnSide: 1 | -1 = 1;
+      let spawnOffX = 0, spawnOffZ = 0;
       if (!inPark && edge) {
         spawnT = rnd();
         curve.getPointAt(spawnT, this.tmpP);
         curve.getTangentAt(spawnT, this.tmpT);
         spawnSide = rnd() < 0.5 ? 1 : -1;
-        x = this.tmpP.x + (-this.tmpT.z) * 4 * spawnSide;
-        z = this.tmpP.z + (this.tmpT.x) * 4 * spawnSide;
+        spawnOffX = (-this.tmpT.z) * 4 * spawnSide;
+        spawnOffZ = (this.tmpT.x) * 4 * spawnSide;
+        x = this.tmpP.x + spawnOffX;
+        z = this.tmpP.z + spawnOffZ;
       }
       const y = heightAt(x, z);
       group.position.set(x, y, z);
@@ -358,6 +366,7 @@ export class Life {
         edge: edge!, t: spawnT, dir: rnd() < 0.5 ? 1 : -1,
         side: spawnSide,
         sideOff: spawnSide * 4,
+        offX: spawnOffX, offZ: spawnOffZ,
         speed: 1.2 + rnd() * 0.6, inPark,
         parkTarget: new THREE.Vector3(x, 0, z),
         pos: new THREE.Vector3(x, y, z),
@@ -421,9 +430,12 @@ export class Life {
     car.curve.getPointAt(t, this.tmpP);
     car.curve.getTangentAt(t, this.tmpT);
     if (car.dir === -1) this.tmpT.negate();
-    // Right-hand offset: Right = (-tz, 0, tx).
-    const px = this.tmpP.x + (-this.tmpT.z) * 1.4;
-    const pz = this.tmpP.z + (this.tmpT.x) * 1.4;
+    // Right-hand lane offset, smoothed so turns don't pop laterally.
+    const k = Math.min(1, dt * 6);
+    car.offX += ((-this.tmpT.z) * 1.4 - car.offX) * k;
+    car.offZ += ((this.tmpT.x) * 1.4 - car.offZ) * k;
+    const px = this.tmpP.x + car.offX;
+    const pz = this.tmpP.z + car.offZ;
     car.group.position.set(px, deckY, pz);
     car.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
   }
@@ -497,8 +509,8 @@ export class Life {
       ped.edge = edge; ped.dir = dir; ped.t = t;
       ped.curve = this.makeCurve(edge);
       ped.edgeLen = ped.curve.getLength();
-      // Randomize side at intersections for variety.
-      if (Math.random() < 0.3) ped.side *= -1;
+      // Occasionally switch sides at intersections (reads as using a crosswalk).
+      if (Math.random() < 0.15) ped.side *= -1;
     }
     const t = THREE.MathUtils.clamp(ped.t, 0, 1);
     ped.curve.getPointAt(t, this.tmpP);
@@ -509,9 +521,16 @@ export class Life {
     const targetOff = ped.side * 4;
     const dOff = targetOff - ped.sideOff;
     ped.sideOff += THREE.MathUtils.clamp(dOff, -3 * dt, 3 * dt);
-    const px = this.tmpP.x + (-this.tmpT.z) * ped.sideOff;
-    const pz = this.tmpP.z + (this.tmpT.x) * ped.sideOff;
-    ped.pos.set(px, heightAt(px, pz), pz);
+    // Ease the 2D offset vector too: when the road turns at a node, the
+    // tangent normal snaps, so glide the vector instead of popping laterally.
+    const k = Math.min(1, dt * 6);
+    ped.offX += ((-this.tmpT.z) * ped.sideOff - ped.offX) * k;
+    ped.offZ += ((this.tmpT.x) * ped.sideOff - ped.offZ) * k;
+    const px = this.tmpP.x + ped.offX;
+    const pz = this.tmpP.z + ped.offZ;
+    // Peds stand ON the widened deck (sidewalk band), not on the terrain
+    // under it — the deck can ride meters above the terrain on fills.
+    ped.pos.set(px, deckHeightAt(ped.edge, t), pz);
     ped.group.position.copy(ped.pos);
     ped.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
     // Bob.

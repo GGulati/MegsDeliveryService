@@ -155,7 +155,6 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    const roadMat = toon(0xffedc4);
     // One water plane for the whole world. The shader discovers depth from the
     // baked heightfield, so foam and color follow the true coastline — no polygons.
     const water = buildWater();
@@ -194,7 +193,6 @@ export class GameRenderer {
     // earthwork skirts drop from the deck edges to the terrain on slopes.
     // Deck heights are node-pinned (road-deck.ts) so adjacent edges meet
     // exactly — no vertical steps at nodes (user feedback 2026-09-27).
-    roadMat.side = THREE.DoubleSide;
     const deckMat = toon(0xffffff);
     deckMat.vertexColors = true;
     deckMat.side = THREE.DoubleSide;
