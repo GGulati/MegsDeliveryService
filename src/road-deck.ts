@@ -60,7 +60,7 @@ function rawDeckY(e: RoadEdge, t: number): number {
 // smallest MAX_DECK_GRADE-Lipschitz function above the raw samples: the deck
 // still clears the terrain everywhere, but can never cliff.
 const SMOOTH_STATIONS = 64;
-const MAX_DECK_GRADE = 0.4; // 40%: kills cliffs, keeps real hillside grades
+const MAX_DECK_GRADE = Math.tan(18 * Math.PI / 180); // 18°: Gurwinder 2026-09-27 max road incline
 const smoothDeckCache = new Map<RoadEdge, Float32Array>();
 
 function smoothRawDeckY(e: RoadEdge, t: number): number {
@@ -209,6 +209,8 @@ export function intersections(): Intersection[] {
   }
   const wanted = new Map<string, { dirs: EdgeDir[]; stubLen: number }>();
   for (const id of nodeIds) {
+    // Switchback hairpins are not junctions (no crosswalks/stop lines).
+    if (nodeById(id).noIntersect) continue;
     const dirs = incidentDirs(id);
     if (dirs.length < 2) continue;
     // Near-collinear pairs are not real junctions (straight-through or
@@ -356,8 +358,9 @@ export function intersections(): Intersection[] {
   }
   // De-coplanar pass: where two zones overlap in plan, their flat meshes
   // must never be coplanar (z-fighting over the overlap area). The higher
-  // surface occludes the lower, so bump near-equal heights apart. Entities
-  // use the max height (intersectionHeight), matching the rendered top.
+  // surface occludes the lower, so bump near-equal heights 5cm apart (3cm
+  // still shimmered at glancing angles, 2026-09-27). Entities use the max
+  // height (intersectionHeight), matching the rendered top.
   const zonesOverlap = (a: Intersection, b: Intersection): boolean => {
     for (const v of b.ring) if (intersectionContains(a, v.x, v.z)) return true;
     for (const v of a.ring) if (intersectionContains(b, v.x, v.z)) return true;
@@ -369,12 +372,12 @@ export function intersections(): Intersection[] {
       for (let j = i + 1; j < intersectionCache.length; j++) {
         const a = intersectionCache[i], b = intersectionCache[j];
         if (!zonesOverlap(a, b)) continue;
-        if (Math.abs(a.height - b.height) < 0.03) {
+        if (Math.abs(a.height - b.height) < 0.05) {
           // Deterministic: raise the higher, or the larger nodeId on ties.
           const target = a.height === b.height
             ? (a.nodeId > b.nodeId ? a : b)
             : (a.height > b.height ? a : b);
-          target.height = Math.max(a.height, b.height) + 0.03;
+          target.height = Math.max(a.height, b.height) + 0.05;
           // Keep ring/tris in sync: the mesh is single-height by construction.
           for (const v of target.ring) v.h = target.height;
           for (const tri of target.tris) for (const v of tri) v.h = target.height;
@@ -405,6 +408,28 @@ let edgeClipCache: Map<RoadEdge, { a: EdgeClipInfo | null; b: EdgeClipInfo | nul
 export function edgeClips(e: RoadEdge): { a: EdgeClipInfo | null; b: EdgeClipInfo | null } {
   if (!edgeClipCache) intersections();
   return edgeClipCache!.get(e) ?? { a: null, b: null };
+}
+
+// Curve parameter for a plan-distance from a node. The intersection clip is
+// a PLAN distance (zone reach along the leg), but curve.getPointAt uses ARC
+// length — on curved roads the point at arc-distance `dist` sits at
+// plan-distance < dist, i.e. INSIDE the mesh zone, overlapping the flat mesh
+// at the same height (up to 0.35m of coplanar overlap found 2026-09-27:
+// se4->m4). That coplanar overlap z-fights and flickers. Binary-search the
+// parameter whose plan-distance from the node equals `dist`; callers subtract
+// a small margin so the ribbon ends strictly inside its own zone.
+export function clipT(e: RoadEdge, end: 'a' | 'b', dist: number): number {
+  const curve = roadCurve(e);
+  const n = nodePos(nodeById(end === 'a' ? e.a : e.b));
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    const p = curve.getPointAt(end === 'a' ? mid : 1 - mid);
+    const d = Math.hypot(p.x - n.x, p.z - n.z);
+    if (d < dist) lo = mid; else hi = mid;
+  }
+  const s = (lo + hi) / 2;
+  return end === 'a' ? s : 1 - s;
 }
 
 // Ribbon ride height: the deck profile, ramped to the intersection mesh

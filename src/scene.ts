@@ -5,7 +5,7 @@ import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
-import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections } from './road-deck';
+import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, clipT, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
@@ -375,18 +375,24 @@ export class GameRenderer {
         const sm = new THREE.Mesh(sgeo, earthMat);
         sm.receiveShadow = true;
         g.add(sm);
-        // Painted markings as flat decals 1-2cm above the asphalt base (never
+        // Painted markings as flat decals above the asphalt base (never
         // coplanar): stop lines + crosswalks in white, sidewalk corner
         // fillets in sidewalk color. Layout is pure geometry from road-deck.
+        // 3cm lift + polygon offset: 1.5cm shimmered at distance (depth
+        // precision); the offset pulls decals toward the camera in depth
+        // without a visible float.
         const { white, walk } = intersectionMarkings(ix);
         for (const q of white)
-          quad(whitePos, whiteNor, whiteIdx, H + 0.015, q[0], q[1], q[2], q[3]);
+          quad(whitePos, whiteNor, whiteIdx, H + 0.03, q[0], q[1], q[2], q[3]);
         for (const q of walk)
-          quad(walkPos, walkNor, walkIdx, H + 0.02, q[0], q[1], q[2], q[3]);
+          quad(walkPos, walkNor, walkIdx, H + 0.035, q[0], q[1], q[2], q[3]);
       }
       // Emit the merged marking meshes.
       const markMat = toon(0xf5f1e6);
       markMat.side = THREE.DoubleSide;
+      markMat.polygonOffset = true;
+      markMat.polygonOffsetFactor = -2;
+      markMat.polygonOffsetUnits = -2;
       if (whiteIdx.length) {
         const wgeo = new THREE.BufferGeometry();
         wgeo.setAttribute('position', new THREE.Float32BufferAttribute(whitePos, 3));
@@ -398,6 +404,9 @@ export class GameRenderer {
       }
       const walkMat = toon(0xb8b0a0);
       walkMat.side = THREE.DoubleSide;
+      walkMat.polygonOffset = true;
+      walkMat.polygonOffsetFactor = -2;
+      walkMat.polygonOffsetUnits = -2;
       if (walkIdx.length) {
         const fgeo = new THREE.BufferGeometry();
         fgeo.setAttribute('position', new THREE.Float32BufferAttribute(walkPos, 3));
@@ -412,12 +421,14 @@ export class GameRenderer {
       if (e.kind === 'bridge') continue;
       const curve = roadCurve(e);
       const width = roadWidth(e);
-      // Clip the ribbon at intersection nodes: it ends at the clip distance
-      // from the node, where the intersection mesh takes over.
-      const len = curve.getLength();
+      // Clip the ribbon at intersection nodes: it ends at the plan-distance
+      // clip where the intersection mesh takes over. clipT converts the plan
+      // distance to a curve parameter; the 5cm margin keeps the ribbon end
+      // strictly inside its own zone so it never overlaps the flat mesh
+      // (coplanar overlap = z-fighting flicker, fixed 2026-09-27).
       const clips = edgeClips(e);
-      const t0 = clips.a ? clips.a.dist / len : 0;
-      const t1 = clips.b ? 1 - clips.b.dist / len : 1;
+      const t0 = clips.a ? clipT(e, 'a', Math.max(0, clips.a.dist - 0.05)) : 0;
+      const t1 = clips.b ? clipT(e, 'b', Math.max(0, clips.b.dist - 0.05)) : 1;
       g.add(makeFlatRoad(e, curve, width, t0, t1));
     }
     for (const e of ROAD_EDGES) {

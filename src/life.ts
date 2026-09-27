@@ -279,6 +279,17 @@ export class Life {
   private tmpT = new THREE.Vector3();
   private tmpV = new THREE.Vector3();
 
+  // Orient a group to the 3D road tangent: yaw from the horizontal projection,
+  // pitch from the vertical component. Cars/peds tilt on slopes instead of
+  // staying parallel to the XZ plane (2026-09-27). The tangent from
+  // getTangentAt is normalized, so t.y = sin(pitch); forward is +Z, and a
+  // negative X-rotation tilts +Z upward.
+  private orientToTangent(group: THREE.Group, t: THREE.Vector3): void {
+    group.rotation.order = 'YXZ';
+    group.rotation.y = Math.atan2(t.x, t.z);
+    group.rotation.x = -Math.asin(THREE.MathUtils.clamp(t.y, -1, 1));
+  }
+
   constructor(private scene: THREE.Group) {
     scene.add(this.group);
     this.spawnCars();
@@ -588,7 +599,7 @@ export class Life {
     // on the rendered asphalt (roadGroundHeight returns the mesh top).
     const deckY = roadGroundHeight(car.edge, t, px, pz);
     car.group.position.set(px, deckY, pz);
-    car.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
+    this.orientToTangent(car.group, this.tmpT);
   }
 
   private updatePed(ped: Ped, dt: number, playerPos: THREE.Vector3, playerSpeed: number, playerVelY: number, time: number): void {
@@ -695,7 +706,7 @@ export class Life {
     // Inside intersections they stand on the intersection mesh surface.
     ped.pos.set(px, roadGroundHeight(ped.edge, t, px, pz), pz);
     ped.group.position.copy(ped.pos);
-    ped.group.rotation.y = Math.atan2(this.tmpT.x, this.tmpT.z);
+    this.orientToTangent(ped.group, this.tmpT);
     // Bob.
     ped.group.position.y += Math.abs(Math.sin(performance.now() * 0.008 + px)) * 0.05;
 

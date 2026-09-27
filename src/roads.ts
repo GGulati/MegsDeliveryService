@@ -1,10 +1,10 @@
 // src/roads.ts — hand-authored street graph. y resolves from heightAt unless authored.
 import { heightAt } from './terrain';
 
-export interface RoadNode { id: string; x: number; z: number; y?: number }
+export interface RoadNode { id: string; x: number; z: number; y?: number; noIntersect?: boolean }
 export interface RoadEdge { a: string; b: string; kind: 'street' | 'switchback' | 'bridge'; deckY?: number }
 
-const N = (id: string, x: number, z: number, y?: number): RoadNode => ({ id, x, z, y });
+const N = (id: string, x: number, z: number, y?: number, noIntersect?: boolean): RoadNode => ({ id, x, z, y, noIntersect });
 
 export const ROAD_NODES: RoadNode[] = [
   N('ww1', -75, 10), N('ww2', -75, 70), N('ww3', -75, 130),
@@ -17,6 +17,10 @@ export const ROAD_NODES: RoadNode[] = [
   N('m1', -60, -72), N('m2', -20, -72), N('m3', 20, -72), N('m4', 60, -72),
   N('m5', -60, -105), N('m6', -20, -105), N('m7', 20, -105), N('m8', 60, -105),
   N('uc1', 20, -120), N('uc2', -5, -135), N('uc3', 15, -150),
+  // Switchback for the uc2->uc3 cliff (29.5° direct). Z-shaped: east along the
+  // lowland, diagonal across the cliff, then to uc3. noIntersect: hairpins,
+  // not junctions.
+  N('uc2sb1', 25, -137, undefined, true), N('uc2sb2', -5, -147, undefined, true),
   N('u1', -90, -160), N('u2', -30, -160), N('u3', 30, -160), N('u4', 90, -160),
   N('u5', 90, -195), N('u6', 30, -195), N('u7', -30, -195), N('u8', -90, -195),
   N('ob1', 95, -100), N('ob2', 110, -70),
@@ -46,12 +50,14 @@ export const ROAD_EDGES: RoadEdge[] = [
   E('wx3', 'bl-w'), E('bl-w', 'bl-e', 'bridge', 6), E('bl-e', 'we3'),
   E('ww1', 'sw1', 'switchback'), E('sw1', 'sw2', 'switchback'), E('sw2', 'sw3', 'switchback'),
   E('sw3', 'sw4', 'switchback'), E('sw4', 'm1', 'switchback'),
-  E('we1', 'se1', 'switchback'), E('se1', 'se2', 'switchback'), E('se2', 'se3', 'switchback'),
+  E('we1', 'se1', 'switchback'), E('se2', 'se3', 'switchback'),
   E('se3', 'se4', 'switchback'), E('se4', 'm4', 'switchback'),
   E('m1', 'm2'), E('m2', 'm3'), E('m3', 'm4'),
   E('m5', 'm6'), E('m6', 'm7'), E('m7', 'm8'),
   E('m1', 'm5'), E('m2', 'm6'), E('m3', 'm7'), E('m4', 'm8'),
-  E('m3', 'uc1', 'switchback'), E('uc1', 'uc2', 'switchback'), E('uc2', 'uc3', 'switchback'), E('uc3', 'u3', 'switchback'),
+  E('m3', 'uc1', 'switchback'), E('uc1', 'uc2', 'switchback'),
+  E('uc2', 'uc2sb1', 'switchback'), E('uc2sb1', 'uc2sb2', 'switchback'), E('uc2sb2', 'uc3', 'switchback'),
+  E('uc3', 'u3', 'switchback'),
   E('se4', 'ob1'), E('ob1', 'ob2'),
   // Interior grids (see node block above).
   E('mn1', 'mn2'), E('mn2', 'mn3'), E('mn3', 'mn4'), E('mn4', 'mn5'),
