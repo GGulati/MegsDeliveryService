@@ -1,9 +1,14 @@
 import * as THREE from 'three';
-import type { GameState, RenderSettings, Stop, Vec3 } from './types';
-import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
+import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
+import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, MANSION_GROUNDS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
+import { ROAD_EDGES, nodeById, nodePos } from './roads';
+import { buildBridge } from './bridge';
+import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
+import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
+import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
@@ -11,6 +16,16 @@ import { FlightEffects, flightVisuals } from './flight-visuals';
 import { grainSpeckles, GRAIN_SEED, GRAIN_SIZE } from './grain';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
+/** Pastel Painted-Ladies body colors for bungalow-lanes infill (lot.palette 1-4). */
+const PASTEL_BODIES = [0xf2b8c6, 0xa8d0e8, 0xf2d8a8, 0xc8b8e0];
+
+/** Invisible camera-blocker box matching a building solid's AABB. Heroes and
+ *  infill lots share this so the pull-in raycast and collision always agree. */
+export function solidBlocker(s: Solid): THREE.Mesh {
+  const blocker = new THREE.Mesh(new THREE.BoxGeometry(s.max.x - s.min.x, s.max.y - s.min.y, s.max.z - s.min.z));
+  blocker.position.set((s.min.x + s.max.x) / 2, (s.min.y + s.max.y) / 2, (s.min.z + s.max.z) / 2);
+  return blocker;
+}
 export class GameRenderer {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(62, 1, .1, 900);
@@ -163,28 +178,165 @@ export class GameRenderer {
     const groundMat = toon(0xffffff);
     groundMat.map = colorTex;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
-    // Curving pale paths are tubes so they remain charming from the chase camera.
-    // They ring the bay: west loop serves the cottage and bungalow lanes, east loop
-    // serves the merchant row and mansion hill, meeting in the north.
-    // Control points snap to the heightfield so roads ride the hills, not through them.
-    [[[-150,0,90],[-116,0,40],[-80,0,-10],[-70,0,-70],[-40,0,-110],[0,0,-120]], [[150,0,90],[110,0,50],[90,0,0],[106,0,-60],[60,0,-110],[0,0,-120]]].forEach(points => {
-      const curve = new THREE.CatmullRomCurve3(points.map(([x, , z]) => new THREE.Vector3(x, heightAt(x, z) + .18, z)));
-      g.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 64, 2.8, 8, false), roadMat));
-    });
+    // Roads ride the hand-authored graph; bridge edges are drawn by the bridge module.
+    // Roads are FLAT ribbons (not tubes) so they don't swallow nearby houses
+    // (user feedback 2026-09-27). The deck follows the smooth curve grade;
+    // earthwork skirts drop from the deck edges to the terrain on slopes.
+    roadMat.side = THREE.DoubleSide;
+    const earthMat = toon(0x8a6f4d);
+    earthMat.side = THREE.DoubleSide;
+    const makeFlatRoad = (curve: THREE.CatmullRomCurve3, width: number): THREE.Group => {
+      const grp = new THREE.Group();
+      const segs = 24, hw = width / 2;
+      const pos: number[] = [], nor: number[] = [], idx: number[] = [];
+      // Skirts: [leftTop, leftBottom, rightTop, rightBottom] per station.
+      // Collapsed (top==bottom) where the terrain meets the deck.
+      const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+      for (let i = 0; i <= segs; i++) {
+        const t = i / segs;
+        const p = curve.getPointAt(t);
+        const tan = curve.getTangentAt(t);
+        const px = -tan.z, pz = tan.x;
+        const plen = Math.hypot(px, pz) || 1;
+        const nx = px / plen, nz = pz / plen;
+        const lx = p.x + nx * hw, lz = p.z + nz * hw;
+        const rx = p.x - nx * hw, rz = p.z - nz * hw;
+        // Deck clears the highest terrain across the road width: the smooth
+        // curve grade can dip below terrain bulges between nodes (which
+        // swallowed segments). The skirts below handle the fill on the low side.
+        const roadY = Math.max(p.y, heightAt(p.x, p.z), heightAt(lx, lz), heightAt(rx, rz)) + 0.15;
+        pos.push(lx, roadY, lz, rx, roadY, rz);
+        nor.push(0, 1, 0, 0, 1, 0);
+        if (i < segs) {
+          const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+          idx.push(a, c, b, b, c, d);
+        }
+        // Skirt verts for this station (left side, then right side).
+        const sides: [number, number, number, number][] = [
+          [lx, lz, nx, nz], [rx, rz, -nx, -nz],
+        ];
+        for (const [ex, ez, ox, oz] of sides) {
+          const ty = heightAt(ex, ez);
+          const by = ty < roadY - 0.35 ? Math.max(ty - 0.1, roadY - 4) : roadY;
+          spos.push(ex, roadY, ez, ex, by, ez);
+          snor.push(ox, 0, oz, ox, 0, oz);
+        }
+        if (i < segs) {
+          const a = i * 4;
+          // Left strip: verts (a, a+1) -> (a+4, a+5). Right: (a+2, a+3) -> (a+6, a+7).
+          sidx.push(a, a + 4, a + 1, a + 1, a + 4, a + 5);
+          sidx.push(a + 2, a + 3, a + 6, a + 3, a + 7, a + 6);
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      geo.setIndex(idx);
+      const deck = new THREE.Mesh(geo, roadMat);
+      deck.receiveShadow = true;
+      grp.add(deck);
+      const sgeo = new THREE.BufferGeometry();
+      sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
+      sgeo.setAttribute('normal', new THREE.Float32BufferAttribute(snor, 3));
+      sgeo.setIndex(sidx);
+      const skirt = new THREE.Mesh(sgeo, earthMat);
+      skirt.receiveShadow = true;
+      grp.add(skirt);
+      return grp;
+    };
+    for (const e of ROAD_EDGES) {
+      if (e.kind === 'bridge') continue;
+      const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
+      const mid = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.15, (a.z + b.z) / 2);
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(a.x, a.y + 0.18, a.z), mid, new THREE.Vector3(b.x, b.y + 0.18, b.z),
+      ]);
+      const width = e.kind === 'switchback' ? 4.4 : 5.6;
+      g.add(makeFlatRoad(curve, width));
+      // Center dashes (flat, on the road surface).
+      const dashMat = toon(0xfff6d8);
+      dashMat.side = THREE.DoubleSide;
+      const len = curve.getLength();
+      for (let d = 0; d < len - 2; d += 4) {
+        const p0 = curve.getPointAt(d / len), p1 = curve.getPointAt(Math.min(1, (d + 2) / len));
+        const dp = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
+        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+        // Match the deck height (clears terrain bulges like the road itself).
+        const dy = Math.max(dp.y, heightAt(dp.x, dp.z)) + 0.18;
+        dash.position.set(dp.x, dy, dp.z);
+        g.add(dash);
+      }
+    }
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
     // east pier serves Marina Works.
+    buildBridge(g);
     const dockMat = toon(0x9a6147);
-    [[-15, 50], [-15, 70], [-15, 90]].forEach(([x, z]) => {
-      const dock = new THREE.Mesh(new THREE.BoxGeometry(24, .7, 8), dockMat); dock.position.set(x, .8, z); g.add(dock);
-    });
-    [[50, 60], [50, 80], [50, 100]].forEach(([x, z]) => {
-      const dock = new THREE.Mesh(new THREE.BoxGeometry(24, .7, 8), dockMat); dock.position.set(x, .8, z); g.add(dock);
+    DOCKS.forEach(([x, z]) => {
+      const dock = new THREE.Mesh(new THREE.BoxGeometry(DOCK_W, .7, DOCK_D), dockMat); dock.position.set(x, .8, z); g.add(dock);
     });
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
     this.makeClockTower(g); this.makeObservatoryDome(g);
     this.makeBakeryDormer(g); this.makeMansionTerraces(g); this.makeBoats(g);
     this.makeLaundryLines(g); this.makeDockDressing(g); this.makeStreetLamps(g);
+    this.makePark(g);
     return g;
+  }
+
+  private makePark(g: THREE.Group): void {
+    // Golden Gate Park-style rectangle on the upper tier: manicured lawn, two
+    // tree allées, crossing gravel paths, and a glass conservatory centerpiece.
+    // Layout data comes from src/park.ts (tested); this only renders it.
+    const [x0, z0, x1, z1] = PARK_RECT;
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+    const y = heightAt(cx, cz);
+    const lawn = new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), toon(0x7fae5c));
+    lawn.rotation.x = -Math.PI / 2;
+    lawn.position.set(cx, y + 0.1, cz);
+    g.add(lawn);
+    // Tree allées: one InstancedMesh for trunks, one for crowns.
+    const dummy = new THREE.Object3D();
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.35, 0.55, 4, 7), toon(0x744a36), PARK_TREES.length);
+    const crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(2.6, 1), toon(0x4d976b), PARK_TREES.length);
+    PARK_TREES.forEach((t, i) => {
+      const ty = heightAt(t.x, t.z);
+      dummy.rotation.set(0, i * 2.39996, 0); // deterministic golden-angle spin
+      dummy.scale.setScalar(t.s);
+      dummy.position.set(t.x, ty + 2 * t.s, t.z);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(i, dummy.matrix);
+      dummy.position.set(t.x, ty + 5.5 * t.s, t.z);
+      dummy.updateMatrix();
+      crowns.setMatrixAt(i, dummy.matrix);
+    });
+    trunks.instanceMatrix.needsUpdate = true;
+    crowns.instanceMatrix.needsUpdate = true;
+    g.add(trunks, crowns);
+    // Crossing pale-gravel paths.
+    const pathMat = toon(0xe8dcc0);
+    for (const p of PARK_PATHS) {
+      const path = new THREE.Mesh(new THREE.BoxGeometry(p.x1 - p.x0, 0.2, p.z1 - p.z0), pathMat);
+      path.position.set((p.x0 + p.x1) / 2, y + 0.15, (p.z0 + p.z1) / 2);
+      g.add(path);
+    }
+    // Conservatory: glass box body with a ribbed glass dome at the crossing.
+    const c = PARK_CONSERVATORY;
+    const glass = new THREE.MeshToonMaterial({ color: 0xcfe8e4, transparent: true, opacity: 0.5 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(c.w, c.h, c.d), glass);
+    body.position.set(c.x, y + c.h / 2, c.z);
+    g.add(body);
+    const domeR = c.d / 2;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(domeR, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), glass);
+    dome.position.set(c.x, y + c.h, c.z);
+    g.add(dome);
+    const ribMat = toon(0x7a8a8a);
+    for (let i = 0; i < 6; i++) {
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(domeR, 0.15, 6, 12, Math.PI), ribMat);
+      rib.position.set(c.x, y + c.h, c.z);
+      rib.rotation.y = (i / 6) * Math.PI;
+      g.add(rib);
+    }
   }
 
   private makeLaundryLines(g: THREE.Group): void {
@@ -232,7 +384,7 @@ export class GameRenderer {
   private makeDockDressing(g: THREE.Group): void {
     // Crates, barrels, and coiled ropes on the harbor piers.
     const crateMat = toon(0xa8763e), barrelMat = toon(0x7a5230), ropeMat = toon(0xc9b489);
-    const docks: [number, number][] = [[-15, 50], [-15, 70], [-15, 90], [50, 60], [50, 80], [50, 100]];
+    const docks: [number, number][] = DOCKS;
     const rnd = mulberry32(7);
     docks.forEach(([dx, dz]) => {
       // Crates: stacked boxes near the dock edge.
@@ -316,13 +468,10 @@ export class GameRenderer {
     rimShape.holes.push(rimHole);
     const rimGeo = new THREE.ExtrudeGeometry(rimShape, { depth: 0.28, bevelEnabled: false });
     rimGeo.rotateX(-Math.PI / 2);
-    // Moored alongside the docks (docks are 24 x 8 at x=-15/50): offset in z
-    // so hulls sit beside the dock, not through it.
-    const spots: [number, number, number][] = [
-      // [x, z, rotation] — west pier docks at z=50/70/90, east pier at z=60/80/100
-      [-15, 58, 0.08], [-15, 78, -0.06], [-15, 98, 0.1],
-      [50, 68, -0.08], [50, 88, 0.06], [50, 108, -0.1],
-    ];
+    // Moored alongside the docks: offset in z so hulls sit beside the dock,
+    // not through it. DOCK_BOATS follows DOCKS (see src/world.ts).
+    const rots = [0.08, -0.06, 0.1, -0.08, 0.06, -0.1];
+    const spots: [number, number, number][] = DOCK_BOATS.map(([x, z], i) => [x, z, rots[i]]);
     spots.forEach(([x, z, rot], i) => {
       const boat = new THREE.Group();
       const hm = i % 2 ? hullMat2 : hullMat;
@@ -345,120 +494,208 @@ export class GameRenderer {
   }
 
   private makeBuildings(g: THREE.Group): void {
-    SOLIDS.forEach((s, i) => {
-      const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
-      const center = new THREE.Vector3((s.min.x+s.max.x)/2, (s.min.y+s.max.y)/2, (s.min.z+s.max.z)/2);
-      // Keep a full-height invisible camera blocker while letting the painted roof replace
-      // the upper portion of the render box. Collision and camera clearance stay exact.
-      const blocker = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz)); blocker.position.copy(center); this.blockers.push(blocker);
-      // The lighthouse tower solid is drawn as a cylinder by makeLighthouse,
-      // so the generic box pass skips its visuals (camera blocker already pushed).
-      if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
-      // Phase B landmarks get dedicated visuals (clock tower, observatory dome),
-      // not generic boxes. Collision blocker already pushed above.
-      if (i === CLOCK_TOWER_SOLID_INDEX || i === OBSERVATORY_DOME_SOLID_INDEX) return;
-      // District palette: each district paints its own bodies and roofs.
-      const pal = (s.district && DISTRICT_PALETTES[s.district]) || DISTRICT_PALETTES['old-town'];
+    // Facade instancing (Task 6): every repeated facade element across heroes
+    // + infill is collected as plain records, then built as one
+    // THREE.InstancedMesh per element type per material. Bodies and roofs stay
+    // individual meshes (a few hundred boxes is fine; roofs vary per building).
+    const F = emptyFacades();
+    // Shared facade materials — one per element type, not one per building.
+    const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), litMat = toon(0xffd98a), doorMat = toon(0x704638);
+    const leafMat = toon(0x4d976b), petalMat = toon(0xff8baa);
+
+    // One building pass: individual body + pyramid roof, facades collected.
+    const addBuilding = (
+      sx: number, sy: number, sz: number, minY: number, cx: number, cz: number,
+      district: string, seedBase: number, colorIdx: number, bayWindow: boolean,
+      bodyColor: number, roofColor: number,
+    ): void => {
       const roofHeight = Math.min(4.2, sy * .28);
-      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy-roofHeight, sz), toon(pal.bodies[i % pal.bodies.length]));
-      body.position.set(center.x, s.min.y + (sy-roofHeight)*.5, center.z); body.castShadow = true; body.receiveShadow = true;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(sx, sy - roofHeight, sz), toon(bodyColor));
+      body.position.set(cx, minY + (sy - roofHeight) * .5, cz); body.castShadow = true; body.receiveShadow = true;
       g.add(body);
       // These roofs replace the final few metres of each painted box, entirely within
       // its collision footprint, so they read from the air without enlarging an obstacle.
       const halfX = sx * .5, halfZ = sz * .5, roofBase = sy * .5 - roofHeight;
+      const center = new THREE.Vector3(cx, minY + sy * .5, cz);
       const roofGeo = new THREE.BufferGeometry();
       roofGeo.setAttribute('position', new THREE.Float32BufferAttribute([
-        -halfX, roofBase, -halfZ, halfX, roofBase, -halfZ, 0, sy*.5, 0,
-         halfX, roofBase, -halfZ, halfX, roofBase,  halfZ, 0, sy*.5, 0,
-         halfX, roofBase,  halfZ,-halfX, roofBase,  halfZ, 0, sy*.5, 0,
-        -halfX, roofBase,  halfZ,-halfX, roofBase, -halfZ, 0, sy*.5, 0,
-      ], 3)); roofGeo.setIndex([0,2,1,3,5,4,6,8,7,9,11,10]); roofGeo.computeVertexNormals();
-      const roof = new THREE.Mesh(roofGeo, toon(pal.roofs[i % pal.roofs.length]));
+        -halfX, roofBase, -halfZ, halfX, roofBase, -halfZ, 0, sy * .5, 0,
+         halfX, roofBase, -halfZ, halfX, roofBase,  halfZ, 0, sy * .5, 0,
+         halfX, roofBase,  halfZ, -halfX, roofBase,  halfZ, 0, sy * .5, 0,
+        -halfX, roofBase,  halfZ, -halfX, roofBase, -halfZ, 0, sy * .5, 0,
+      ], 3)); roofGeo.setIndex([0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10]); roofGeo.computeVertexNormals();
+      const roof = new THREE.Mesh(roofGeo, toon(roofColor));
       roof.position.copy(center); roof.castShadow = true; g.add(roof);
-      const trimMat = toon(0xffdfaa), glassMat = toon(0x356f89), litMat = toon(0xffd98a), doorMat = toon(0x704638);
-      const leafMat = toon(0x4d976b), petalMat = toon(0xff8baa);
-      // Story-aware facades: door on the ground floor, one window row per story above.
-      // Stories are counted against the body height (below the roof), not total height.
-      // Windows vary per building/face/story (jitter, size, lit, flower boxes) for a
-      // softer town feel instead of an industrial grid. Deterministic seed.
-      const storyH = 3.4;
-      const bodyH = sy - roofHeight;
-      const stories = Math.max(1, Math.round(bodyH / storyH));
-      const baseW = Math.min(2.6, sx * .18), baseH = Math.min(2.4, storyH * .55);
-      const sideIdx = { north: 0, south: 1, east: 2, west: 3 };
-      const addFacade = (side: 'north'|'south'|'east'|'west') => {
-        const along = side==='north'||side==='south' ? sx : sz;
-        const positions = along > 29 ? [-.27, .27] : [-.2, .2];
-        const rot = side==='north' ? Math.PI : side==='south' ? 0 : side==='west' ? -Math.PI/2 : Math.PI/2;
-        const isZ = side==='north'||side==='south';
-        const outward = side==='north' ? -1 : side==='south' ? 1 : side==='west' ? -1 : 1;
-        const planeAt = (alongOffset: number, y: number, depth: number) => isZ
-          ? new THREE.Vector3(body.position.x + alongOffset, y, body.position.z + outward * (sz*.5 + depth))
-          : new THREE.Vector3(body.position.x + outward * (sx*.5 + depth), y, body.position.z + alongOffset);
-        const winRow = (story: number, y: number) => {
-          positions.forEach((offset, pi) => {
-            // Deterministic per-window variation (no horizontal jitter — keep rows aligned).
-            const rnd = mulberry32(i * 1000 + sideIdx[side] * 100 + story * 10 + pi);
-            const jx = 0;
-            const w = baseW * (0.88 + rnd() * 0.24);    // width variation
-            const h = baseH * (0.88 + rnd() * 0.24);    // height variation
-            // Keep the window top below the body top (no ceiling clipping).
-            const maxY = s.min.y + bodyH - h * 0.5 - 0.35;
-            const wy = Math.min(y, maxY);
-            const p = planeAt(along * offset + jx, wy, .055);
-            const mat = rnd() < 0.35 ? litMat : glassMat; // some windows warmly lit
-            const win = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat); win.position.copy(p); win.rotation.y=rot; g.add(win);
-            const sill = new THREE.Mesh(new THREE.BoxGeometry(w + .38, .18, .16), trimMat); sill.position.copy(planeAt(along * offset + jx, wy-h*.5-.08, .1)); if(!isZ)sill.rotation.y=Math.PI/2; g.add(sill);
-            // Flower box under some windows.
-            if (rnd() < 0.3) {
-              const box = new THREE.Mesh(new THREE.BoxGeometry(w * 0.8, 0.35, 0.4), doorMat);
-              box.position.copy(planeAt(along * offset + jx, wy-h*.5-0.35, 0.28)); if(!isZ)box.rotation.y=Math.PI/2; g.add(box);
-              for (let f = 0; f < 3; f++) {
-                const fl = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 5), f % 2 ? petalMat : leafMat);
-                fl.position.copy(planeAt(along * offset + jx + (f-1)*w*0.22, wy-h*.5-0.12, 0.28)); g.add(fl);
-              }
-            }
-          });
-        };
-        // Ground floor: centered door with flanking windows.
-        const doorH = Math.min(3.0, storyH * .82);
-        const door = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(2.4, along*.13), doorH), doorMat);
-        door.position.copy(planeAt(0, s.min.y + doorH*.5, .06)); door.rotation.y=rot; g.add(door);
-        winRow(0, s.min.y + storyH * .58);
-        // Upper stories: one window row per story.
-        for (let st = 1; st < stories; st++) {
-          winRow(st, s.min.y + storyH * st + storyH * .58);
-        }
-      };
-      addFacade('north'); addFacade('south'); addFacade('east'); addFacade('west');
-      // Merchant-row shops get striped awnings over the south face (street side).
-      // The awning is a sloped quad: top edge at the wall, front edge lower and outward.
-      if (s.district === 'merchant-row') {
-        const awnColors: [string, string][] = [['#e86a6a', '#f5f0e1'], ['#5b7fa6', '#f5f0e1'], ['#6aa86a', '#f5f0e1']];
-        const [c1, c2] = awnColors[i % awnColors.length];
-        const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 16;
-        const ctx = cnv.getContext('2d')!;
-        for (let sIdx = 0; sIdx < 8; sIdx++) { ctx.fillStyle = sIdx % 2 ? c1 : c2; ctx.fillRect(sIdx * 16, 0, 16, 16); }
-        const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
-        const awnW = Math.min(sx * 0.7, 10), awnD = 2.2;
-        const awnGeo = new THREE.PlaneGeometry(awnW, awnD, 1, 1);
-        const pos = awnGeo.attributes.position;
-        for (let v = 0; v < pos.count; v++) {
-          if (pos.getY(v) < 0) pos.setZ(v, -0.7); // front (outward) edge dips down
-        }
-        awnGeo.computeVertexNormals();
-        const awn = new THREE.Mesh(awnGeo, new THREE.MeshToonMaterial({ map: tex, side: THREE.DoubleSide }));
-        const doorH = Math.min(3.0, storyH * .82);
-        // Plane local +y maps to world -z after rotation.x=-PI/2, so the dipped
-        // edge (local y<0) lands outward (+z, street side) and lower.
-        awn.position.set(center.x, s.min.y + doorH + 0.55, center.z + sz * .5 + awnD * .5 - 0.15);
-        awn.rotation.x = -Math.PI / 2;
-        g.add(awn);
-      }
+      mergeFacades(F, collectFacades({ sx, sy, sz, minY, cx, cz, district, seedBase, colorIdx, bayWindow }));
+    };
+
+    // Heroes: keep the full-height invisible camera blocker; landmarks with
+    // dedicated visuals (lighthouse tower, clock tower, observatory dome) skip
+    // the generic box pass exactly as before.
+    SOLIDS.forEach((s, i) => {
+      const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
+      const center = new THREE.Vector3((s.min.x + s.max.x) / 2, (s.min.y + s.max.y) / 2, (s.min.z + s.max.z) / 2);
+      const blocker = solidBlocker(s); this.blockers.push(blocker);
+      if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
+      if (i === CLOCK_TOWER_SOLID_INDEX || i === OBSERVATORY_DOME_SOLID_INDEX) return;
+      // District palette: each district paints its own bodies and roofs.
+      const pal = (s.district && DISTRICT_PALETTES[s.district]) || DISTRICT_PALETTES['old-town'];
+      addBuilding(sx, sy, sz, s.min.y, center.x, center.z, s.district ?? 'old-town', i, i, false,
+        pal.bodies[i % pal.bodies.length], pal.roofs[i % pal.roofs.length]);
       // District dressing: bungalow lanes get picket fences + cottage gardens,
       // mansion hill gets low stone walls + formal walled gardens.
       if (s.district === 'bungalow-lanes') this.makePicketFence(g, s, i);
       if (s.district === 'mansion-hill') this.makeWalledGarden(g, s, i);
+    });
+
+    // Infill lots: seeded procedural town. Each lot gets a camera blocker with
+    // the same AABB as its collision solid (see COLLISION_SOLIDS in simulation.ts).
+    const lots = generateLots();
+    const infillSolids = lotsToSolids(lots);
+    // Stone foundation material for hillside lots (fills the downhill gap so
+    // houses sit on slopes without floating or terrain poking through).
+    const foundationMat = toon(0x8a7f72);
+    // Driveway material: packed dirt path connecting each house to its road.
+    const drivewayMat = toon(0xb8a88a);
+    // Non-bridge road segments for driveway connections (bridges are elevated).
+    const roadSegs = ROAD_EDGES.filter(e => e.kind !== 'bridge').map(e => {
+      const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
+      return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
+    });
+    lots.forEach((lot, li) => {
+      const terr = lotTerrain(lot.x, lot.z, lot.w, lot.d);
+      // House floor sits on the highest terrain under the footprint (matches
+      // lotsToSolids); foundation fills down to the lowest point.
+      const maxH = terr ? terr.maxH : heightAt(lot.x + lot.w / 2, lot.z + lot.d / 2);
+      const minH = terr ? terr.minH : maxH;
+      const baseY = maxH;
+      const pal = DISTRICT_PALETTES[lot.district] || DISTRICT_PALETTES['old-town'];
+      // Pastel Painted-Ladies bodies for bungalow-lanes lots with palette 1-4.
+      const bodyColor = lot.palette === 0 ? pal.bodies[li % pal.bodies.length] : PASTEL_BODIES[lot.palette - 1];
+      // Foundation: fills from the lowest terrain to the house floor on slopes.
+      if (maxH - minH > 0.3) {
+        const found = new THREE.Mesh(new THREE.BoxGeometry(lot.w, maxH - minH, lot.d), foundationMat);
+        found.position.set(lot.x + lot.w / 2, minH + (maxH - minH) / 2, lot.z + lot.d / 2);
+        found.castShadow = true; found.receiveShadow = true;
+        g.add(found);
+      }
+      addBuilding(lot.w, lot.h, lot.d, baseY, lot.x + lot.w / 2, lot.z + lot.d / 2,
+        lot.district, LOT_SEED_BASE + li, li, lot.bayWindow,
+        bodyColor, pal.roofs[li % pal.roofs.length]);
+      this.blockers.push(solidBlocker(infillSolids[li]));
+      // Driveway: a 3m dirt path from the lot edge to the nearest road tube.
+      // Every house gets a visible road connection (user feedback 2026-09-27).
+      const cx = lot.x + lot.w / 2, cz = lot.z + lot.d / 2;
+      let bpx = 0, bpz = 0, bdist = Infinity;
+      for (const s of roadSegs) {
+        const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+        const len2 = dx * dx + dz * dz;
+        let t = len2 > 0 ? ((cx - s.x0) * dx + (cz - s.z0) * dz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const px = s.x0 + t * dx, pz = s.z0 + t * dz;
+        const d = Math.hypot(cx - px, cz - pz);
+        if (d < bdist) { bdist = d; bpx = px; bpz = pz; }
+      }
+      if (bdist < Infinity && bdist > 0.5) {
+        const dirX = bpx - cx, dirZ = bpz - cz;
+        const dist = Math.hypot(dirX, dirZ);
+        const nx = dirX / dist, nz = dirZ / dist;
+        // Start at the lot AABB edge along the road direction.
+        const eAlong = (lot.w * Math.abs(nx) + lot.d * Math.abs(nz)) / 2;
+        const sx = cx + nx * eAlong, sz = cz + nz * eAlong;
+        // End at the road tube edge (2.8m radius) so the path meets the asphalt.
+        const ex = bpx - nx * 2.8, ez = bpz - nz * 2.8;
+        const dlen = Math.hypot(ex - sx, ez - sz);
+        if (dlen > 1.5) {
+          const mx = (sx + ex) / 2, mz = (sz + ez) / 2;
+          const my = (heightAt(sx, sz) + heightAt(ex, ez)) / 2 + 0.1;
+          const drive = new THREE.Mesh(new THREE.BoxGeometry(3, 0.18, dlen), drivewayMat);
+          drive.position.set(mx, my, mz);
+          drive.rotation.y = Math.atan2(ex - sx, ez - sz);
+          drive.receiveShadow = true;
+          g.add(drive);
+        }
+      }
+    });
+
+    this.buildFacadeInstances(g, F, { trimMat, glassMat, litMat, doorMat, leafMat, petalMat });
+  }
+
+  /** Build phase: one THREE.InstancedMesh per facade element type per material. */
+  private buildFacadeInstances(
+    g: THREE.Group, F: FacadeSet,
+    mats: { trimMat: THREE.Material; glassMat: THREE.Material; litMat: THREE.Material; doorMat: THREE.Material; leafMat: THREE.Material; petalMat: THREE.Material },
+  ): void {
+    const unitPlane = new THREE.PlaneGeometry(1, 1);
+    const unitBox = new THREE.BoxGeometry(1, 1, 1);
+    const unitSphere = new THREE.SphereGeometry(1, 6, 5);
+    const dummy = new THREE.Object3D();
+    // Fill an InstancedMesh from records. Instances span the whole town, so
+    // unit-geometry bounds are meaningless: disable frustum culling.
+    const fill = (mesh: THREE.InstancedMesh, recs: FacadeInstance[]): void => {
+      recs.forEach((r, idx) => {
+        dummy.position.set(r.x, r.y, r.z);
+        dummy.rotation.set(r.rotX, r.rotY, 0);
+        dummy.scale.set(r.sx, r.sy, r.sz);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(idx, dummy.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.frustumCulled = false;
+      g.add(mesh);
+    };
+
+    if (F.winLit.length) {
+      const m = new THREE.InstancedMesh(unitPlane, mats.litMat, F.winLit.length);
+      fill(m, F.winLit);
+    }
+    if (F.winUnlit.length) {
+      const m = new THREE.InstancedMesh(unitPlane, mats.glassMat, F.winUnlit.length);
+      fill(m, F.winUnlit);
+    }
+    if (F.doors.length) {
+      const m = new THREE.InstancedMesh(unitPlane, mats.doorMat, F.doors.length);
+      fill(m, F.doors);
+    }
+    if (F.sills.length) {
+      const m = new THREE.InstancedMesh(unitBox, mats.trimMat, F.sills.length);
+      fill(m, F.sills);
+    }
+    if (F.bays.length) {
+      const m = new THREE.InstancedMesh(unitBox, mats.trimMat, F.bays.length);
+      fill(m, F.bays);
+    }
+    if (F.flowerBoxes.length) {
+      const m = new THREE.InstancedMesh(unitBox, mats.doorMat, F.flowerBoxes.length);
+      fill(m, F.flowerBoxes);
+    }
+    if (F.petals.length) {
+      const m = new THREE.InstancedMesh(unitSphere, mats.petalMat, F.petals.length);
+      fill(m, F.petals);
+    }
+    if (F.leaves.length) {
+      const m = new THREE.InstancedMesh(unitSphere, mats.leafMat, F.leaves.length);
+      fill(m, F.leaves);
+    }
+
+    // Merchant-row awnings: one sloped unit quad geometry, three shared stripe
+    // materials (previously one canvas texture per building).
+    const awnGeo = new THREE.PlaneGeometry(1, 1, 1, 1);
+    const apos = awnGeo.attributes.position;
+    for (let v = 0; v < apos.count; v++) {
+      if (apos.getY(v) < 0) apos.setZ(v, -0.7); // front (outward) edge dips down
+    }
+    awnGeo.computeVertexNormals();
+    const awnColors: [string, string][] = [['#e86a6a', '#f5f0e1'], ['#5b7fa6', '#f5f0e1'], ['#6aa86a', '#f5f0e1']];
+    F.awnings.forEach((recs, vi) => {
+      if (!recs.length) return;
+      const [c1, c2] = awnColors[vi % awnColors.length];
+      const cnv = document.createElement('canvas'); cnv.width = 128; cnv.height = 16;
+      const ctx = cnv.getContext('2d')!;
+      for (let sIdx = 0; sIdx < 8; sIdx++) { ctx.fillStyle = sIdx % 2 ? c1 : c2; ctx.fillRect(sIdx * 16, 0, 16, 16); }
+      const tex = new THREE.CanvasTexture(cnv); tex.colorSpace = THREE.SRGBColorSpace;
+      const m = new THREE.InstancedMesh(awnGeo, new THREE.MeshToonMaterial({ map: tex, side: THREE.DoubleSide }), recs.length);
+      fill(m, recs);
     });
   }
 
@@ -532,42 +769,65 @@ export class GameRenderer {
   }
 
   private makeWalledGarden(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
-    // Per-villa layouts: the west side is open to the existing terraced platforms
-    // (which step down toward the bay), and walls stop short of the neighboring villa.
-    // Villa 1: x 100..120, z -15..5. Villa 2: x 125..140, z 5..25.
-    const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
+    // Formal walled garden around a Mansion Hill villa, built relative to the
+    // villa's MANSION_GROUNDS rect (not hardcoded): walls on south/west/east,
+    // north side open to the terraced platforms stepping to the loop road.
+    // The shared boundary between the two villas' grounds gets a hedge, not
+    // two coincident walls.
+    const grounds = MANSION_GROUNDS.find(gr =>
+      s.min.x >= gr[0] - 1 && s.max.x <= gr[2] + 1 &&
+      s.min.z >= gr[1] - 1 && s.max.z <= gr[3] + 1);
+    if (!grounds) return;
+    const [gx0, gz0, gx1, gz1] = grounds;
     const groundY = s.min.y;
     const wallMat = toon(0xb8b0a0), capMat = toon(0xd8d0c0), hedgeMat = toon(0x3d8a5f), soilMat = toon(0x6b4a2f);
     const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff)];
-    const isVilla1 = cx < 120;
-    // Walls: [centerX, centerZ, lenX, lenZ]. Hedges: same format. Beds: [x, z].
-    let walls: [number, number, number, number][];
-    let hedges: [number, number, number, number][];
-    let beds: [number, number][];
-    if (isVilla1) {
-      walls = [
-        [109, -21, 30, 0.5],   // north
-        [108, 11, 28, 0.5],    // south (stops before villa 2's zone)
-        [124, -5, 0.5, 32],    // east
-      ];
-      hedges = [
-        [109, -19.5, 26, 0.8],
-        [108, 9.5, 24, 0.8],
-        [122.5, -5, 0.8, 28],
-      ];
-      beds = [[104, -17.5], [114, -17.5], [104, 7.5], [114, 7.5]];
+    // Shared boundary with the neighboring grounds? (avoids coincident walls)
+    const sharedWest = MANSION_GROUNDS.some(gr => gr !== grounds && Math.abs(gr[2] - gx0) < 0.01);
+    const sharedEast = MANSION_GROUNDS.some(gr => gr !== grounds && Math.abs(gr[0] - gx1) < 0.01);
+    // Walls: [centerX, centerZ, lenX, lenZ]. Hedges: same format.
+    const walls: [number, number, number, number][] = [
+      [(gx0 + gx1) / 2, gz0, gx1 - gx0, 0.5], // south
+    ];
+    const hedges: [number, number, number, number][] = [
+      [(gx0 + gx1) / 2, gz0 + 1.5, gx1 - gx0 - 3, 0.8],
+    ];
+    // West wall (or shared-boundary hedge), from the south grounds edge
+    // up to the villa's north edge; the terraces take over beyond that.
+    const sideLen = s.max.z - gz0;
+    const sideCz = (gz0 + s.max.z) / 2;
+    // Shared boundary: only the WEST property plants the hedge, centered on
+    // the boundary line. The east property skips its west side entirely —
+    // two offset hedges in the narrow gap read as a collision (user feedback
+    // 2026-09-27).
+    if (sharedWest) {
+      // Western neighbor owns this boundary; nothing to plant.
     } else {
-      walls = [
-        [136, -1, 20, 0.5],    // north (starts clear of villa 1)
-        [132.5, 31, 27, 0.5],  // south
-        [146, 15, 0.5, 32],    // east
-      ];
-      hedges = [
-        [136, 0.5, 16, 0.8],
-        [132.5, 29.5, 23, 0.8],
-        [144.5, 15, 0.8, 28],
-      ];
-      beds = [[131, 2.8], [139, 2.8], [131, 27.2], [139, 27.2]];
+      walls.push([gx0, sideCz, 0.5, sideLen]);
+      hedges.push([gx0 + 1.5, sideCz, 0.8, sideLen - 3]);
+    }
+    if (sharedEast) hedges.push([gx1, sideCz, 0.8, sideLen - 2]);
+    else {
+      walls.push([gx1, sideCz, 0.5, sideLen]);
+      hedges.push([gx1 - 1.5, sideCz, 0.8, sideLen - 3]);
+    }
+    // Flower beds in the side garden strips (between the villa and the side walls).
+    const beds: [number, number][] = [];
+    const bedStripZ0 = gz0 + 3, bedStripZ1 = s.max.z - 2;
+    if (bedStripZ1 - bedStripZ0 >= 5) {
+      const sideStrips: [number, number][] = [];
+      // West strip (if not a shared boundary and wide enough).
+      if (!sharedWest && s.min.x - gx0 >= 5) sideStrips.push([gx0 + 2.5, s.min.x - 2.5]);
+      // East strip.
+      if (!sharedEast && gx1 - s.max.x >= 5) sideStrips.push([s.max.x + 2.5, gx1 - 2.5]);
+      for (const [sx0, sx1] of sideStrips) {
+        const bx = (sx0 + sx1) / 2;
+        const n = Math.max(1, Math.floor((bedStripZ1 - bedStripZ0) / 8));
+        for (let bi = 0; bi < n; bi++) {
+          const bz = bedStripZ0 + (bi + 0.5) * ((bedStripZ1 - bedStripZ0) / n);
+          beds.push([bx, bz]);
+        }
+      }
     }
     const wallH = 0.9;
     walls.forEach(([x, z, lx, lz]) => {
@@ -597,6 +857,32 @@ export class GameRenderer {
         g.add(fl);
       }
     });
+    // Sprawling parkland: specimen trees in the open lawns (not just formal
+    // hedges/beds) so the grounds read as an expansive estate, not a walled
+    // courtyard. Deterministic placement.
+    const treeSpots: [number, number][] = [];
+    const southZ0 = gz0 + 5, southZ1 = s.min.z - 4;
+    if (southZ1 - southZ0 > 6) {
+      const n = Math.max(2, Math.floor((gx1 - gx0 - 10) / 11));
+      for (let i = 0; i < n; i++) {
+        const tx = gx0 + 7 + (i + 0.5) * ((gx1 - gx0 - 14) / n) + (rnd() - 0.5) * 3;
+        const tz = (southZ0 + southZ1) / 2 + (rnd() - 0.5) * 2;
+        treeSpots.push([tx, tz]);
+      }
+    }
+    if (!sharedWest && s.min.x - gx0 > 9) treeSpots.push([(gx0 + s.min.x) / 2, (southZ0 + southZ1) / 2]);
+    if (!sharedEast && gx1 - s.max.x > 9) treeSpots.push([(s.max.x + gx1) / 2, (southZ0 + southZ1) / 2]);
+    const trunkMat = toon(0x744a36), crownMat = toon(0x4d976b);
+    for (const [tx, tz] of treeSpots) {
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.65, 3.2, 7), trunkMat);
+      trunk.position.set(tx, groundY + 1.6, tz);
+      trunk.castShadow = true;
+      g.add(trunk);
+      const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(3, 1), crownMat);
+      crown.position.set(tx, groundY + 5, tz);
+      crown.castShadow = true;
+      g.add(crown);
+    }
   }
 
   private makeGreenery(g: THREE.Group): void {
@@ -604,6 +890,31 @@ export class GameRenderer {
     // Two-zone forest: dense woods on the northern hills (the town's natural
     // boundary — a visual wall of green), sparse elsewhere. Deterministic seed.
     const rand = mulberry32(1337);
+    // Tree exclusion: keep crowns off roads, out of houses/buildings, and out
+    // of the formal mansion gardens (user feedback 2026-09-27: trees were
+    // colliding with roads, houses, terrain).
+    const lots = generateLots();
+    const roadSegs = ROAD_EDGES.map(e => {
+      const a = nodeById(e.a), b = nodeById(e.b);
+      return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
+    });
+    const treeClear = (x: number, z: number): boolean => {
+      for (const s of roadSegs) {
+        const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+        const len2 = dx * dx + dz * dz;
+        let t = len2 > 0 ? ((x - s.x0) * dx + (z - s.z0) * dz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        if (Math.hypot(x - (s.x0 + t * dx), z - (s.z0 + t * dz)) < 4.5) return false;
+      }
+      for (const l of lots) {
+        if (x > l.x - 2 && x < l.x + l.w + 2 && z > l.z - 2 && z < l.z + l.d + 2) return false;
+      }
+      for (const s of SOLIDS) {
+        if (x > s.min.x - 2 && x < s.max.x + 2 && z > s.min.z - 2 && z < s.max.z + 2) return false;
+      }
+      if (MANSION_GROUNDS.some(gr => x > gr[0] && x < gr[2] && z > gr[1] && z < gr[3])) return false;
+      return true;
+    };
     const placeTree = (x: number, z: number) => {
       const t = new THREE.Group();
       const h = 3 + rand() * 2.5;
@@ -627,6 +938,7 @@ export class GameRenderer {
       tries++;
       const x = (rand() - 0.5) * 400, z = 60 + rand() * 160; // z in [60, 220]
       if (!canGrow(x, z)) continue;
+      if (!treeClear(x, z)) continue;
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
       if (Math.hypot(x, z) < 145) continue; // outside the flat town core
       placeTree(x, z);
@@ -638,7 +950,9 @@ export class GameRenderer {
       tries++;
       const x = (rand() - 0.5) * 400, z = (rand() - 0.5) * 400;
       if (!canGrow(x, z)) continue;
+      if (!treeClear(x, z)) continue;
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
+      if (x > PARK_RECT[0] && x < PARK_RECT[2] && z > PARK_RECT[1] && z < PARK_RECT[3]) continue; // keep the park clear
       if (Math.hypot(x, z) < 100 && rand() < 0.7) continue;
       // Don't double-plant in the woods zone.
       if (z > 60 && Math.hypot(x, z) >= 145) continue;
@@ -652,29 +966,33 @@ export class GameRenderer {
     // place, not panorama dressing. The keeper's cottage (Beacon House, the delivery
     // pad) is SOLIDS[3], drawn by makeBuildings; the tower solid is the last SOLIDS
     // entry, drawn here as a cylinder. Beam rotation is driven in render().
-    const hx = 74, hz = 110; // headland center
+    // Positions follow the solids so the Phase 1 layout pass can move them.
+    const cottage = SOLIDS[3];
+    const towerS = SOLIDS[LIGHTHOUSE_TOWER_SOLID_INDEX];
+    const hx = (cottage.min.x + cottage.max.x) / 2, hz = (cottage.min.z + cottage.max.z) / 2;
     const rock = new THREE.Mesh(new THREE.CylinderGeometry(20, 24, 9, 18), toon(0x8a7f72));
-    rock.position.set(hx, 2.5, hz); rock.castShadow = true; g.add(rock);
-    const x = 88, z = 118; // tower
+    rock.position.set(hx, cottage.min.y + 2.5, hz); rock.castShadow = true; g.add(rock);
+    const x = (towerS.min.x + towerS.max.x) / 2, z = (towerS.min.z + towerS.max.z) / 2;
+    const dy = towerS.min.y; // visual tower base sat at y=3 when the solid base was y=0
     const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 5.2, 26, 16), toon(0xfff0d4));
-    tower.position.set(x, 16, z); tower.castShadow = true; g.add(tower);
+    tower.position.set(x, 16 + dy, z); tower.castShadow = true; g.add(tower);
     // Red bands track the tower's taper so they sit proud of the white shell.
     const towerR = (y: number) => 5.2 - (y - 3) * (1.6 / 26);
     for (const y of [8, 14, 20, 26]) {
       const stripe = new THREE.Mesh(
         new THREE.CylinderGeometry(towerR(y + 1.1) + 0.15, towerR(y - 1.1) + 0.15, 2.2, 16),
         toon(0xd25c51));
-      stripe.position.set(x, y, z); g.add(stripe);
+      stripe.position.set(x, y + dy, z); g.add(stripe);
     }
     const gallery = new THREE.Mesh(new THREE.CylinderGeometry(4.6, 4.6, 1.2, 16), toon(0x3e6680));
-    gallery.position.set(x, 29.6, z); g.add(gallery);
+    gallery.position.set(x, 29.6 + dy, z); g.add(gallery);
     const lampRoom = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 3.4, 12),
       new THREE.MeshBasicMaterial({ color: 0xffe9ad }));
-    lampRoom.position.set(x, 31.8, z); g.add(lampRoom);
+    lampRoom.position.set(x, 31.8 + dy, z); g.add(lampRoom);
     const cap = new THREE.Mesh(new THREE.ConeGeometry(3.4, 2.6, 12), toon(0xc9534e));
-    cap.position.set(x, 34.8, z); g.add(cap);
+    cap.position.set(x, 34.8 + dy, z); g.add(cap);
     // Rotating beam: two opposite translucent blades from the lamp room.
-    const beamGroup = new THREE.Group(); beamGroup.position.set(x, 31.8, z);
+    const beamGroup = new THREE.Group(); beamGroup.position.set(x, 31.8 + dy, z);
     const beamMat = new THREE.MeshBasicMaterial({ color: 0xffdf8e, transparent: true, opacity: .28, depthWrite: false, side: THREE.DoubleSide });
     [0, Math.PI].forEach(a => {
       const blade = new THREE.Mesh(new THREE.ConeGeometry(3.2, 26, 12, 1, true), beamMat);
@@ -683,7 +1001,7 @@ export class GameRenderer {
       beamGroup.add(blade);
     });
     g.add(beamGroup); this.beamGroup = beamGroup;
-    this.beamLight = new THREE.PointLight(0xffdc92, 60, 90); this.beamLight.position.set(x, 32, z); g.add(this.beamLight);
+    this.beamLight = new THREE.PointLight(0xffdc92, 60, 90); this.beamLight.position.set(x, 32 + dy, z); g.add(this.beamLight);
     this.setLighthouseLit(true);
   }
 
@@ -701,13 +1019,16 @@ export class GameRenderer {
   private makeClockTower(g: THREE.Group): void {
     // Old Town clock tower: tallest in the town core, shorter than the lighthouse.
     // Sandstone shaft, clock faces on all four sides, pointed terracotta roof.
-    const cx = 6, cz = -74; // center of the clock-tower SOLIDS
+    // Follows the clock-tower SOLIDS so the Phase 1 layout pass can move it.
+    const ct = SOLIDS[CLOCK_TOWER_SOLID_INDEX];
+    const cx = (ct.min.x + ct.max.x) / 2, cz = (ct.min.z + ct.max.z) / 2;
+    const by = ct.min.y; // base elevation; all visual heights hang off this
     const sandstone = toon(0xd4a574), terracotta = toon(0xb65c3f), trim = toon(0xffdfaa);
     const shaft = new THREE.Mesh(new THREE.BoxGeometry(8, 20, 8), sandstone);
-    shaft.position.set(cx, 10, cz); shaft.castShadow = true; g.add(shaft); // y: 0..20
+    shaft.position.set(cx, by + 10, cz); shaft.castShadow = true; g.add(shaft); // y: by..by+20
     // Belfry: slightly wider band with arched openings (dark insets).
     const belfry = new THREE.Mesh(new THREE.BoxGeometry(8.6, 3, 8.6), sandstone);
-    belfry.position.set(cx, 21.5, cz); belfry.castShadow = true; g.add(belfry); // y: 20..23
+    belfry.position.set(cx, by + 21.5, cz); belfry.castShadow = true; g.add(belfry); // y: by+20..by+23
     const openingMat = toon(0x2a2a35);
     const faceDefs: Array<[number, number, number]> = [
       [0, -4.32, Math.PI], [0, 4.32, 0], [-4.32, 0, -Math.PI / 2], [4.32, 0, Math.PI / 2],
@@ -717,35 +1038,37 @@ export class GameRenderer {
       const face = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.3, 24),
         new THREE.MeshBasicMaterial({ color: 0xf8f0d8 }));
       face.rotation.x = Math.PI / 2; face.rotation.z = rot;
-      face.position.set(cx + ox, 17, cz + oz); g.add(face);
+      face.position.set(cx + ox, by + 17, cz + oz); g.add(face);
       // Hands: hour and minute, fixed at a charming time.
       const handMat = new THREE.MeshBasicMaterial({ color: 0x2a2a35 });
       const hour = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.1), handMat);
-      hour.position.set(cx + ox * 1.02, 17.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
+      hour.position.set(cx + ox * 1.02, by + 17.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
       const minute = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.6, 0.1), handMat);
-      minute.position.set(cx + ox * 1.02, 17.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
+      minute.position.set(cx + ox * 1.02, by + 17.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
       // Belfry opening (dark arch suggestion).
       const opening = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2), openingMat);
-      opening.position.set(cx + ox * 1.01, 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
+      opening.position.set(cx + ox * 1.01, by + 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
     }
-    // Pointed terracotta roof (pyramid). Collision tops at y=28 with the visual.
+    // Pointed terracotta roof (pyramid). Collision tops at by+28 with the visual.
     const roofGeo = new THREE.ConeGeometry(6.2, 5, 4);
     const roof = new THREE.Mesh(roofGeo, terracotta);
-    roof.position.set(cx, 25.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+    roof.position.set(cx, by + 25.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
     const finial = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), trim);
-    finial.position.set(cx, 28.2, cz); g.add(finial);
+    finial.position.set(cx, by + 28.2, cz); g.add(finial);
     // Corner trim for a finished look.
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const corner = new THREE.Mesh(new THREE.BoxGeometry(0.7, 20, 0.7), trim);
-      corner.position.set(cx + sx * 3.8, 10, cz + sz * 3.8); g.add(corner);
+      corner.position.set(cx + sx * 3.8, by + 10, cz + sz * 3.8); g.add(corner);
     }
   }
 
   private makeObservatoryDome(g: THREE.Group): void {
     // Observatory Rise: stone drum + copper-green dome on the Hill Observatory
     // roof, offset from the delivery pad. The dome is the landmark.
-    // Roof surface at (107,-63) on the pyramid: 28.76 (not the 31 apex).
-    const cx = 107, cz = -63, roofY = 28.76;
+    // Follows the dome SOLIDS so the Phase 1 layout pass can move it.
+    const ds = SOLIDS[OBSERVATORY_DOME_SOLID_INDEX];
+    const cx = (ds.min.x + ds.max.x) / 2, cz = (ds.min.z + ds.max.z) / 2;
+    const roofY = ds.min.y;
     const stone = toon(0x8a8a92), copper = toon(0x5c8a7a);
     const drum = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.8, 3, 18), stone);
     drum.position.set(cx, roofY + 1.5, cz); drum.castShadow = true; g.add(drum);
@@ -761,8 +1084,15 @@ export class GameRenderer {
   private makeBakeryDormer(g: THREE.Group): void {
     // Merchant Row: the bakery (SOLIDS[0]) gets a distinctive attic dormer with
     // a warm lit window — "home" reads from the air. Offset from the pad.
-    // Roof surface at (-70,32) on the pyramid: 15.2 (not the 18 apex).
-    const cx = -70, cz = 32, roofY = 15.2;
+    // Follows the bakery SOLIDS so the Phase 1 layout pass can move it; the roof
+    // surface height is derived from the pyramid roof geometry in makeBuildings.
+    const b = SOLIDS[0];
+    const bcx = (b.min.x + b.max.x) / 2, bcz = (b.min.z + b.max.z) / 2;
+    const cx = bcx, cz = bcz - 8;
+    const sx = b.max.x - b.min.x, sy = b.max.y - b.min.y, sz = b.max.z - b.min.z;
+    const roofH = Math.min(4.2, sy * .28);
+    const f = Math.max(0, Math.min(1 - Math.abs(cx - bcx) / (sx / 2), 1 - Math.abs(cz - bcz) / (sz / 2)));
+    const roofY = (b.max.y - roofH) + f * roofH;
     const pastel = toon(0xf4e4a8), wood = toon(0x8b5a3a);
     const dormer = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.6, 3), pastel);
     dormer.position.set(cx, roofY + 1.3, cz); dormer.castShadow = true; g.add(dormer);
@@ -790,26 +1120,29 @@ export class GameRenderer {
 
   private makeMansionTerraces(g: THREE.Group): void {
     // Mansion Hill: terraced garden platforms stepping down from each villa
-    // toward the bay. Stone retaining walls, green garden tops. Decorative.
+    // (SOLIDS[17] and SOLIDS[18]) toward the loop road. Stone retaining walls,
+    // green garden tops. Decorative. Follows the villa SOLIDS so the Phase 1
+    // layout pass can move them.
     // NOTE: no collision solids — MIN_ALTITUDE keeps Meg >=3m above terrain,
     // so she can only graze the tallest garden top (3.25m). If the flight
     // floor is ever lowered, add SOLIDS for these.
     const stone = toon(0x9a9a92), garden = toon(0x6aa86a);
-    const terrace = (x0: number, x1: number, yTop: number, z0: number, z1: number) => {
-      const h = yTop; // base at y=0 (terrain)
+    const terrace = (x0: number, x1: number, yBase: number, yTop: number, z0: number, z1: number) => {
+      const h = yTop - yBase; // wall rises from the terrain to yTop
       const wall = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, h, z1 - z0), stone);
-      wall.position.set((x0 + x1) / 2, h / 2, (z0 + z1) / 2);
+      wall.position.set((x0 + x1) / 2, yBase + h / 2, (z0 + z1) / 2);
       wall.castShadow = true; wall.receiveShadow = true; g.add(wall);
       const top = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 - 0.6, 0.25, z1 - z0 - 0.6), garden);
-      top.position.set((x0 + x1) / 2, h + 0.12, (z0 + z1) / 2);
+      top.position.set((x0 + x1) / 2, yTop + 0.12, (z0 + z1) / 2);
       top.receiveShadow = true; g.add(top);
     };
-    // Villa 1 (x:100..120, z:-15..5): terraces step west toward the bay.
-    terrace(90, 100, 1.5, -15, 5);
-    terrace(94, 100, 3, -11, 1);
-    // Villa 2 (x:125..140, z:5..25): terraces step west toward the bay.
-    terrace(115, 125, 1.5, 5, 25);
-    terrace(119, 125, 3, 9, 21);
+    // Villa 1 and Villa 2: terraces step north toward the loop road's north leg (u1–u4).
+    for (const vi of [17, 18]) {
+      const v = SOLIDS[vi];
+      const yBase = v.min.y;
+      terrace(v.min.x, v.max.x, yBase, yBase + 1.5, v.max.z, v.max.z + 4.5);
+      terrace(v.min.x + 4, v.max.x - 4, yBase, yBase + 3, v.max.z + 2.25, v.max.z + 4.5);
+    }
   }
 
   private makeHero(): void {
