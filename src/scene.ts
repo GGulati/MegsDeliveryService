@@ -183,7 +183,105 @@ export class GameRenderer {
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
     this.makeClockTower(g); this.makeObservatoryDome(g);
     this.makeBakeryDormer(g); this.makeMansionTerraces(g); this.makeBoats(g);
+    this.makeLaundryLines(g); this.makeDockDressing(g); this.makeStreetLamps(g);
     return g;
+  }
+
+  private makeLaundryLines(g: THREE.Group): void {
+    // Clotheslines strung between old-town buildings, with colorful cloth.
+    const lineMat = toon(0x4a3f35);
+    const clothMats = [toon(0xff8baa), toon(0x7fb8e8), toon(0xffffff), toon(0xffd94a), toon(0x9ad67f)];
+    const lines: [number, number, number, number, number, number][] = [
+      // [x1, y1, z1, x2, y2, z2] — between neighboring old-town facades
+      [-25, 9, -50, -20, 9, -32],  // bldg(-45..-25) to bldg(-40..-20)
+      [5, 11, -50, 15, 11, -45],   // bldg(-25..5) to bldg(15..35)
+      [-20, 8, -22, 15, 8, -28],   // bldg(-40..-20) to bldg(15..35)
+    ];
+    const rnd = mulberry32(42);
+    lines.forEach(([x1, y1, z1, x2, y2, z2]) => {
+      const a = new THREE.Vector3(x1, y1, z1), b = new THREE.Vector3(x2, y2, z2);
+      const len = a.distanceTo(b);
+      // Sagging line: thin cylinder segments.
+      const segs = 12;
+      let prev = a.clone();
+      for (let sIdx = 1; sIdx <= segs; sIdx++) {
+        const t = sIdx / segs;
+        const p = a.clone().lerp(b, t); p.y -= Math.sin(t * Math.PI) * 0.8;
+        const segLen = prev.distanceTo(p);
+        const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, segLen, 4), lineMat);
+        seg.position.copy(prev).lerp(p, 0.5);
+        seg.lookAt(p); seg.rotateX(Math.PI / 2);
+        g.add(seg);
+        prev = p;
+      }
+      // Cloth pieces hanging from the line.
+      const nCloth = Math.floor(len / 3);
+      for (let c = 0; c < nCloth; c++) {
+        const t = (c + 0.7) / (nCloth + 0.4);
+        const p = a.clone().lerp(b, t); p.y -= Math.sin(t * Math.PI) * 0.8;
+        const w = 0.9 + rnd() * 0.5, h = 1.1 + rnd() * 0.5;
+        const cloth = new THREE.Mesh(new THREE.PlaneGeometry(w, h), clothMats[Math.floor(rnd() * clothMats.length)]);
+        cloth.position.set(p.x, p.y - h / 2, p.z);
+        cloth.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) + Math.PI / 2;
+        (cloth.material as THREE.Material).side = THREE.DoubleSide;
+        g.add(cloth);
+      }
+    });
+  }
+
+  private makeDockDressing(g: THREE.Group): void {
+    // Crates, barrels, and coiled ropes on the harbor piers.
+    const crateMat = toon(0xa8763e), barrelMat = toon(0x7a5230), ropeMat = toon(0xc9b489);
+    const docks: [number, number][] = [[-15, 50], [-15, 70], [-15, 90], [50, 60], [50, 80], [50, 100]];
+    const rnd = mulberry32(7);
+    docks.forEach(([dx, dz]) => {
+      // Crates: stacked boxes near the dock edge.
+      const nCrates = 2 + Math.floor(rnd() * 3);
+      for (let c = 0; c < nCrates; c++) {
+        const s = 1.1 + rnd() * 0.5;
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
+        crate.position.set(dx - 10 + rnd() * 20, 1.15 + s / 2 + (c === 2 ? 1.4 : 0), dz - 3 + rnd() * 6);
+        crate.rotation.y = rnd() * 0.6;
+        crate.castShadow = true;
+        g.add(crate);
+      }
+      // Barrels: cylinders.
+      for (let b = 0; b < 2; b++) {
+        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 1.5, 10), barrelMat);
+        barrel.position.set(dx - 8 + rnd() * 16, 1.9, dz - 2.5 + rnd() * 5);
+        barrel.castShadow = true;
+        g.add(barrel);
+      }
+      // Coiled rope: flat torus.
+      const rope = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.18, 8, 16), ropeMat);
+      rope.position.set(dx - 6 + rnd() * 12, 1.25, dz - 2 + rnd() * 4);
+      rope.rotation.x = Math.PI / 2;
+      g.add(rope);
+    });
+  }
+
+  private makeStreetLamps(g: THREE.Group): void {
+    // Warm lamp posts along merchant row and the old-town square.
+    const poleMat = toon(0x3a3a42), lampMat = toon(0xffd98a);
+    const spots: [number, number][] = [
+      [-70, 30], [-62, 42], [-78, 48],          // merchant row west
+      [-92, 12], [-92, 20],                      // merchant row north
+      [-47, 24], [-47, 32],                      // merchant row east
+      [-10, -40], [10, -40], [-10, -55], [10, -55], // old-town square
+    ];
+    spots.forEach(([x, z]) => {
+      const y0 = 0; // town core is flat
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 4.2, 8), poleMat);
+      pole.position.set(x, y0 + 2.1, z);
+      pole.castShadow = true;
+      g.add(pole);
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.35, 8), poleMat);
+      cap.position.set(x, y0 + 4.55, z);
+      g.add(cap);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), lampMat);
+      lamp.position.set(x, y0 + 4.2, z);
+      g.add(lamp);
+    });
   }
 
   private makeBoats(g: THREE.Group): void {
@@ -434,52 +532,62 @@ export class GameRenderer {
   }
 
   private makeWalledGarden(g: THREE.Group, s: { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number } }, seed: number): void {
+    // Per-villa layouts: the west side is open to the existing terraced platforms
+    // (which step down toward the bay), and walls stop short of the neighboring villa.
+    // Villa 1: x 100..120, z -15..5. Villa 2: x 125..140, z 5..25.
     const cx = (s.min.x + s.max.x) / 2, cz = (s.min.z + s.max.z) / 2;
-    const sx = s.max.x - s.min.x, sz = s.max.z - s.min.z;
     const groundY = s.min.y;
-    const wallMat = toon(0xb8b0a0), hedgeMat = toon(0x3d8a5f), soilMat = toon(0x6b4a2f);
+    const wallMat = toon(0xb8b0a0), capMat = toon(0xd8d0c0), hedgeMat = toon(0x3d8a5f), soilMat = toon(0x6b4a2f);
     const flowerMats = [toon(0xff8baa), toon(0xffd94a), toon(0xffffff)];
-    // Low stone wall around the property, 6m out, with a 3m driveway gap at front center.
-    const off = 6, wx1 = cx - sx / 2 - off, wx2 = cx + sx / 2 + off;
-    const wz1 = cz - sz / 2 - off, wz2 = cz + sz / 2 + off;
-    const wallH = 0.9, wallT = 0.5;
-    const walls: [number, number, number, number][] = [
-      // [centerX, centerZ, lengthX, lengthZ]
-      [(wx1 + cx - 1.5) / 2, wz2, (cx - 1.5) - wx1, wallT],
-      [(cx + 1.5 + wx2) / 2, wz2, wx2 - (cx + 1.5), wallT],
-      [cx, wz1, wx2 - wx1, wallT],
-      [wx1, cz, wallT, wz2 - wz1],
-      [wx2, cz, wallT, wz2 - wz1],
-    ];
+    const isVilla1 = cx < 120;
+    // Walls: [centerX, centerZ, lenX, lenZ]. Hedges: same format. Beds: [x, z].
+    let walls: [number, number, number, number][];
+    let hedges: [number, number, number, number][];
+    let beds: [number, number][];
+    if (isVilla1) {
+      walls = [
+        [109, -21, 30, 0.5],   // north
+        [108, 11, 28, 0.5],    // south (stops before villa 2's zone)
+        [124, -5, 0.5, 32],    // east
+      ];
+      hedges = [
+        [109, -19.5, 26, 0.8],
+        [108, 9.5, 24, 0.8],
+        [122.5, -5, 0.8, 28],
+      ];
+      beds = [[104, -17.5], [114, -17.5], [104, 7.5], [114, 7.5]];
+    } else {
+      walls = [
+        [136, -1, 20, 0.5],    // north (starts clear of villa 1)
+        [132.5, 31, 27, 0.5],  // south
+        [146, 15, 0.5, 32],    // east
+      ];
+      hedges = [
+        [136, 0.5, 16, 0.8],
+        [132.5, 29.5, 23, 0.8],
+        [144.5, 15, 0.8, 28],
+      ];
+      beds = [[131, 2.8], [139, 2.8], [131, 27.2], [139, 27.2]];
+    }
+    const wallH = 0.9;
     walls.forEach(([x, z, lx, lz]) => {
       const w = new THREE.Mesh(new THREE.BoxGeometry(lx, wallH, lz), wallMat);
       w.position.set(x, groundY + wallH / 2, z);
       w.castShadow = true;
       g.add(w);
-      // Cap stones.
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(lx + 0.15, 0.12, lz + 0.15), toon(0xd8d0c0));
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(lx + 0.15, 0.12, lz + 0.15), capMat);
       cap.position.set(x, groundY + wallH + 0.06, z);
       g.add(cap);
     });
-    // Formal hedges: rectangle inside the walls.
-    const hx1 = wx1 + 1.5, hx2 = wx2 - 1.5, hz1 = wz1 + 1.5, hz2 = wz2 - 1.5;
-    const hedgeH = 1.0, hedgeT = 0.8;
-    [
-      [(hx1 + hx2) / 2, hz1, hx2 - hx1, hedgeT],
-      [(hx1 + hx2) / 2, hz2, hx2 - hx1, hedgeT],
-      [hx1, (hz1 + hz2) / 2, hedgeT, hz2 - hz1],
-      [hx2, (hz1 + hz2) / 2, hedgeT, hz2 - hz1],
-    ].forEach(([x, z, lx, lz]) => {
+    const hedgeH = 1.0;
+    hedges.forEach(([x, z, lx, lz]) => {
       const h = new THREE.Mesh(new THREE.BoxGeometry(lx, hedgeH, lz), hedgeMat);
       h.position.set(x, groundY + hedgeH / 2, z);
       h.castShadow = true;
       g.add(h);
     });
-    // Four symmetric flower beds inside the hedges.
     const rnd = mulberry32(seed * 131 + 11);
-    const bedOffX = (hx2 - hx1) * 0.22, bedOffZ = (hz2 - hz1) * 0.22;
-    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([qx, qz]) => {
-      const bx = cx + qx * bedOffX, bz = cz + qz * bedOffZ;
+    beds.forEach(([bx, bz]) => {
       const bed = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.4, 2.4), soilMat);
       bed.position.set(bx, groundY + 0.2, bz);
       g.add(bed);
