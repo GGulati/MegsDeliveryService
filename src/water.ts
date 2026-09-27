@@ -1,37 +1,17 @@
 import * as THREE from 'three';
 import { heightAt } from './terrain';
 
-/** Size of the baked heightmap texture (covers the 440x440 terrain). */
-const HEIGHTMAP_SIZE = 512;
+/** Water plane resolution matches the terrain mesh so depth interpolates smoothly. */
+const WATER_SEGMENTS = 200;
 const WORLD_SIZE = 440;
-/** Height range encoded in the byte texture: [-12, +8] meters. */
-const H_MIN = -12, H_RANGE = 20;
-
-/** Bakes heightAt into a byte texture so the water shader can discover depth.
- *  Uses UnsignedByteType (not FloatType): linear filtering on float textures
- *  requires OES_texture_float_linear, which is ~unsupported everywhere and
- *  silently falls back to nearest — the blocky-water bug. Bytes filter universally. */
-function bakeHeightmap(): THREE.DataTexture {
-  const data = new Uint8Array(HEIGHTMAP_SIZE * HEIGHTMAP_SIZE);
-  for (let j = 0; j < HEIGHTMAP_SIZE; j++) {
-    for (let i = 0; i < HEIGHTMAP_SIZE; i++) {
-      const x = (i / (HEIGHTMAP_SIZE - 1) - 0.5) * WORLD_SIZE;
-      const z = (j / (HEIGHTMAP_SIZE - 1) - 0.5) * WORLD_SIZE;
-      const h = heightAt(x, z);
-      const enc = Math.round(((h - H_MIN) / H_RANGE) * 255);
-      data[j * HEIGHTMAP_SIZE + i] = Math.max(0, Math.min(255, enc));
-    }
-  }
-  const tex = new THREE.DataTexture(data, HEIGHTMAP_SIZE, HEIGHTMAP_SIZE, THREE.RedFormat, THREE.UnsignedByteType);
-  tex.needsUpdate = true;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  return tex;
-}
 
 const waterVert = /* glsl */`
+  precision highp float;
+  attribute float aDepth;
+  varying float vDepth;
   varying vec2 vWorldXZ;
   void main() {
+    vDepth = aDepth;
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vWorldXZ = wp.xz;
     gl_Position = projectionMatrix * viewMatrix * wp;
@@ -40,16 +20,13 @@ const waterVert = /* glsl */`
 
 const waterFrag = /* glsl */`
   precision highp float;
-  uniform sampler2D uHeightmap;
   uniform float uTime;
+  varying float vDepth;
   varying vec2 vWorldXZ;
 
   void main() {
-    vec2 uv = vWorldXZ / ${WORLD_SIZE}.0 + 0.5;
-    float terrainH = texture2D(uHeightmap, uv).r * ${H_RANGE}.0 + (${H_MIN}.0);
-    float depth = -terrainH; // water surface at y=0
-
-    if (depth < 0.02) discard; // land at/above water — show terrain, not water
+    float depth = vDepth; // smoothly interpolated from per-vertex CPU depth
+    if (depth < 0.02) discard;
 
     // Depth ramp: pale turquoise shallows -> blue -> deep navy.
     vec3 shallow = vec3(0.55, 0.90, 0.85);
@@ -59,13 +36,11 @@ const waterFrag = /* glsl */`
       ? mix(shallow, mid, depth / 2.5)
       : mix(mid, deep, clamp((depth - 2.5) / 7.0, 0.0, 1.0));
 
-    // Foam hugs the shoreline in smooth bands. Layered sine waves give an
-    // organic edge without hash noise (which dithers in mediump precision).
+    // Foam hugs the shoreline in smooth sine-driven bands.
     float foamBand = 1.0 - smoothstep(0.05, 0.5, depth);
     float w1 = sin(vWorldXZ.x * 0.55 + uTime * 0.9) * sin(vWorldXZ.y * 0.48 - uTime * 0.7);
     float w2 = sin((vWorldXZ.x + vWorldXZ.y) * 0.23 + uTime * 0.5);
-    float foamEdge = smoothstep(0.15, 0.85, 0.5 + 0.32 * w1 + 0.18 * w2);
-    float foam = foamBand * foamEdge;
+    float foam = foamBand * smoothstep(0.15, 0.85, 0.5 + 0.32 * w1 + 0.18 * w2);
     col = mix(col, vec3(0.98, 0.99, 0.98), foam * 0.85);
 
     // Gentle stylized ripple light.
@@ -81,15 +56,20 @@ export interface WaterMesh {
   update(time: number): void;
 }
 
-/** One water plane for the whole world. Depth is discovered from the heightfield,
- *  so the coastline never needs a separate polygon — sand, foam, and color all
- *  follow the true terrain. */
+/** One water plane for the whole world. Depth is computed per-vertex on the CPU
+ *  from heightAt and interpolated — no heightmap texture, so there's nothing
+ *  to mis-filter and no pixelation. The coastline follows the true terrain. */
 export function buildWater(): WaterMesh {
-  const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, 1, 1);
+  const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, WATER_SEGMENTS, WATER_SEGMENTS);
   geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  const depths = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    depths[i] = -heightAt(pos.getX(i), pos.getZ(i)); // water surface at y=0
+  }
+  geo.setAttribute('aDepth', new THREE.BufferAttribute(depths, 1));
   const mat = new THREE.ShaderMaterial({
     uniforms: {
-      uHeightmap: { value: bakeHeightmap() },
       uTime: { value: 0 },
     },
     vertexShader: waterVert,
