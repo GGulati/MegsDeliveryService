@@ -378,21 +378,21 @@ export class GameRenderer {
         // Painted markings as flat decals above the asphalt base (never
         // coplanar): stop lines + crosswalks in white, sidewalk corner
         // fillets in sidewalk color. Layout is pure geometry from road-deck.
-        // 3cm lift + polygon offset: 1.5cm shimmered at distance (depth
-        // precision); the offset pulls decals toward the camera in depth
-        // without a visible float.
+        // 8cm lift + polygon offset: mobile GPUs (16-bit depth) need more
+        // separation than desktop; the offset pulls decals toward the camera
+        // in depth without a visible float.
         const { white, walk } = intersectionMarkings(ix);
         for (const q of white)
-          quad(whitePos, whiteNor, whiteIdx, H + 0.03, q[0], q[1], q[2], q[3]);
+          quad(whitePos, whiteNor, whiteIdx, H + 0.08, q[0], q[1], q[2], q[3]);
         for (const q of walk)
-          quad(walkPos, walkNor, walkIdx, H + 0.035, q[0], q[1], q[2], q[3]);
+          quad(walkPos, walkNor, walkIdx, H + 0.085, q[0], q[1], q[2], q[3]);
       }
       // Emit the merged marking meshes.
       const markMat = toon(0xf5f1e6);
       markMat.side = THREE.DoubleSide;
       markMat.polygonOffset = true;
-      markMat.polygonOffsetFactor = -2;
-      markMat.polygonOffsetUnits = -2;
+      markMat.polygonOffsetFactor = -4;
+      markMat.polygonOffsetUnits = -4;
       if (whiteIdx.length) {
         const wgeo = new THREE.BufferGeometry();
         wgeo.setAttribute('position', new THREE.Float32BufferAttribute(whitePos, 3));
@@ -405,8 +405,8 @@ export class GameRenderer {
       const walkMat = toon(0xb8b0a0);
       walkMat.side = THREE.DoubleSide;
       walkMat.polygonOffset = true;
-      walkMat.polygonOffsetFactor = -2;
-      walkMat.polygonOffsetUnits = -2;
+      walkMat.polygonOffsetFactor = -4;
+      walkMat.polygonOffsetUnits = -4;
       if (walkIdx.length) {
         const fgeo = new THREE.BufferGeometry();
         fgeo.setAttribute('position', new THREE.Float32BufferAttribute(walkPos, 3));
@@ -450,7 +450,8 @@ export class GameRenderer {
         dash.rotation.x = -Math.PI / 2;
         dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
         // Match the ribbon height (follows the clip ramp like the road itself).
-        const dy = ribbonHeightAt(e, (d + 1) / len) + 0.03;
+        // 8cm lift: mobile GPUs (16-bit depth) need more separation.
+        const dy = ribbonHeightAt(e, (d + 1) / len) + 0.08;
         dash.position.set(dp.x, dy, dp.z);
         g.add(dash);
       }

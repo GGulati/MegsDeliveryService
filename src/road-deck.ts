@@ -372,12 +372,13 @@ export function intersections(): Intersection[] {
       for (let j = i + 1; j < intersectionCache.length; j++) {
         const a = intersectionCache[i], b = intersectionCache[j];
         if (!zonesOverlap(a, b)) continue;
-        if (Math.abs(a.height - b.height) < 0.05) {
+        if (Math.abs(a.height - b.height) < 0.10) {
           // Deterministic: raise the higher, or the larger nodeId on ties.
+          // 10cm: mobile GPUs (16-bit depth) need more separation.
           const target = a.height === b.height
             ? (a.nodeId > b.nodeId ? a : b)
             : (a.height > b.height ? a : b);
-          target.height = Math.max(a.height, b.height) + 0.05;
+          target.height = Math.max(a.height, b.height) + 0.10;
           // Keep ring/tris in sync: the mesh is single-height by construction.
           for (const v of target.ring) v.h = target.height;
           for (const tri of target.tris) for (const v of tri) v.h = target.height;
