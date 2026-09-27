@@ -62,7 +62,7 @@ export const SOLIDS: Solid[] = [
   // Old Town (3-4 story, dense).
   { min: { x: -45, y: 3, z: -70 }, max: { x: -25, y: 15, z: -50 }, district: 'old-town' },
   { min: { x: 15, y: 3, z: -70 }, max: { x: 35, y: 15, z: -50 }, district: 'old-town' },
-  { min: { x: -40, y: 3, z: -35 }, max: { x: -20, y: 16, z: -15 }, district: 'old-town' },
+  { min: { x: -40, y: 3, z: -32 }, max: { x: -20, y: 16, z: -12 }, district: 'old-town' },
   { min: { x: 15, y: 3, z: -45 }, max: { x: 35, y: 16, z: -28 }, district: 'old-town' },
   // Merchant Row shops (2 story).
   { min: { x: -100, y: 3, z: 8 }, max: { x: -85, y: 11, z: 22 }, district: 'merchant-row' },
@@ -78,7 +78,7 @@ export const SOLIDS: Solid[] = [
   { min: { x: 85, y: 3, z: -30 }, max: { x: 98, y: 14, z: -15 }, district: 'observatory-rise' },
   // Phase B landmarks (collision only; visuals drawn by dedicated scene methods).
   // Clock tower: tallest in the town core, shorter than the lighthouse.
-  { min: { x: 3, y: 3, z: -79 }, max: { x: 13, y: 25, z: -69 }, district: 'old-town' },
+  { min: { x: 1, y: 3, z: -79 }, max: { x: 11, y: 25, z: -69 }, district: 'old-town' },
   // Observatory dome: sits on the Hill Observatory roof, offset from the pad.
   { min: { x: 102.5, y: 31, z: -67.5 }, max: { x: 111.5, y: 38.5, z: -58.5 }, district: 'observatory-rise' },
   { min: { x: 83, y: 3, z: 113 }, max: { x: 93, y: 29, z: 123 } },

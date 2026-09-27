@@ -339,7 +339,7 @@ export class GameRenderer {
   private makeClockTower(g: THREE.Group): void {
     // Old Town clock tower: tallest in the town core, shorter than the lighthouse.
     // Sandstone shaft, clock faces on all four sides, pointed terracotta roof.
-    const cx = 8, cz = -74; // center of the clock-tower SOLIDS
+    const cx = 6, cz = -74; // center of the clock-tower SOLIDS
     const sandstone = toon(0xd4a574), terracotta = toon(0xb65c3f), trim = toon(0xffdfaa);
     const shaft = new THREE.Mesh(new THREE.BoxGeometry(8, 20, 8), sandstone);
     shaft.position.set(cx, 13, cz); shaft.castShadow = true; g.add(shaft); // y: 3..23
