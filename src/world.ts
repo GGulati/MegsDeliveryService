@@ -57,8 +57,8 @@ export const DOCK_BOATS: [number, number][] = [
  *  The north edge includes the terraced platforms stepping to the loop road;
  *  the shared east/west boundary splits the gap between the villas. */
 export const MANSION_GROUNDS: [number, number, number, number][] = [
-  [-86, -193.5, -58.75, -163],   // Villa 1 grounds
-  [-58.75, -193.5, -36.5, -163], // Villa 2 grounds
+  [-86.5, -191.5, -60, -163.5],   // Villa 1 grounds (3.5m road clearance)
+  [-60, -191.5, -33.5, -163.5], // Villa 2 grounds (3.5m road clearance)
 ];
 
 // The pads are deliberately separated by broad streets: they are landmarks, not gates.

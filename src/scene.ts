@@ -485,6 +485,13 @@ export class GameRenderer {
     // Stone foundation material for hillside lots (fills the downhill gap so
     // houses sit on slopes without floating or terrain poking through).
     const foundationMat = toon(0x8a7f72);
+    // Driveway material: packed dirt path connecting each house to its road.
+    const drivewayMat = toon(0xb8a88a);
+    // Non-bridge road segments for driveway connections (bridges are elevated).
+    const roadSegs = ROAD_EDGES.filter(e => e.kind !== 'bridge').map(e => {
+      const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
+      return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
+    });
     lots.forEach((lot, li) => {
       const terr = lotTerrain(lot.x, lot.z, lot.w, lot.d);
       // House floor sits on the highest terrain under the footprint (matches
@@ -506,6 +513,39 @@ export class GameRenderer {
         lot.district, LOT_SEED_BASE + li, li, lot.bayWindow,
         bodyColor, pal.roofs[li % pal.roofs.length]);
       this.blockers.push(solidBlocker(infillSolids[li]));
+      // Driveway: a 3m dirt path from the lot edge to the nearest road tube.
+      // Every house gets a visible road connection (user feedback 2026-09-27).
+      const cx = lot.x + lot.w / 2, cz = lot.z + lot.d / 2;
+      let bpx = 0, bpz = 0, bdist = Infinity;
+      for (const s of roadSegs) {
+        const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+        const len2 = dx * dx + dz * dz;
+        let t = len2 > 0 ? ((cx - s.x0) * dx + (cz - s.z0) * dz) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const px = s.x0 + t * dx, pz = s.z0 + t * dz;
+        const d = Math.hypot(cx - px, cz - pz);
+        if (d < bdist) { bdist = d; bpx = px; bpz = pz; }
+      }
+      if (bdist < Infinity && bdist > 0.5) {
+        const dirX = bpx - cx, dirZ = bpz - cz;
+        const dist = Math.hypot(dirX, dirZ);
+        const nx = dirX / dist, nz = dirZ / dist;
+        // Start at the lot AABB edge along the road direction.
+        const eAlong = (lot.w * Math.abs(nx) + lot.d * Math.abs(nz)) / 2;
+        const sx = cx + nx * eAlong, sz = cz + nz * eAlong;
+        // End at the road tube edge (2.8m radius) so the path meets the asphalt.
+        const ex = bpx - nx * 2.8, ez = bpz - nz * 2.8;
+        const dlen = Math.hypot(ex - sx, ez - sz);
+        if (dlen > 1.5) {
+          const mx = (sx + ex) / 2, mz = (sz + ez) / 2;
+          const my = (heightAt(sx, sz) + heightAt(ex, ez)) / 2 + 0.1;
+          const drive = new THREE.Mesh(new THREE.BoxGeometry(3, 0.18, dlen), drivewayMat);
+          drive.position.set(mx, my, mz);
+          drive.rotation.y = Math.atan2(ex - sx, ez - sz);
+          drive.receiveShadow = true;
+          g.add(drive);
+        }
+      }
     });
 
     this.buildFacadeInstances(g, F, { trimMat, glassMat, litMat, doorMat, leafMat, petalMat });
@@ -747,6 +787,32 @@ export class GameRenderer {
         g.add(fl);
       }
     });
+    // Sprawling parkland: specimen trees in the open lawns (not just formal
+    // hedges/beds) so the grounds read as an expansive estate, not a walled
+    // courtyard. Deterministic placement.
+    const treeSpots: [number, number][] = [];
+    const southZ0 = gz0 + 5, southZ1 = s.min.z - 4;
+    if (southZ1 - southZ0 > 6) {
+      const n = Math.max(2, Math.floor((gx1 - gx0 - 10) / 11));
+      for (let i = 0; i < n; i++) {
+        const tx = gx0 + 7 + (i + 0.5) * ((gx1 - gx0 - 14) / n) + (rnd() - 0.5) * 3;
+        const tz = (southZ0 + southZ1) / 2 + (rnd() - 0.5) * 2;
+        treeSpots.push([tx, tz]);
+      }
+    }
+    if (!sharedWest && s.min.x - gx0 > 9) treeSpots.push([(gx0 + s.min.x) / 2, (southZ0 + southZ1) / 2]);
+    if (!sharedEast && gx1 - s.max.x > 9) treeSpots.push([(s.max.x + gx1) / 2, (southZ0 + southZ1) / 2]);
+    const trunkMat = toon(0x744a36), crownMat = toon(0x4d976b);
+    for (const [tx, tz] of treeSpots) {
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.65, 3.2, 7), trunkMat);
+      trunk.position.set(tx, groundY + 1.6, tz);
+      trunk.castShadow = true;
+      g.add(trunk);
+      const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(3, 1), crownMat);
+      crown.position.set(tx, groundY + 5, tz);
+      crown.castShadow = true;
+      g.add(crown);
+    }
   }
 
   private makeGreenery(g: THREE.Group): void {
