@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { heightAt, surfaceColor, canGrow, SEA_LEVEL } from '../src/terrain';
+import { heightAt, surfaceColor, bakeTerrainTexture, canGrow, SEA_LEVEL } from '../src/terrain';
 import { isInBay } from '../src/world';
 
 test('heightAt is deterministic', () => {
@@ -105,6 +105,29 @@ test('surfaceColor: rock on high hilltops', () => {
 test('surfaceColor is deterministic', () => {
   const a = surfaceColor(37, -42), b = surfaceColor(37, -42);
   assert.deepStrictEqual(a, b);
+});
+
+test('bakeTerrainTexture matches surfaceColor', () => {
+  // Pin the two color-math copies together (stencil ≈ 1.5m smoothing).
+  // The K=1 stencil at 256 (1.7m) vs old 1.5m can flip the rock threshold
+  // on steep hills; allow a handful of such outliers (<0.5%).
+  const TEX = 256;
+  const baked = bakeTerrainTexture(TEX);
+  let bad = 0, total = 0;
+  for (let py = 4; py < TEX - 4; py += 2) {
+    for (let px = 4; px < TEX - 4; px += 2) {
+      total++;
+      const x = (px / (TEX - 1) - 0.5) * 440;
+      const z = (0.5 - py / (TEX - 1)) * 440;
+      const [r, g, b] = surfaceColor(x, z);
+      const o = (py * TEX + px) * 4;
+      const dr = Math.abs(baked[o] - Math.round(r * 255));
+      const dg = Math.abs(baked[o + 1] - Math.round(g * 255));
+      const db = Math.abs(baked[o + 2] - Math.round(b * 255));
+      if (Math.max(dr, dg, db) > 30) bad++;
+    }
+  }
+  assert.ok(bad / total < 0.005, `${bad}/${total} texels differ by >30 from surfaceColor`);
 });
 
 test('canGrow: true on inland grass, false on beach/water/rock', () => {

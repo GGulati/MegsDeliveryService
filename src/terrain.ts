@@ -168,61 +168,64 @@ export function canGrow(x: number, z: number): boolean {
 }
 
 /**
- * Surface color at (x, z) as [r,g,b]. Height-and-slope ramps with mottling:
- * seabed sand under water, beach sand at the waterline (bay shore and open coast),
- * grass on the town lowland and gentle hills, rock on hilltops and steep slopes.
- * Pure function of the heightfield.
- */
-/**
  * Bake the ground texture from a precomputed terrain grid. Runs computeTerrain
  * once per texel instead of 5x per texel (the slope finite differences reuse
- * the grid) — same visual result, ~5x faster. Startup-only.
+ * the grid) — ~4x faster wall-clock. Startup-only.
  */
 export function bakeTerrainTexture(TEX: number): Uint8ClampedArray {
-  const N = TEX;
-  const hs = new Float32Array(N * N);
-  const bays = new Float32Array(N * N);
-  const oceans = new Float32Array(N * N);
+  const hs = new Float32Array(TEX * TEX);
+  const bays = new Float32Array(TEX * TEX);
+  const oceans = new Float32Array(TEX * TEX);
   const step = 440 / (TEX - 1);
-  for (let py = 0; py < N; py++) {
-    for (let px = 0; px < N; px++) {
+  for (let py = 0; py < TEX; py++) {
+    for (let px = 0; px < TEX; px++) {
       const x = (px / (TEX - 1) - 0.5) * 440;
       const z = (0.5 - py / (TEX - 1)) * 440;
       const t = computeTerrain(x, z);
-      const i = py * N + px;
+      const i = py * TEX + px;
       hs[i] = t.h; bays[i] = t.bayT; oceans[i] = t.oceanT;
     }
   }
   const data = new Uint8ClampedArray(TEX * TEX * 4);
   for (let py = 0; py < TEX; py++) {
     for (let px = 0; px < TEX; px++) {
-      const i = py * N + px;
-      const h = hs[i], bayT = bays[i], oceanT = oceans[i];
+      const i = py * TEX + px;
       const x = (px / (TEX - 1) - 0.5) * 440;
       const z = (0.5 - py / (TEX - 1)) * 440;
-      // Slope from grid central differences (clamped at edges).
-      const xm = hs[py * N + Math.max(px - 1, 0)], xp = hs[py * N + Math.min(px + 1, N - 1)];
-      const zm = hs[Math.max(py - 1, 0) * N + px], zp = hs[Math.min(py + 1, N - 1) * N + px];
-      const slope = Math.hypot((xp - xm) / (2 * step), (zp - zm) / (2 * step));
-
-      const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
-      let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
-      c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
-      const seabedT = smoothstep(-0.8, -1.6, h);
-      c = lerp3(c, SEABED, seabedT);
-      const rockT = smoothstep(0.45, 0.75, slope);
-      if (rockT > 0) c = lerp3(c, ROCK, rockT);
-      const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9, 3) * 0.07;
-      const o = (py * TEX + px) * 4;
-      data[o] = Math.round(c[0] * m * 255);
-      data[o + 1] = Math.round(c[1] * m * 255);
-      data[o + 2] = Math.round(c[2] * m * 255);
-      data[o + 3] = 255;
+      // Slope from grid central differences. Stencil half-width ≈ 1.5m,
+      // matching the smoothing the old per-pixel finite differences used —
+      // keeps rock bands identical (narrower stencils turn beaches to rock).
+      const K = Math.max(1, Math.round(1.5 / step));
+      const xm = hs[py * TEX + Math.max(px - K, 0)], xp = hs[py * TEX + Math.min(px + K, TEX - 1)];
+      const zm = hs[Math.max(py - K, 0) * TEX + px], zp = hs[Math.min(py + K, TEX - 1) * TEX + px];
+      const slope = Math.hypot((xp - xm) / (2 * K * step), (zp - zm) / (2 * K * step));
+      const [r, g, b] = shade(hs[i], bays[i], oceans[i], slope, x, z);
+      const o = i * 4;
+      data[o] = r; data[o + 1] = g; data[o + 2] = b; data[o + 3] = 255;
     }
   }
   return data;
 }
 
+/** Shared color-ramp: height/water/slope → [r,g,b] 0-255. Used by both surfaceColor and bakeTerrainTexture. */
+function shade(h: number, bayT: number, oceanT: number, slope: number, x: number, z: number): [number, number, number] {
+  const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
+  let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
+  c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
+  const seabedT = smoothstep(-0.8, -1.6, h);
+  c = lerp3(c, SEABED, seabedT);
+  const rockT = smoothstep(0.45, 0.75, slope);
+  if (rockT > 0) c = lerp3(c, ROCK, rockT);
+  const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9, 3) * 0.07;
+  return [Math.round(c[0] * m * 255), Math.round(c[1] * m * 255), Math.round(c[2] * m * 255)];
+}
+
+/**
+ * Surface color at (x, z) as [r,g,b]. Height-and-slope ramps with mottling:
+ * seabed sand under water, beach sand at the waterline (bay shore and open coast),
+ * grass on the town lowland and gentle hills, rock on hilltops and steep slopes.
+ * Pure function of the heightfield.
+ */
 export function surfaceColor(x: number, z: number): [number, number, number] {
   const { h, bayT, oceanT } = computeTerrain(x, z);
 
@@ -234,25 +237,12 @@ export function surfaceColor(x: number, z: number): [number, number, number] {
 
   // Water proximity: in/near the bay, or in the open-coast transition.
   const nearWater = Math.max(bayT, smoothstep(0.02, 0.25, oceanT));
-
-  // Base: grass lowland, rock highland.
   let c = lerp3(GRASS, ROCK, smoothstep(3.0, 5.5, h));
-
-  // Beach sand where land meets water — smooth band, not a hard step, so the
-  // vertex-color interpolation doesn't draw the triangle grid.
   c = lerp3(c, SAND, nearWater * smoothstep(-1.5, -0.3, h));
-
-  // Seabed under deeper water — blend in smoothly.
   const seabedT = smoothstep(-0.8, -1.6, h);
   c = lerp3(c, SEABED, seabedT);
-
-  // Steep slopes weather to rock regardless of height (cliffs, hill flanks).
   const rockT = smoothstep(0.45, 0.75, slope);
   if (rockT > 0) c = lerp3(c, ROCK, rockT);
-
-  // Mottling: subtle brightness noise so flat areas aren't plasticky.
-  // 3 octaves max — higher frequencies alias at the 2.2m vertex spacing and
-  // read as grain instead of soft variation.
   const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9, 3) * 0.07;
   return [c[0] * m, c[1] * m, c[2] * m];
 }

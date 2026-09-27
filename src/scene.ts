@@ -137,8 +137,8 @@ export class GameRenderer {
     g.add(water.mesh);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
-    // Surface color is baked into a 1024² texture (0.43m/texel) from the same
-    // surfaceColor function, so the GPU filters it smoothly per-pixel. Vertex
+    // Surface color is baked into a 1024² texture (0.43m/texel) by
+    // bakeTerrainTexture, so the GPU filters it smoothly per-pixel. Vertex
     // colors on the 2.2m mesh grid can't do this — they interpolate as visible
     // triangles. The heightfield still displaces the vertices.
     const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
