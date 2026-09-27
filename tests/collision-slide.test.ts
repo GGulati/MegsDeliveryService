@@ -123,8 +123,7 @@ test('iterated sweep slides through a narrow corridor without penetrating', () =
   // ending a frame inside either expanded box.
   state.mode = 'flight';
   state.player.position = { x: -57.5, y: 8, z: 10 };
-  state.player.yaw = Math.PI; // facing +z? yaw 0 = -z; use yaw PI for +z
-  state.player.yaw = 0;
+  state.player.yaw = 0; // yaw 0 = facing -z
   state.player.speed = 8; state.player.throttle = 8;
   state.player.hover = false; state.player.velocity = { x: 0, y: 0, z: 0 };
   // Step several frames moving in -z through the corridor region z 27..36.

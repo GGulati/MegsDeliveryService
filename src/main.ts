@@ -61,6 +61,7 @@ const ui = new UI(root, {
     state.player.position = { x: best.position.x, y: best.position.y + 5, z: best.position.z };
     state.player.velocity = { x: 0, y: 0, z: 0 };
     state.player.speed = 0;
+    state.player.throttle = 0; // else she re-launches at prior speed after rescue
     resume(); input?.clear(); persist(); draw(0);
   },
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
