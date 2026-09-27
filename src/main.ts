@@ -49,6 +49,20 @@ function fullscreen() { if (document.fullscreenElement) void document.exitFullsc
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
   pause: () => pause(), resume,
+  unstuck() {
+    if(!bootReady)return;
+    // Teleport to 5m above the nearest stop — stops are on clear pads/rooftops.
+    const p = state.player.position;
+    let best = STOPS[0], bestD = Infinity;
+    for (const s of STOPS) {
+      const d = (s.position.x - p.x) ** 2 + (s.position.z - p.z) ** 2;
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    state.player.position = { x: best.position.x, y: best.position.y + 5, z: best.position.z };
+    state.player.velocity = { x: 0, y: 0, z: 0 };
+    state.player.speed = 0;
+    resume(); input?.clear(); persist(); draw(0);
+  },
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
   quality() { lowQuality = !lowQuality; draw(0); },
   motion() { reducedMotion = !reducedMotion; draw(0); }, fullscreen,
