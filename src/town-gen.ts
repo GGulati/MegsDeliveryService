@@ -14,6 +14,30 @@ import type { Solid } from './types';
 /** Seed for the procedural town: same seed always yields the same town. */
 export const TOWN_SEED = 20260927;
 
+/** Max terrain height range across a lot footprint (m). Steeper lots are rejected.
+ *  Foundations fill up to this height — hillside houses get tall stone bases,
+ *  San Francisco style. */
+const MAX_LOT_SLOPE = 5;
+
+/**
+ * Terrain height range under a lot footprint (4 corners + center).
+ * Returns null if any sample is below water (unbuildable).
+ * Used to reject lots on water missed by the bay polygon and lots on
+ * slopes too steep to sit without clipping through the terrain
+ * (user feedback 2026-09-27).
+ */
+export function lotTerrain(x: number, z: number, w: number, d: number): { minH: number; maxH: number } | null {
+  const cx = x + w / 2, cz = z + d / 2;
+  const hs = [
+    heightAt(x, z), heightAt(x + w, z),
+    heightAt(x, z + d), heightAt(x + w, z + d),
+    heightAt(cx, cz),
+  ];
+  const minH = Math.min(...hs);
+  if (minH < MIN_LAND_Y) return null;
+  return { minH, maxH: Math.max(...hs) };
+}
+
 export interface Lot {
   /** Min corner of the axis-aligned footprint. */
   x: number; z: number;
@@ -210,6 +234,10 @@ export function generateLots(): Lot[] {
           // the shoreline can have its center on land while corners hang over
           // the water (user feedback 2026-09-27).
           if (isInBay(x, z) || isInBay(x + w, z) || isInBay(x, z + d) || isInBay(x + w, z + d)) continue;
+          // Terrain under the footprint: reject water missed by the bay polygon
+          // and slopes too steep to build on without clipping through terrain.
+          const terr = lotTerrain(x, z, w, d);
+          if (!terr || terr.maxH - terr.minH > MAX_LOT_SLOPE) continue;
           // Future park rectangle.
           if (aabbOverlap(x, z, x + w, z + d, PARK_RECT[0], PARK_RECT[1], PARK_RECT[2], PARK_RECT[3])) continue;
           // Mansion grounds: part of the house footprint (user feedback 2026-09-27).
@@ -279,6 +307,8 @@ export function generateLots(): Lot[] {
             if (!nearRoad) continue;
             if (heightAt(cx, cz) < MIN_LAND_Y) continue;
             if (isInBay(x, z) || isInBay(x + w, z) || isInBay(x, z + d) || isInBay(x + w, z + d)) continue;
+            const terr2 = lotTerrain(x, z, w, d);
+            if (!terr2 || terr2.maxH - terr2.minH > MAX_LOT_SLOPE) continue;
             if (aabbOverlap(x, z, x + w, z + d, PARK_RECT[0], PARK_RECT[1], PARK_RECT[2], PARK_RECT[3])) continue;
             if (MANSION_GROUNDS.some(gr => aabbOverlap(x, z, x + w, z + d, gr[0], gr[1], gr[2], gr[3]))) continue;
             if (circleHitsAABB(rockX, rockZ, ROCK_R, x, z, x + w, z + d)) continue;
@@ -307,7 +337,11 @@ export function generateLots(): Lot[] {
 /** Lots -> collision solids: base y from heightAt at the lot center. */
 export function lotsToSolids(lots: Lot[]): Solid[] {
   return lots.map(l => {
-    const baseY = heightAt(l.x + l.w / 2, l.z + l.d / 2);
+    // Base the house on the highest terrain under the footprint so terrain
+    // can never poke through the walls on a slope; the visual foundation
+    // (scene.ts) fills down to the lowest point.
+    const terr = lotTerrain(l.x, l.z, l.w, l.d);
+    const baseY = terr ? terr.maxH : heightAt(l.x + l.w / 2, l.z + l.d / 2);
     return {
       min: { x: l.x, y: baseY, z: l.z },
       max: { x: l.x + l.w, y: baseY + l.h, z: l.z + l.d },

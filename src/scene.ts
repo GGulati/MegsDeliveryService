@@ -6,7 +6,7 @@ import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
 import { buildBridge } from './bridge';
-import { generateLots, lotsToSolids } from './town-gen';
+import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
@@ -482,11 +482,26 @@ export class GameRenderer {
     // the same AABB as its collision solid (see COLLISION_SOLIDS in simulation.ts).
     const lots = generateLots();
     const infillSolids = lotsToSolids(lots);
+    // Stone foundation material for hillside lots (fills the downhill gap so
+    // houses sit on slopes without floating or terrain poking through).
+    const foundationMat = toon(0x8a7f72);
     lots.forEach((lot, li) => {
-      const baseY = heightAt(lot.x + lot.w / 2, lot.z + lot.d / 2);
+      const terr = lotTerrain(lot.x, lot.z, lot.w, lot.d);
+      // House floor sits on the highest terrain under the footprint (matches
+      // lotsToSolids); foundation fills down to the lowest point.
+      const maxH = terr ? terr.maxH : heightAt(lot.x + lot.w / 2, lot.z + lot.d / 2);
+      const minH = terr ? terr.minH : maxH;
+      const baseY = maxH;
       const pal = DISTRICT_PALETTES[lot.district] || DISTRICT_PALETTES['old-town'];
       // Pastel Painted-Ladies bodies for bungalow-lanes lots with palette 1-4.
       const bodyColor = lot.palette === 0 ? pal.bodies[li % pal.bodies.length] : PASTEL_BODIES[lot.palette - 1];
+      // Foundation: fills from the lowest terrain to the house floor on slopes.
+      if (maxH - minH > 0.3) {
+        const found = new THREE.Mesh(new THREE.BoxGeometry(lot.w, maxH - minH, lot.d), foundationMat);
+        found.position.set(lot.x + lot.w / 2, minH + (maxH - minH) / 2, lot.z + lot.d / 2);
+        found.castShadow = true; found.receiveShadow = true;
+        g.add(found);
+      }
       addBuilding(lot.w, lot.h, lot.d, baseY, lot.x + lot.w / 2, lot.z + lot.d / 2,
         lot.district, LOT_SEED_BASE + li, li, lot.bayWindow,
         bodyColor, pal.roofs[li % pal.roofs.length]);
@@ -667,16 +682,21 @@ export class GameRenderer {
     const hedges: [number, number, number, number][] = [
       [(gx0 + gx1) / 2, gz0 + 1.5, gx1 - gx0 - 3, 0.8],
     ];
-    // West wall (or hedge on a shared boundary), from the south grounds edge
+    // West wall (or shared-boundary hedge), from the south grounds edge
     // up to the villa's north edge; the terraces take over beyond that.
     const sideLen = s.max.z - gz0;
     const sideCz = (gz0 + s.max.z) / 2;
-    if (sharedWest) hedges.push([gx0 + 0.75, sideCz, 0.8, sideLen - 2]);
-    else {
+    // Shared boundary: only the WEST property plants the hedge, centered on
+    // the boundary line. The east property skips its west side entirely —
+    // two offset hedges in the narrow gap read as a collision (user feedback
+    // 2026-09-27).
+    if (sharedWest) {
+      // Western neighbor owns this boundary; nothing to plant.
+    } else {
       walls.push([gx0, sideCz, 0.5, sideLen]);
       hedges.push([gx0 + 1.5, sideCz, 0.8, sideLen - 3]);
     }
-    if (sharedEast) hedges.push([gx1 - 0.75, sideCz, 0.8, sideLen - 2]);
+    if (sharedEast) hedges.push([gx1, sideCz, 0.8, sideLen - 2]);
     else {
       walls.push([gx1, sideCz, 0.5, sideLen]);
       hedges.push([gx1 - 1.5, sideCz, 0.8, sideLen - 3]);
