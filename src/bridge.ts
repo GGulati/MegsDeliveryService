@@ -49,9 +49,10 @@ export function buildBridge(g: THREE.Group): void {
   // Two towers at 1/3 and 2/3 along the span.
   for (const t of [1 / 3, 2 / 3]) {
     for (const side of [-CABLE_OFFSET, CABLE_OFFSET]) {
-      // Column: 1.5m × 14m × 1.5m, rising 12m above the deck (2m embedded below).
-      const col = new THREE.Mesh(new THREE.BoxGeometry(1.5, 14, 1.5), orange);
-      const p = at(t, side, deckY + 5);
+      // Column: 1.5m × 20m × 1.5m, rising 12m above the deck and reaching the
+      // waterline below (both towers stand in the bay).
+      const col = new THREE.Mesh(new THREE.BoxGeometry(1.5, 20, 1.5), orange);
+      const p = at(t, side, deckY + 2);
       col.position.copy(p);
       col.rotation.y = yawFor('x');
       g.add(col);

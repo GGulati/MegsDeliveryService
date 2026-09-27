@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import type { GameState, RenderSettings, Stop, Vec3 } from './types';
+import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
 import { buildBridge } from './bridge';
-import { generateLots } from './town-gen';
+import { generateLots, lotsToSolids } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
@@ -18,6 +18,14 @@ import { grainSpeckles, GRAIN_SEED, GRAIN_SIZE } from './grain';
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 /** Pastel Painted-Ladies body colors for bungalow-lanes infill (lot.palette 1-4). */
 const PASTEL_BODIES = [0xf2b8c6, 0xa8d0e8, 0xf2d8a8, 0xc8b8e0];
+
+/** Invisible camera-blocker box matching a building solid's AABB. Heroes and
+ *  infill lots share this so the pull-in raycast and collision always agree. */
+export function solidBlocker(s: Solid): THREE.Mesh {
+  const blocker = new THREE.Mesh(new THREE.BoxGeometry(s.max.x - s.min.x, s.max.y - s.min.y, s.max.z - s.min.z));
+  blocker.position.set((s.min.x + s.max.x) / 2, (s.min.y + s.max.y) / 2, (s.min.z + s.max.z) / 2);
+  return blocker;
+}
 export class GameRenderer {
   readonly scene = new THREE.Scene();
   readonly camera = new THREE.PerspectiveCamera(62, 1, .1, 900);
@@ -463,7 +471,7 @@ export class GameRenderer {
     SOLIDS.forEach((s, i) => {
       const sx = s.max.x - s.min.x, sy = s.max.y - s.min.y, sz = s.max.z - s.min.z;
       const center = new THREE.Vector3((s.min.x + s.max.x) / 2, (s.min.y + s.max.y) / 2, (s.min.z + s.max.z) / 2);
-      const blocker = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz)); blocker.position.copy(center); this.blockers.push(blocker);
+      const blocker = solidBlocker(s); this.blockers.push(blocker);
       if (i === LIGHTHOUSE_TOWER_SOLID_INDEX) return;
       if (i === CLOCK_TOWER_SOLID_INDEX || i === OBSERVATORY_DOME_SOLID_INDEX) return;
       // District palette: each district paints its own bodies and roofs.
@@ -476,9 +484,10 @@ export class GameRenderer {
       if (s.district === 'mansion-hill') this.makeWalledGarden(g, s, i);
     });
 
-    // Infill lots: seeded procedural town (visual only — no collision or camera
-    // blockers; the brief scopes this task to visual + perf).
+    // Infill lots: seeded procedural town. Each lot gets a camera blocker with
+    // the same AABB as its collision solid (see COLLISION_SOLIDS in simulation.ts).
     const lots = generateLots();
+    const infillSolids = lotsToSolids(lots);
     lots.forEach((lot, li) => {
       const baseY = heightAt(lot.x + lot.w / 2, lot.z + lot.d / 2);
       const pal = DISTRICT_PALETTES[lot.district] || DISTRICT_PALETTES['old-town'];
@@ -487,6 +496,7 @@ export class GameRenderer {
       addBuilding(lot.w, lot.h, lot.d, baseY, lot.x + lot.w / 2, lot.z + lot.d / 2,
         lot.district, LOT_SEED_BASE + li, li, lot.bayWindow,
         bodyColor, pal.roofs[li % pal.roofs.length]);
+      this.blockers.push(solidBlocker(infillSolids[li]));
     });
 
     this.buildFacadeInstances(g, F, { trimMat, glassMat, litMat, doorMat, leafMat, petalMat });
