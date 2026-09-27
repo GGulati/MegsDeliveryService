@@ -199,6 +199,8 @@ export function surfaceColor(x: number, z: number): [number, number, number] {
   if (rockT > 0) c = lerp3(c, ROCK, rockT);
 
   // Mottling: subtle brightness noise so flat areas aren't plasticky.
-  const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9) * 0.07;
+  // 3 octaves max — higher frequencies alias at the 2.2m vertex spacing and
+  // read as grain instead of soft variation.
+  const m = 1 + fbm(x * 0.08 + 11.3, z * 0.08 + 7.9, 3) * 0.07;
   return [c[0] * m, c[1] * m, c[2] * m];
 }
