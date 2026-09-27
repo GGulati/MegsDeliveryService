@@ -249,8 +249,6 @@ export class GameRenderer {
         door.position.copy(planeAt(0, s.min.y + Math.min(3.7, sy*.3)*.5, .06)); door.rotation.y=rot; g.add(door);
       };
       addFacade('north'); addFacade('south'); addFacade('east'); addFacade('west');
-      const chimney = new THREE.Mesh(new THREE.BoxGeometry(1.35, Math.min(2.7, roofHeight*.7), 1.35), toon(0xe7c6a0));
-      chimney.position.set(center.x - sx*.18, s.max.y - Math.min(2.7, roofHeight*.7)*.5, center.z + sz*.12); g.add(chimney);
     });
   }
 
@@ -342,10 +340,10 @@ export class GameRenderer {
     const cx = 6, cz = -74; // center of the clock-tower SOLIDS
     const sandstone = toon(0xd4a574), terracotta = toon(0xb65c3f), trim = toon(0xffdfaa);
     const shaft = new THREE.Mesh(new THREE.BoxGeometry(8, 20, 8), sandstone);
-    shaft.position.set(cx, 13, cz); shaft.castShadow = true; g.add(shaft); // y: 3..23
+    shaft.position.set(cx, 10, cz); shaft.castShadow = true; g.add(shaft); // y: 0..20
     // Belfry: slightly wider band with arched openings (dark insets).
     const belfry = new THREE.Mesh(new THREE.BoxGeometry(8.6, 3, 8.6), sandstone);
-    belfry.position.set(cx, 24.5, cz); belfry.castShadow = true; g.add(belfry); // y: 23..26
+    belfry.position.set(cx, 21.5, cz); belfry.castShadow = true; g.add(belfry); // y: 20..23
     const openingMat = toon(0x2a2a35);
     const faceDefs: Array<[number, number, number]> = [
       [0, -4.32, Math.PI], [0, 4.32, 0], [-4.32, 0, -Math.PI / 2], [4.32, 0, Math.PI / 2],
@@ -355,34 +353,35 @@ export class GameRenderer {
       const face = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.3, 24),
         new THREE.MeshBasicMaterial({ color: 0xf8f0d8 }));
       face.rotation.x = Math.PI / 2; face.rotation.z = rot;
-      face.position.set(cx + ox, 20, cz + oz); g.add(face);
+      face.position.set(cx + ox, 17, cz + oz); g.add(face);
       // Hands: hour and minute, fixed at a charming time.
       const handMat = new THREE.MeshBasicMaterial({ color: 0x2a2a35 });
       const hour = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.1), handMat);
-      hour.position.set(cx + ox * 1.02, 20.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
+      hour.position.set(cx + ox * 1.02, 17.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
       const minute = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.6, 0.1), handMat);
-      minute.position.set(cx + ox * 1.02, 20.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
+      minute.position.set(cx + ox * 1.02, 17.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
       // Belfry opening (dark arch suggestion).
       const opening = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2), openingMat);
-      opening.position.set(cx + ox * 1.01, 24.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
+      opening.position.set(cx + ox * 1.01, 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);
     }
     // Pointed terracotta roof (pyramid). Visual only; collision tops at y=25.
     const roofGeo = new THREE.ConeGeometry(6.2, 5, 4);
     const roof = new THREE.Mesh(roofGeo, terracotta);
-    roof.position.set(cx, 28.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
+    roof.position.set(cx, 25.5, cz); roof.rotation.y = Math.PI / 4; roof.castShadow = true; g.add(roof);
     const finial = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), trim);
-    finial.position.set(cx, 31.2, cz); g.add(finial);
+    finial.position.set(cx, 28.2, cz); g.add(finial);
     // Corner trim for a finished look.
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const corner = new THREE.Mesh(new THREE.BoxGeometry(0.7, 20, 0.7), trim);
-      corner.position.set(cx + sx * 3.8, 13, cz + sz * 3.8); g.add(corner);
+      corner.position.set(cx + sx * 3.8, 10, cz + sz * 3.8); g.add(corner);
     }
   }
 
   private makeObservatoryDome(g: THREE.Group): void {
     // Observatory Rise: stone drum + copper-green dome on the Hill Observatory
     // roof, offset from the delivery pad. The dome is the landmark.
-    const cx = 107, cz = -63, roofY = 31;
+    // Roof surface at (107,-63) on the pyramid: 28.76 (not the 31 apex).
+    const cx = 107, cz = -63, roofY = 28.76;
     const stone = toon(0x8a8a92), copper = toon(0x5c8a7a);
     const drum = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.8, 3, 18), stone);
     drum.position.set(cx, roofY + 1.5, cz); drum.castShadow = true; g.add(drum);
@@ -398,7 +397,8 @@ export class GameRenderer {
   private makeBakeryDormer(g: THREE.Group): void {
     // Merchant Row: the bakery (SOLIDS[0]) gets a distinctive attic dormer with
     // a warm lit window — "home" reads from the air. Offset from the pad.
-    const cx = -70, cz = 32, roofY = 18;
+    // Roof surface at (-70,32) on the pyramid: 15.2 (not the 18 apex).
+    const cx = -70, cz = 32, roofY = 15.2;
     const pastel = toon(0xf4e4a8), wood = toon(0x8b5a3a);
     const dormer = new THREE.Mesh(new THREE.BoxGeometry(4.5, 2.6, 3), pastel);
     dormer.position.set(cx, roofY + 1.3, cz); dormer.castShadow = true; g.add(dormer);

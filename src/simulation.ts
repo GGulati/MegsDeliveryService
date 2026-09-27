@@ -364,7 +364,11 @@ function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefine
   for (const solid of [...SOLIDS, ...WALLS]) {
     const min = { x: solid.min.x - RADIUS, y: solid.min.y - RADIUS, z: solid.min.z - RADIUS };
     const max = { x: solid.max.x + RADIUS, y: solid.max.y + RADIUS, z: solid.max.z + RADIUS };
-    let enter = 0, exit = 1;
+    // enter starts at a tiny negative so a ray beginning exactly on a face
+    // (near == 0) still records that face's normal. Otherwise the 0 > 0
+    // comparison fails, the normal stays zero, and a corner contact degrades
+    // to "degenerate" — pinning the player instead of sliding.
+    let enter = -1e-9, exit = 1;
     let normal: Vec3 = { x: 0, y: 0, z: 0 };
     for (const axis of ['x', 'y', 'z'] as const) {
       const p = start[axis], d = delta[axis];
@@ -651,9 +655,12 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
       const dyMin = p.y - minY, dyMax = maxY - p.y;
       const dzMin = p.z - minZ, dzMax = maxZ - p.z;
       const m = Math.min(dxMin, dxMax, dyMin, dyMax, dzMin, dzMax);
-      if (m === dxMin) p.x = minX; else if (m === dxMax) p.x = maxX;
-      else if (m === dyMin) p.y = minY; else if (m === dyMax) p.y = maxY;
-      else if (m === dzMin) p.z = minZ; else p.z = maxZ;
+      // Push 2cm past the face so floating-point doesn't leave us exactly on
+      // the boundary (which the sweep reads as "inside" next frame).
+      const skin = 0.02;
+      if (m === dxMin) p.x = minX - skin; else if (m === dxMax) p.x = maxX + skin;
+      else if (m === dyMin) p.y = minY - skin; else if (m === dyMax) p.y = maxY + skin;
+      else if (m === dzMin) p.z = minZ - skin; else p.z = maxZ + skin;
       pushed = true;
     }
     if (!pushed) break;

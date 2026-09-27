@@ -46,42 +46,42 @@ export const STOPS: Stop[] = [
 // The last entry is the lighthouse tower itself (beside the Beacon House cottage);
 // its pad sits on the cottage roof, clear of the tower's footprint.
 export const SOLIDS: Solid[] = [
-  { min: { x: -82, y: 3, z: 28 }, max: { x: -58, y: 18, z: 52 }, district: 'merchant-row' },
-  { min: { x: -59, y: 3, z: 51 }, max: { x: -31, y: 16, z: 79 }, district: 'harbor' },
-  { min: { x: -25, y: 3, z: -64 }, max: { x: 5, y: 21, z: -36 }, district: 'old-town' },
-  { min: { x: 72, y: 3, z: 96 }, max: { x: 92, y: 13, z: 116 }, district: 'lighthouse-headland' },
-  { min: { x: 65, y: 3, z: 55 }, max: { x: 95, y: 18, z: 85 }, district: 'harbor' },
-  { min: { x: 100, y: 3, z: -70 }, max: { x: 130, y: 31, z: -40 }, district: 'observatory-rise' },
-  { min: { x: -140, y: 3, z: 15 }, max: { x: -110, y: 24, z: 45 }, district: 'bungalow-lanes' },
+  { min: { x: -82, y: 0, z: 28 }, max: { x: -58, y: 18, z: 52 }, district: 'merchant-row' },
+  { min: { x: -59, y: 0, z: 51 }, max: { x: -31, y: 16, z: 79 }, district: 'harbor' },
+  { min: { x: -25, y: 0, z: -64 }, max: { x: 5, y: 21, z: -36 }, district: 'old-town' },
+  { min: { x: 72, y: 0, z: 96 }, max: { x: 92, y: 13, z: 116 }, district: 'lighthouse-headland' },
+  { min: { x: 65, y: 0, z: 55 }, max: { x: 95, y: 18, z: 85 }, district: 'harbor' },
+  { min: { x: 100, y: 0, z: -70 }, max: { x: 130, y: 31, z: -40 }, district: 'observatory-rise' },
+  { min: { x: -140, y: 0, z: 15 }, max: { x: -110, y: 24, z: 45 }, district: 'bungalow-lanes' },
   // Phase A district shells: clusters around the stop buildings.
   // Harbor warehouses (1-2 story, broad).
-  { min: { x: -75, y: 3, z: 88 }, max: { x: -55, y: 10, z: 108 }, district: 'harbor' },
-  { min: { x: -30, y: 3, z: 88 }, max: { x: -10, y: 12, z: 108 }, district: 'harbor' },
-  { min: { x: 62, y: 3, z: 30 }, max: { x: 78, y: 10, z: 48 }, district: 'harbor' },
-  { min: { x: 100, y: 3, z: 50 }, max: { x: 120, y: 12, z: 70 }, district: 'harbor' },
+  { min: { x: -75, y: 0, z: 88 }, max: { x: -55, y: 10, z: 108 }, district: 'harbor' },
+  { min: { x: -30, y: 0, z: 88 }, max: { x: -10, y: 12, z: 108 }, district: 'harbor' },
+  { min: { x: 62, y: 0, z: 30 }, max: { x: 78, y: 10, z: 48 }, district: 'harbor' },
+  { min: { x: 100, y: 0, z: 50 }, max: { x: 120, y: 12, z: 70 }, district: 'harbor' },
   // Old Town (3-4 story, dense).
-  { min: { x: -45, y: 3, z: -70 }, max: { x: -25, y: 15, z: -50 }, district: 'old-town' },
-  { min: { x: 15, y: 3, z: -70 }, max: { x: 35, y: 15, z: -50 }, district: 'old-town' },
-  { min: { x: -40, y: 3, z: -32 }, max: { x: -20, y: 16, z: -12 }, district: 'old-town' },
-  { min: { x: 15, y: 3, z: -45 }, max: { x: 35, y: 16, z: -28 }, district: 'old-town' },
+  { min: { x: -45, y: 0, z: -70 }, max: { x: -25, y: 15, z: -50 }, district: 'old-town' },
+  { min: { x: 15, y: 0, z: -70 }, max: { x: 35, y: 15, z: -50 }, district: 'old-town' },
+  { min: { x: -40, y: 0, z: -32 }, max: { x: -20, y: 16, z: -12 }, district: 'old-town' },
+  { min: { x: 15, y: 0, z: -45 }, max: { x: 35, y: 16, z: -28 }, district: 'old-town' },
   // Merchant Row shops (2 story).
-  { min: { x: -100, y: 3, z: 8 }, max: { x: -85, y: 11, z: 22 }, district: 'merchant-row' },
-  { min: { x: -55, y: 3, z: 20 }, max: { x: -40, y: 11, z: 35 }, district: 'merchant-row' },
+  { min: { x: -100, y: 0, z: 8 }, max: { x: -85, y: 11, z: 22 }, district: 'merchant-row' },
+  { min: { x: -55, y: 0, z: 20 }, max: { x: -40, y: 11, z: 35 }, district: 'merchant-row' },
   // Mansion Hill villas (2-3 story, detached).
-  { min: { x: 100, y: 3, z: -15 }, max: { x: 120, y: 14, z: 5 }, district: 'mansion-hill' },
-  { min: { x: 125, y: 3, z: 5 }, max: { x: 140, y: 14, z: 25 }, district: 'mansion-hill' },
+  { min: { x: 100, y: 0, z: -15 }, max: { x: 120, y: 14, z: 5 }, district: 'mansion-hill' },
+  { min: { x: 125, y: 0, z: 5 }, max: { x: 140, y: 14, z: 25 }, district: 'mansion-hill' },
   // Bungalow Lanes (1-1.5 story).
-  { min: { x: -115, y: 3, z: 50 }, max: { x: -100, y: 8, z: 65 }, district: 'bungalow-lanes' },
-  { min: { x: -135, y: 3, z: 50 }, max: { x: -120, y: 7, z: 65 }, district: 'bungalow-lanes' },
-  { min: { x: -105, y: 3, z: 68 }, max: { x: -90, y: 8, z: 82 }, district: 'bungalow-lanes' },
+  { min: { x: -115, y: 0, z: 50 }, max: { x: -100, y: 8, z: 65 }, district: 'bungalow-lanes' },
+  { min: { x: -135, y: 0, z: 50 }, max: { x: -120, y: 7, z: 65 }, district: 'bungalow-lanes' },
+  { min: { x: -105, y: 0, z: 68 }, max: { x: -90, y: 8, z: 82 }, district: 'bungalow-lanes' },
   // Observatory Rise townhouses (2-3 story).
-  { min: { x: 85, y: 3, z: -30 }, max: { x: 98, y: 14, z: -15 }, district: 'observatory-rise' },
+  { min: { x: 85, y: 0, z: -30 }, max: { x: 98, y: 14, z: -15 }, district: 'observatory-rise' },
   // Phase B landmarks (collision only; visuals drawn by dedicated scene methods).
   // Clock tower: tallest in the town core, shorter than the lighthouse.
-  { min: { x: 1, y: 3, z: -79 }, max: { x: 11, y: 25, z: -69 }, district: 'old-town' },
+  { min: { x: 1, y: 0, z: -79 }, max: { x: 11, y: 25, z: -69 }, district: 'old-town' },
   // Observatory dome: sits on the Hill Observatory roof, offset from the pad.
-  { min: { x: 102.5, y: 31, z: -67.5 }, max: { x: 111.5, y: 38.5, z: -58.5 }, district: 'observatory-rise' },
-  { min: { x: 83, y: 3, z: 113 }, max: { x: 93, y: 29, z: 123 } },
+  { min: { x: 102.5, y: 28.5, z: -67.5 }, max: { x: 111.5, y: 37, z: -58.5 }, district: 'observatory-rise' },
+  { min: { x: 83, y: 0, z: 113 }, max: { x: 93, y: 29, z: 123 } },
 ];
 
 /** Per-district building palettes: [body colors], [roof colors]. */

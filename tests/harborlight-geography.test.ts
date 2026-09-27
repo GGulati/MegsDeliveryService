@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay } from '../src/world';
+import { BAY_SHORE, STOPS, SOLIDS, WALLS, WORLD_LIMIT, isInBay, OBSERVATORY_DOME_SOLID_INDEX } from '../src/world';
 import { buildBayShape } from '../src/shore';
 import * as THREE from 'three';
 
@@ -121,7 +121,9 @@ test('district buildings do not significantly overlap each other', () => {
       const oz = Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z);
       // Attached buildings may touch by a metre; vertical stacking (dome on a
       // roof) is not an intersection. Flag only real 3D overlaps.
-      const overlap3d = ox >= 2 && oy > 0 && oz >= 2;
+      // The observatory dome sits on its building's pyramid roof by design.
+      const isDomeStack = (i === OBSERVATORY_DOME_SOLID_INDEX || j === OBSERVATORY_DOME_SOLID_INDEX);
+      const overlap3d = ox >= 2 && oy > 0 && oz >= 2 && !isDomeStack;
       assert.ok(!overlap3d, `buildings ${i} and ${j} overlap by ${ox.toFixed(1)}x${oy.toFixed(1)}x${oz.toFixed(1)}m`);
     }
   }
@@ -168,8 +170,13 @@ test('observatory dome sits on its building roof, clear of the pad', () => {
   const dome = SOLIDS[SOLIDS.length - 2];
   const base = SOLIDS[5]; // Hill Observatory building
   const pad = STOPS.find(s => s.id === 'observatory')!.position;
-  // Dome base sits on the roof.
-  assert.ok(Math.abs(dome.min.y - base.max.y) < 0.5, 'dome not on the roof');
+  // Dome base sits on the pyramid roof surface at its (x,z), not the apex:
+  // roof slopes from base (26.8) to apex (31) over half-extents (15,15).
+  const cx = (base.min.x + base.max.x) / 2, cz = (base.min.z + base.max.z) / 2;
+  const hx = (base.max.x - base.min.x) / 2, hz = (base.max.z - base.min.z) / 2;
+  const dx = Math.abs(107 - cx) / hx, dz = Math.abs(-63 - cz) / hz;
+  const roofSurface = 26.8 + (31 - 26.8) * (1 - Math.max(dx, dz));
+  assert.ok(Math.abs(dome.min.y - roofSurface) < 0.5, `dome not on the roof surface (dome ${dome.min.y}, surface ${roofSurface.toFixed(2)})`);
   // Dome footprint is inside the building footprint.
   assert.ok(dome.min.x >= base.min.x && dome.max.x <= base.max.x, 'dome x outside building');
   assert.ok(dome.min.z >= base.min.z && dome.max.z <= base.max.z, 'dome z outside building');
