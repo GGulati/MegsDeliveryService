@@ -187,33 +187,60 @@ export class GameRenderer {
   }
 
   private makeBoats(g: THREE.Group): void {
-    // Moored boats in the bay by the docks: simple low-poly hulls with masts,
-    // bobbing gently. Deterministic placement.
+    // Moored boats in the bay alongside the docks: hull from an extruded
+    // boat-outline (pointed bow, rounded stern), gunwale rim, mast + furled
+    // sail. Gentle bobbing. Deterministic placement.
     const hullMat = toon(0x8b5a3c), hullMat2 = toon(0x5b7fa6), mastMat = toon(0x6b4a2f), sailMat = toon(0xf5f0e1);
+    // Boat hull outline (top view): pointed bow at +z, rounded stern at -z.
+    const hullShape = new THREE.Shape();
+    hullShape.moveTo(0, 4.2);           // bow tip
+    hullShape.quadraticCurveTo(1.7, 2.5, 1.6, 0);
+    hullShape.quadraticCurveTo(1.5, -2.5, 1.0, -3.4);
+    hullShape.quadraticCurveTo(0, -3.8, -1.0, -3.4);
+    hullShape.quadraticCurveTo(-1.5, -2.5, -1.6, 0);
+    hullShape.quadraticCurveTo(-1.7, 2.5, 0, 4.2);
+    const hullGeo = new THREE.ExtrudeGeometry(hullShape, { depth: 1.1, bevelEnabled: false });
+    hullGeo.rotateX(-Math.PI / 2); // extrude vertically: shape XY -> XZ plane, depth -> +y
+    const rimShape = new THREE.Shape();
+    rimShape.moveTo(0, 4.5);
+    rimShape.quadraticCurveTo(1.95, 2.6, 1.85, 0);
+    rimShape.quadraticCurveTo(1.75, -2.6, 1.15, -3.65);
+    rimShape.quadraticCurveTo(0, -4.1, -1.15, -3.65);
+    rimShape.quadraticCurveTo(-1.75, -2.6, -1.85, 0);
+    rimShape.quadraticCurveTo(-1.95, 2.6, 0, 4.5);
+    const rimHole = new THREE.Path();
+    rimHole.moveTo(0, 3.9);
+    rimHole.quadraticCurveTo(1.45, 2.4, 1.35, 0);
+    rimHole.quadraticCurveTo(1.25, -2.4, 0.85, -3.15);
+    rimHole.quadraticCurveTo(0, -3.5, -0.85, -3.15);
+    rimHole.quadraticCurveTo(-1.25, -2.4, -1.35, 0);
+    rimHole.quadraticCurveTo(-1.45, 2.4, 0, 3.9);
+    rimShape.holes.push(rimHole);
+    const rimGeo = new THREE.ExtrudeGeometry(rimShape, { depth: 0.28, bevelEnabled: false });
+    rimGeo.rotateX(-Math.PI / 2);
+    // Moored alongside the docks (docks are 24 x 8 at x=-15/50): offset in z
+    // so hulls sit beside the dock, not through it.
     const spots: [number, number, number][] = [
-      // [x, z, rotation] — alongside the west and east pier docks
-      [-26, 50, 0.2], [-26, 70, -0.15], [-4, 90, 0.1],
-      [38, 60, -0.2], [62, 80, 0.15], [38, 100, 0.05],
+      // [x, z, rotation] — west pier docks at z=50/70/90, east pier at z=60/80/100
+      [-15, 58, 0.08], [-15, 78, -0.06], [-15, 98, 0.1],
+      [50, 68, -0.08], [50, 88, 0.06], [50, 108, -0.1],
     ];
     spots.forEach(([x, z, rot], i) => {
       const boat = new THREE.Group();
-      // Hull: box with a tapered bow (cone rotated flat).
-      const hull = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.1, 7), i % 2 ? hullMat2 : hullMat);
-      hull.position.y = 0.55; boat.add(hull);
-      const bow = new THREE.Mesh(new THREE.ConeGeometry(1.6, 2.2, 4), i % 2 ? hullMat2 : hullMat);
-      bow.rotation.x = Math.PI / 2; bow.rotation.y = Math.PI / 4;
-      bow.position.set(0, 0.55, 4.6); boat.add(bow);
-      // Gunwale rim.
-      const rim = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.25, 7.3), mastMat);
-      rim.position.y = 1.15; boat.add(rim);
+      const hm = i % 2 ? hullMat2 : hullMat;
+      const hull = new THREE.Mesh(hullGeo, hm);
+      hull.position.y = 1.1; boat.add(hull);
+      const rim = new THREE.Mesh(rimGeo, mastMat);
+      rim.position.y = 1.1; boat.add(rim);
       // Mast + furled sail.
       const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 5.5, 6), mastMat);
       mast.position.y = 3.8; boat.add(mast);
-      const sail = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.8, 1.8), sailMat);
-      sail.position.set(0, 3.4, -1.1); boat.add(sail);
-      boat.position.set(x, 0.35, z);
+      const sail = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.6, 1.7), sailMat);
+      sail.position.set(0, 3.3, -1.2); boat.add(sail);
+      boat.position.set(x, 0.1, z);
       boat.rotation.y = rot;
       boat.userData.phase = i * 1.3;
+      boat.userData.baseY = 0.1;
       g.add(boat);
       this.boats.push(boat);
     });
@@ -523,7 +550,7 @@ export class GameRenderer {
     const birdMat=toon(0x583d50);for(let i=0;i<9;i++){const b=new THREE.Group();[-1,1].forEach(s=>{const wing=new THREE.Mesh(new THREE.ConeGeometry(.65,2,3),birdMat);wing.rotation.z=s*.9;wing.position.x=s*.55;b.add(wing)});b.position.set(-80+i*16,34+i%3*4,-45-i*11);this.birds.add(b);}
   }
 
-  private animateSky(reduced: boolean): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.birds.children.forEach((b,i)=>{b.position.x+=.035;b.rotation.z=Math.sin(this.clock*5+i)*.18;}); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b,i)=>{b.position.y=.35+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
+  private animateSky(reduced: boolean): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.birds.children.forEach((b,i)=>{b.position.x+=.035;b.rotation.z=Math.sin(this.clock*5+i)*.18;}); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
   private destination(state: GameState): Stop | undefined {
     if(state.mode==='tutorial') return STOPS.find(s=>s.id==='harbor-cafe') || STOPS[1];
     const id=state.run?.returning ? 'home' : state.run?.job?.to;
