@@ -747,6 +747,7 @@ export class GameRenderer {
       const x = (rand() - 0.5) * 400, z = (rand() - 0.5) * 400;
       if (!canGrow(x, z)) continue;
       if (STOPS.some(s => Math.hypot(x - s.position.x, z - s.position.z) < 24)) continue;
+      if (x > PARK_RECT[0] && x < PARK_RECT[2] && z > PARK_RECT[1] && z < PARK_RECT[3]) continue; // keep the park clear
       if (Math.hypot(x, z) < 100 && rand() < 0.7) continue;
       // Don't double-plant in the woods zone.
       if (z > 60 && Math.hypot(x, z) >= 145) continue;
@@ -930,7 +931,7 @@ export class GameRenderer {
       top.position.set((x0 + x1) / 2, yTop + 0.12, (z0 + z1) / 2);
       top.receiveShadow = true; g.add(top);
     };
-    // Villa 1 and Villa 2: terraces step north toward the loop road.
+    // Villa 1 and Villa 2: terraces step north toward the loop road's north leg (u1–u4).
     for (const vi of [17, 18]) {
       const v = SOLIDS[vi];
       const yBase = v.min.y;

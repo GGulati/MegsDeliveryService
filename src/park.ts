@@ -32,5 +32,3 @@ export const PARK_PATHS: ParkPath[] = [
 
 // Glass conservatory centerpiece at the path crossing.
 export const PARK_CONSERVATORY: ParkConservatory = { x: CX, z: CZ, w: 14, d: 9, h: 5 };
-
-export const PARK_TIER_Y = 20;

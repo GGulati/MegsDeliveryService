@@ -133,8 +133,9 @@ function computeTerrain(x: number, z: number): { h: number; bayT: number; oceanT
   const [hx, hz] = warp(x, z, 0.015, 18);
   const hills = (fbm(hx * 0.02, hz * 0.02) * 0.5 + 0.5) * 8;
 
-  // Town core stays flat: fade hills to 0 within 145m of center (covers all stops;
-  // the farthest, Beacon House, is at ~134m). Hills live inland and up the coast.
+  // Hills fade in beyond 145m of center. The tier pads (Task 1) own town
+  // flatness now — hillMask only shapes the wild land outside the pads.
+  // Hills live inland and up the coast.
   const townDist = Math.hypot(x, z);
   const hillMask = smoothstep(145, 175, townDist);
 

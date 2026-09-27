@@ -102,7 +102,7 @@ export function generateLots(): Lot[] {
     x0: s.min.x - HERO_PAD, z0: s.min.z - HERO_PAD,
     x1: s.max.x + HERO_PAD, z1: s.max.z + HERO_PAD,
   }));
-  const segs = ROAD_EDGES.map(e => {
+  const segs = ROAD_EDGES.filter(e => e.kind !== 'bridge').map(e => {
     const a = nodeById(e.a), b = nodeById(e.b);
     return { x0: a.x, z0: a.z, x1: b.x, z1: b.z };
   });

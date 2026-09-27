@@ -15,7 +15,7 @@ describe('bridge', () => {
   it('buildBridge populates the group with deck, towers, cables, suspenders, lamps', () => {
     const g = new THREE.Group();
     buildBridge(g);
-    // deck(1) + towers(2×(2 columns + 2 beams)=8) + cables(2) + suspenders(~26) + lamps(~12)
+    // deck(1) + towers(2×(2 columns + 2 beams)=8) + cables(2) + suspenders(24) + lamps(~12)
     assert.ok(g.children.length > 30, `expected bridge parts, got ${g.children.length} children`);
   });
 

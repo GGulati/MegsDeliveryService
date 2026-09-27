@@ -1,7 +1,8 @@
-import type { FlightInput, GameState, Player, Stop, Vec3 } from './types';
+import type { FlightInput, GameState, Player, Stop, Vec3, Solid } from './types';
 import { enterHome, interactHome, stepHome } from './home';
 import { SOLIDS, STOPS, WALLS, WORLD_LIMIT } from './world';
 import { heightAt } from './terrain';
+import { generateLots, lotsToSolids } from './town-gen';
 
 const RADIUS = 1;
 const MIN_ALTITUDE = 3;
@@ -10,6 +11,15 @@ const MAX_SPEED = 18;
 const TURN_RATE = 2.2;
 const THROTTLE_RATE = 7;
 const ACCELERATION = 12;
+
+/** Infill AABBs: the 204 seeded procedural buildings are visual-only in
+ *  scene.ts; their solids join the collision set here so the player can't
+ *  fly through them. Deterministic via TOWN_SEED; computed once at load. */
+export const INFILL_SOLIDS: Solid[] = lotsToSolids(generateLots());
+
+/** Full collision set: hero solids + infill solids + walls. */
+export const COLLISION_SOLIDS: Solid[] = [...SOLIDS, ...INFILL_SOLIDS, ...WALLS];
+
 /** Curved braking ("fade like a bike"): the manual decel rate scales with
  * speed — strong initial bite at full cruise that eases off as the drone
  * slows, like weight transfer under braking. */
@@ -364,7 +374,7 @@ function makeOffers(seed: number, delivery: number, from: string): import('./typ
 
 function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefined {
   let hit: { t: number; normal: Vec3 } | undefined;
-  for (const solid of [...SOLIDS, ...WALLS]) {
+  for (const solid of COLLISION_SOLIDS) {
     const min = { x: solid.min.x - RADIUS, y: solid.min.y - RADIUS, z: solid.min.z - RADIUS };
     const max = { x: solid.max.x + RADIUS, y: solid.max.y + RADIUS, z: solid.max.z + RADIUS };
     // enter starts at a tiny negative so a ray beginning exactly on a face
@@ -647,7 +657,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // that lands in another still resolves. Meg can never be left stuck inside.
   for (let iter = 0; iter < 4; iter++) {
     let pushed = false;
-    for (const solid of [...SOLIDS, ...WALLS]) {
+    for (const solid of COLLISION_SOLIDS) {
       const minX = solid.min.x - RADIUS, maxX = solid.max.x + RADIUS;
       const minY = solid.min.y - RADIUS, maxY = solid.max.y + RADIUS;
       const minZ = solid.min.z - RADIUS, maxZ = solid.max.z + RADIUS;
