@@ -137,6 +137,7 @@ export interface IntersectionLeg {
   hw: number;             // corridor half-width
   clip: number;           // clip distance from the node (ribbon ends here; = zone reach)
   stub: number;           // node stub length (leg's own rectangle; markings stay within this)
+  clipHeight: number;     // mesh height at the clip point (ribbon ramps to this; sloped zones)
 }
 export interface Intersection {
   nodeId: string;
@@ -155,11 +156,17 @@ const INTERSECTION_MAX_SPREAD = 0.8;
 
 interface EdgeDir { e: RoadEdge; dx: number; dz: number; hw: number; len: number; ox: number; oz: number }
 
+// Bridge landings: the bridge edge counts as an incident direction here, so
+// the ramp/bridge junction becomes a true intersection zone (no angular gap
+// between the ramp ribbon and the bridge deck). The bridge leg contributes to
+// zone geometry; bridge.ts clips the deck box at the zone boundary.
+const BRIDGE_LANDINGS = new Set(['bl-w', 'bl-e']);
+
 function incidentDirs(nodeId: string): EdgeDir[] {
   const p = nodePos(nodeById(nodeId));
   const out: EdgeDir[] = [];
   for (const e of ROAD_EDGES) {
-    if (e.kind === 'bridge') continue;
+    if (e.kind === 'bridge' && !BRIDGE_LANDINGS.has(nodeId)) continue;
     if (e.a !== nodeId && e.b !== nodeId) continue;
     const o = nodePos(nodeById(e.a === nodeId ? e.b : e.a));
     const dx = o.x - p.x, dz = o.z - p.z;
@@ -201,6 +208,45 @@ function stubLenFor(dirs: EdgeDir[]): number {
 }
 
 let intersectionCache: Intersection[] | null = null;
+
+// Barycentric-interpolated mesh height at (x,z) within triangle (a,b,c),
+// or null if outside. Sloped zones need per-point heights (not a flat
+// zone height) so entities ride the rendered surface exactly.
+function barycentricHeight(
+  x: number, z: number, a: ZoneVertex, b: ZoneVertex, c: ZoneVertex,
+): number | null {
+  const d = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+  if (Math.abs(d) < 1e-12) return null;
+  const l1 = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / d;
+  const l2 = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / d;
+  const l3 = 1 - l1 - l2;
+  if (l1 < -1e-9 || l2 < -1e-9 || l3 < -1e-9) return null;
+  return l1 * a.h + l2 * b.h + l3 * c.h;
+}
+
+// Mesh surface height at (x,z): barycentric within the containing triangle,
+// else the nearest ring vertex (for points exactly on the boundary).
+function meshHeightAt(
+  ring: ZoneVertex[], tris: [ZoneVertex, ZoneVertex, ZoneVertex][],
+  x: number, z: number,
+): number {
+  for (const [a, b, c] of tris) {
+    const h = barycentricHeight(x, z, a, b, c);
+    if (h !== null) return h;
+  }
+  let best = ring[0], bestD = Infinity;
+  for (const v of ring) {
+    const d = (v.x - x) * (v.x - x) + (v.z - z) * (v.z - z);
+    if (d < bestD) { bestD = d; best = v; }
+  }
+  return best.h;
+}
+
+// Exported for scene.ts: marking decals follow the sloped mesh.
+export function intersectionHeightAt(ix: Intersection, x: number, z: number): number {
+  return meshHeightAt(ix.ring, ix.tris, x, z);
+}
+
 export function intersections(): Intersection[] {
   if (intersectionCache) return intersectionCache;
   // Pass 1: per-node stub lengths and raw per-leg clips.
@@ -209,6 +255,8 @@ export function intersections(): Intersection[] {
     if (e.kind === 'bridge') continue;
     nodeIds.add(e.a); nodeIds.add(e.b);
   }
+  // Bridge landings always participate (their bridge leg is in incidentDirs).
+  for (const id of BRIDGE_LANDINGS) nodeIds.add(id);
   const wanted = new Map<string, { dirs: EdgeDir[]; stubLen: number }>();
   for (const id of nodeIds) {
     // Switchback hairpins are not junctions (no crosswalks/stop lines).
@@ -223,17 +271,16 @@ export function intersections(): Intersection[] {
       if (theta < Math.PI / 12 || theta > Math.PI - Math.PI / 12) continue;
     }
     const stubLen = stubLenFor(dirs);
-    // Grade-separated check: if the incident roads differ too much in height
-    // across the zone, this is not a flat intersection — skip it. Samples
-    // each road along its stub; compares individual road heights.
+    // Grade-separated check: if the incident roads differ in height AT THE
+    // NODE, this is not an intersection (e.g. an overpass crossing at
+    // different levels). Sloped approaches are fine — the zone mesh follows
+    // each leg's profile (sloped intersection zones, 2026-09-28), so only
+    // the node height matters.
     const p = nodePos(nodeById(id));
     let hMin = Infinity, hMax = -Infinity;
     for (const d of dirs) {
-      for (const f of [0, 0.5, 1]) {
-        const s = Math.min(stubLen, d.len * 0.9) * f;
-        const h = deckHeightNear(d, id, p.x + d.dx * s, p.z + d.dz * s);
-        hMin = Math.min(hMin, h); hMax = Math.max(hMax, h);
-      }
+      const h = deckHeightNear(d, id, p.x, p.z);
+      hMin = Math.min(hMin, h); hMax = Math.max(hMax, h);
     }
     if (hMax - hMin > INTERSECTION_MAX_SPREAD) continue;
     wanted.set(id, { dirs, stubLen });
@@ -272,15 +319,12 @@ export function intersections(): Intersection[] {
     const stubLen = stubLenFinal.get(id)!;
     const capOf = (_e: RoadEdge): number => stubLen;
     const p = nodePos(nodeById(id));
-    // Single flat height: max deck over the zone + 2cm crown. Nothing
-    // overlaps the mesh, so no lift is needed to avoid fighting.
-    let height = -Infinity;
-    // Boundary angles: uniform samples PLUS the exact stub-rectangle corner
-    // angles of every leg. Uniform 5-degree steps alone can straddle a stub
-    // corner and cut it off (up to ~1m); the boundary is piecewise straight
-    // between corners, so sampling the corners makes the polygon exact along
-    // each stub's sides and end cap. This guarantees the clipped ribbon
-    // (which fills the stub rectangles) is covered by the mesh.
+    // Sloped zone heights: each boundary vertex takes the height of its
+    // OWNING leg (the leg with max reach at that angle), sampled from that
+    // leg's deck profile. The mesh follows each approach's slope instead of
+    // being flattened — no angular gaps on ramps, no floating ribbons.
+    // The 2cm crown lifts the whole mesh uniformly (never coplanar with
+    // ribbons); clipHeight matches the mesh exactly at each clip line.
     const K = 72;
     const angles: number[] = [];
     for (let k = 0; k < K; k++) angles.push((k / K) * Math.PI * 2);
@@ -298,49 +342,60 @@ export function intersections(): Intersection[] {
       if (phis.length === 0 || Math.abs(a - phis[phis.length - 1]) > 1e-9) phis.push(a);
     }
     const rhos = new Float64Array(phis.length);
+    const ownerOf = new Int32Array(phis.length); // index into dirs, or -1
     for (let k = 0; k < phis.length; k++) {
       const phi = phis[k];
       const ux = Math.cos(phi), uz = Math.sin(phi);
-      let rMax = 0;
-      for (const d of dirs) {
+      let rMax = 0, owner = -1, bestAng = Infinity;
+      for (let di = 0; di < dirs.length; di++) {
+        const d = dirs[di];
         const cap = capOf(d.e);
         const ud = ux * d.dx + uz * d.dz;
         const un = Math.abs(ux * -d.dz + uz * d.dx);
         let r: number;
         if (ud > 1e-6) {
-          r = Math.min(d.hw / Math.max(un, 1e-6), cap / ud);
+          // Cap at `cap`: the rectangle corner (cap/ud, ud<1) must not poke
+          // past the node's stubLen (breaks Pass 1b). Capped here so the
+          // owner tie-breaker below sees the capped values.
+          r = Math.min(d.hw / Math.max(un, 1e-6), cap / ud, cap);
         } else {
-          r = d.hw;
+          r = Math.min(d.hw, cap);
         }
-        if (r > rMax) rMax = r;
+        // Tie-breaker: on near-equal reach, prefer the leg closest in angle.
+        // This keeps each leg's own direction owned by itself (not a neighbor
+        // 18° away), so the mesh follows the leg's profile at its clip line.
+        const ang = Math.acos(Math.max(-1, Math.min(1, ud)));
+        if (r > rMax + 1e-9 || (Math.abs(r - rMax) <= 1e-9 && ang < bestAng)) {
+          rMax = r; owner = di; bestAng = ang;
+        }
       }
+      // Cap the union reach at the node's stubLen (already capped per-leg
+      // above; this is a safety net).
       rhos[k] = Math.max(rMax, 0.5);
+      ownerOf[k] = owner;
     }
-    const FR = [0, 0.25, 0.5, 0.75, 1];
-    for (let k = 0; k < phis.length; k++) {
-      const phi = phis[k];
-      for (const f of FR) {
-        const x = p.x + Math.cos(phi) * rhos[k] * f;
-        const z = p.z + Math.sin(phi) * rhos[k] * f;
-        for (const d of dirs) height = Math.max(height, deckHeightNear(d, id, x, z));
-      }
-    }
-    height += 0.02;
+    // Node height: max deck height at the node across legs (they agree to
+    // within INTERSECTION_MAX_SPREAD by the grade check).
+    const nodeH = Math.max(...dirs.map(d => deckHeightNear(d, id, p.x, p.z)));
     // Zone footprint = UNION of the incident ribbon stubs (star-shaped w.r.t.
     // the node, so the polar boundary captures it exactly). No wedges, no gaps.
     const ring: ZoneVertex[] = [];
     for (let k = 0; k < phis.length; k++) {
       const phi = phis[k];
-      ring.push({
-        x: p.x + Math.cos(phi) * rhos[k],
-        z: p.z + Math.sin(phi) * rhos[k],
-        h: height,
-      });
+      const x = p.x + Math.cos(phi) * rhos[k];
+      const z = p.z + Math.sin(phi) * rhos[k];
+      const o = ownerOf[k];
+      const h = (o >= 0 ? deckHeightNear(dirs[o], id, x, z) : nodeH) + 0.02;
+      ring.push({ x, z, h });
     }
-    const center: ZoneVertex = { x: p.x, z: p.z, h: height };
+    const center: ZoneVertex = { x: p.x, z: p.z, h: nodeH + 0.02 };
     const tris: [ZoneVertex, ZoneVertex, ZoneVertex][] = [];
     for (let k = 0; k < phis.length; k++)
       tris.push([center, ring[k], ring[(k + 1) % phis.length]]);
+    // `height`: max mesh height (conservative top for occlusion checks).
+    let height = -Infinity;
+    for (const v of ring) height = Math.max(height, v.h);
+    height = Math.max(height, center.h);
     // Final leg clips: the zone's actual reach in each leg's direction.
     // This is the shared boundary — the ribbon ends exactly where the mesh
     // begins (zero overlap by construction). Reach <= stubLen, so the
@@ -353,16 +408,36 @@ export function intersections(): Intersection[] {
       }
       return stubLen; // fallback (should not happen: la was sampled)
     };
-    const legs: IntersectionLeg[] = dirs.map(d => ({
-      edge: d.e, dx: d.dx, dz: d.dz, hw: d.hw, clip: reachAt(d.dx, d.dz), stub: stubLen,
-    }));
+    const legs: IntersectionLeg[] = dirs.map(d => {
+      const clip = reachAt(d.dx, d.dz);
+      // Mesh height at the clip point along the leg centerline: the ring
+      // vertex sampled at exactly the leg angle. The ribbon ramps to this
+      // height, so ribbon and mesh meet with no step at the seam.
+      const la = normAng(Math.atan2(d.dz, d.dx));
+      let clipHeight = nodeH + 0.02;
+      for (let k = 0; k < phis.length; k++) {
+        if (Math.abs(phis[k] - la) < 1e-9) { clipHeight = ring[k].h; break; }
+      }
+      return {
+        edge: d.e, dx: d.dx, dz: d.dz, hw: d.hw,
+        clip, stub: stubLen, clipHeight,
+      };
+    });
     intersectionCache.push({ nodeId: id, ring, tris, legs, height });
   }
-  // Structural merge: where two zones overlap in plan, merge them into a
-  // single compound intersection. This replaces the de-coplanar height hack
-  // (which left overlapping meshes at different heights). The merged zone has
-  // a single height and a unified ring — zero overlap by construction.
+  // Structural merge: where two zones overlap in plan AT THE SAME GRADE,
+  // merge them into a single compound intersection. Grade-separated zones
+  // (e.g. a bridge landing zone 6m above a street zone) may overlap in plan
+  // but must NOT merge — compare vertical ranges, not just plan overlap.
+  const zoneVerticalRange = (ix: Intersection): [number, number] => {
+    let lo = Infinity, hi = -Infinity;
+    for (const v of ix.ring) { lo = Math.min(lo, v.h); hi = Math.max(hi, v.h); }
+    return [lo, hi];
+  };
   const zonesOverlap = (a: Intersection, b: Intersection): boolean => {
+    const [aLo, aHi] = zoneVerticalRange(a);
+    const [bLo, bHi] = zoneVerticalRange(b);
+    if (aHi < bLo - 1.0 || bHi < aLo - 1.0) return false;
     for (const v of b.ring) if (intersectionContains(a, v.x, v.z)) return true;
     for (const v of a.ring) if (intersectionContains(b, v.x, v.z)) return true;
     return false;
@@ -374,16 +449,27 @@ export function intersections(): Intersection[] {
       for (let j = i + 1; j < intersectionCache.length && !merged; j++) {
         const a = intersectionCache[i], b = intersectionCache[j];
         if (!zonesOverlap(a, b)) continue;
-        // Merge b into a: unified ring, combined legs, max height.
+        // Merge b into a: unified ring, combined legs. Per-vertex heights
+        // come from the nearest source vertex, preserving each zone's slope
+        // across the merged mesh (no flattening).
         const polyA: Poly2 = a.ring.map(v => [v.x, v.z]);
         const polyB: Poly2 = b.ring.map(v => [v.x, v.z]);
         const mergedPoly = polyUnionStar(polyA, polyB);
-        const newHeight = Math.max(a.height, b.height);
-        const newRing: ZoneVertex[] = mergedPoly.map(([x, z]) => ({ x, z, h: newHeight }));
+        const srcVerts = [...a.ring, ...b.ring];
+        const nearestH = (x: number, z: number): number => {
+          let best = srcVerts[0], bestD = Infinity;
+          for (const v of srcVerts) {
+            const d = (v.x - x) * (v.x - x) + (v.z - z) * (v.z - z);
+            if (d < bestD) { bestD = d; best = v; }
+          }
+          return best.h;
+        };
+        const newRing: ZoneVertex[] = mergedPoly.map(([x, z]) => ({ x, z, h: nearestH(x, z) }));
+        const newHeight = Math.max(...newRing.map(v => v.h));
         const center: ZoneVertex = {
           x: newRing.reduce((s, v) => s + v.x, 0) / newRing.length,
           z: newRing.reduce((s, v) => s + v.z, 0) / newRing.length,
-          h: newHeight,
+          h: newRing.reduce((s, v) => s + v.h, 0) / newRing.length,
         };
         const newTris: [ZoneVertex, ZoneVertex, ZoneVertex][] = [];
         for (let k = 0; k < newRing.length; k++) {
@@ -402,10 +488,11 @@ export function intersections(): Intersection[] {
           const nodeId = mergedIds.find(id => l.edge.a === id || l.edge.b === id) ?? mergedIds[0];
           const np = nodePos(nodeById(nodeId));
           const newClip = rayPolyDist(np.x, np.z, l.dx, l.dz, mergedPoly);
-          newLegs.push({
-            ...l,
-            clip: newClip > 0 ? newClip : l.clip, // fallback to original if raycast fails
-          });
+          const clip = newClip > 0 ? newClip : l.clip; // fallback if raycast fails
+          // Mesh height at the new clip point along the leg centerline.
+          const clipHeight = meshHeightAt(
+            newRing, newTris, np.x + l.dx * clip, np.z + l.dz * clip);
+          newLegs.push({ ...l, clip, clipHeight });
         }
         const mergedIx: Intersection = {
           nodeId: `${a.nodeId}+${b.nodeId}`,
@@ -430,7 +517,7 @@ export function intersections(): Intersection[] {
     for (const l of ix.legs) {
       let slot = edgeClipCache.get(l.edge);
       if (!slot) { slot = { a: null, b: null }; edgeClipCache.set(l.edge, slot); }
-      const info = { dist: l.clip, height: ix.height };
+      const info = { dist: l.clip, height: l.clipHeight };
       // The leg's edge connects to one of the merged node IDs.
       if (ids.includes(l.edge.a)) slot.a = info;
       else if (ids.includes(l.edge.b)) slot.b = info;
@@ -443,8 +530,8 @@ export function intersections(): Intersection[] {
 }
 
 // Per-edge clip info: where ribbons end at intersection nodes (null = no
-// intersection at that end). `height` is the intersection mesh height, used
-// to ramp ribbon ends flush with the mesh.
+// intersection at that end). `height` is the mesh height at the clip line
+// (per-leg for sloped zones), used to ramp ribbon ends flush with the mesh.
 export interface EdgeClipInfo { dist: number; height: number }
 let edgeClipCache: Map<RoadEdge, { a: EdgeClipInfo | null; b: EdgeClipInfo | null }> | null = null;
 export function edgeClips(e: RoadEdge): { a: EdgeClipInfo | null; b: EdgeClipInfo | null } {
@@ -516,14 +603,18 @@ export function ribbonHeightAt(e: RoadEdge, t: number): number {
 }
 
 // Visual surface height of the intersection zone at (x,z), or null outside
-// every zone. Where zones overlap, the HIGHER mesh occludes the lower, so
-// the max height is the rendered top surface. Entities ride this (not the
-// raw deck) so wheels/feet stay on the rendered asphalt at intersections.
-// Flat per zone: point-in-polygon, then the single mesh height.
+// every zone. Sloped zones interpolate the mesh (barycentric within the
+// containing triangle); where zones overlap in plan, the HIGHER mesh
+// occludes the lower, so the max height is the rendered top surface.
+// Entities ride this (not the raw deck) so wheels/feet stay on the rendered
+// asphalt at intersections.
 export function intersectionHeight(x: number, z: number): number | null {
   let h: number | null = null;
   for (const ix of intersections()) {
-    if (intersectionContains(ix, x, z)) h = h === null ? ix.height : Math.max(h, ix.height);
+    if (intersectionContains(ix, x, z)) {
+      const ih = meshHeightAt(ix.ring, ix.tris, x, z);
+      h = h === null ? ih : Math.max(h, ih);
+    }
   }
   return h;
 }
@@ -548,17 +639,18 @@ export function roadGroundHeight(e: RoadEdge, t: number, x: number, z: number): 
     const d = intersectionSignedDist(ix, x, z);
     if (d > 0) {
       inside = true;
-      maxInsideH = maxInsideH === null ? ix.height : Math.max(maxInsideH, ix.height);
+      const ih = meshHeightAt(ix.ring, ix.tris, x, z);
+      maxInsideH = maxInsideH === null ? ih : Math.max(maxInsideH, ih);
     }
     if (Math.abs(d) < Math.abs(nearestDist)) {
       nearestDist = d;
-      nearestH = ix.height;
+      nearestH = boundaryHeightAt(ix, x, z);
     }
   }
 
   // Well outside all zones: pure ribbon.
   if (!inside && nearestDist < -HEIGHT_BLEND_RADIUS) return ribbonH;
-  // Well inside: max intersection height (preserves existing behavior).
+  // Well inside: max intersection mesh height (preserves existing behavior).
   if (inside && nearestDist > HEIGHT_BLEND_RADIUS) return maxInsideH!;
 
   // Transition zone: smooth blend from ribbon to intersection height.
@@ -566,6 +658,24 @@ export function roadGroundHeight(e: RoadEdge, t: number, x: number, z: number): 
   const s = smoothstep(-HEIGHT_BLEND_RADIUS, HEIGHT_BLEND_RADIUS, nearestDist);
   const targetH = inside ? maxInsideH! : nearestH;
   return ribbonH + (targetH - ribbonH) * s;
+}
+
+// Mesh height at the nearest boundary point of a zone: linear interpolation
+// between the two adjacent ring vertices. Used as the blend target for
+// entities just outside the zone.
+function boundaryHeightAt(ix: Intersection, x: number, z: number): number {
+  const r = ix.ring;
+  let bestD = Infinity, bestH = r[0].h;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const ax = r[j].x, az = r[j].z, bx = r[i].x, bz = r[i].z;
+    const abx = bx - ax, abz = bz - az;
+    const denom = abx * abx + abz * abz || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * abx + (z - az) * abz) / denom));
+    const cx = ax + abx * t, cz = az + abz * t;
+    const d = (x - cx) * (x - cx) + (z - cz) * (z - cz);
+    if (d < bestD) { bestD = d; bestH = r[j].h + (r[i].h - r[j].h) * t; }
+  }
+  return bestH;
 }
 
 // Plan-view marking layout for an intersection (pure geometry; scene.ts

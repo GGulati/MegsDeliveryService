@@ -2,6 +2,7 @@
 // Static geometry only (built once in makeWorld); international orange throughout.
 import * as THREE from 'three';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
+import { edgeClips } from './road-deck';
 
 const ORANGE = 0xc0362c; // international orange
 const DECK_WIDTH = 7;
@@ -40,16 +41,25 @@ export function buildBridge(g: THREE.Group): void {
   const orange = orangeMat();
   const lampMat = new THREE.MeshToonMaterial({ color: 0xffd98a });
 
-  // Deck: box from landing to landing, top at deckY.
-  const deck = new THREE.Mesh(new THREE.BoxGeometry(span, DECK_THICK, DECK_WIDTH), orange);
-  deck.position.set((a.x + b.x) / 2, deckY - DECK_THICK / 2, (a.z + b.z) / 2);
+  // Deck: box between the landing intersection zones, top at deckY. The
+  // landing zones own the ramp/bridge junction surface (sloped intersection
+  // zones, 2026-09-28); the deck starts where the zone ends so the two
+  // meet at a shared boundary with zero overlap.
+  const clips = edgeClips(edge);
+  const clipA = clips.a?.dist ?? 0;
+  const clipB = clips.b?.dist ?? 0;
+  const deckSpan = Math.max(span - clipA - clipB, 1);
+  const dcx = a.x + dir.x * (clipA + deckSpan / 2);
+  const dcz = a.z + dir.z * (clipA + deckSpan / 2);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(deckSpan, DECK_THICK, DECK_WIDTH), orange);
+  deck.position.set(dcx, deckY - DECK_THICK / 2, dcz);
   deck.rotation.y = yawFor('x');
   g.add(deck);
 
   // Asphalt road surface on top of the deck (the road goes OVER the bridge).
   const roadMat = new THREE.MeshToonMaterial({ color: 0x3a3a3a });
-  const road = new THREE.Mesh(new THREE.BoxGeometry(span, 0.1, DECK_WIDTH - 1), roadMat);
-  road.position.set((a.x + b.x) / 2, deckY + 0.05, (a.z + b.z) / 2);
+  const road = new THREE.Mesh(new THREE.BoxGeometry(deckSpan, 0.1, DECK_WIDTH - 1), roadMat);
+  road.position.set(dcx, deckY + 0.05, dcz);
   road.rotation.y = yawFor('x');
   g.add(road);
 

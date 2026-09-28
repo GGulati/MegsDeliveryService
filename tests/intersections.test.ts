@@ -17,7 +17,9 @@ type Pt = [number, number];
 const W = (e: RoadEdge) => e.kind === 'switchback' ? 4.4 : 8.8;
 
 function incident(id: string): RoadEdge[] {
-  return ROAD_EDGES.filter(e => e.kind !== 'bridge' && (e.a === id || e.b === id));
+  const landings = new Set(['bl-w', 'bl-e']);
+  return ROAD_EDGES.filter(e =>
+    (e.kind !== 'bridge' || landings.has(id)) && (e.a === id || e.b === id));
 }
 
 function dirsOf(id: string) {
@@ -61,10 +63,13 @@ function stubLenOf(dirs: ReturnType<typeof dirsOf>): number {
   return Math.min(stubLen, minLen * 0.9, 14);
 }
 
-// Mirror of the build decision: >=2 incident dirs, not a near-collinear
-// 2-dir pair (straight-through or duplicate), and the incident roads stay
-// within 0.8m height spread across the stub area (else grade-separated).
+// Mirror of the build decision: >=2 incident dirs (bridge edges count at
+// landings), not a near-collinear 2-dir pair, not noIntersect, and the
+// incident roads agree in height AT THE NODE (sloped approaches are fine —
+// the mesh follows each leg's profile; only true grade-separated crossings
+// are skipped).
 function expectedIntersection(id: string): boolean {
+  if (nodeById(id).noIntersect) return false;
   const dirs = dirsOf(id);
   if (dirs.length < 2) return false;
   if (dirs.length === 2) {
@@ -72,14 +77,10 @@ function expectedIntersection(id: string): boolean {
     if (theta < 15 || theta > 165) return false;
   }
   const p = nodePos(nodeById(id));
-  const stubLen = stubLenOf(dirs);
   let lo = Infinity, hi = -Infinity;
   for (const d of dirs) {
-    for (const f of [0, 0.5, 1]) {
-      const s = Math.min(stubLen, d.len * 0.9) * f;
-      const h = deckNear(d, id, p.x + d.dx * s, p.z + d.dz * s);
-      lo = Math.min(lo, h); hi = Math.max(hi, h);
-    }
+    const h = deckNear(d, id, p.x, p.z);
+    lo = Math.min(lo, h); hi = Math.max(hi, h);
   }
   return hi - lo <= 0.8;
 }
@@ -95,6 +96,7 @@ test('intersections exist exactly where needed', () => {
   for (const e of ROAD_EDGES) {
     if (e.kind !== 'bridge') { ids.add(e.a); ids.add(e.b); }
   }
+  ids.add('bl-w'); ids.add('bl-e'); // landings (bridge leg counts)
   for (const id of ids) {
     const want = expectedIntersection(id);
     const ix = byNode.get(id);
@@ -173,15 +175,41 @@ test('zone boundary is a simple polygon', () => {
   }
 });
 
-// The mesh is a single flat height: every ring vertex and the fan center sit
-// at exactly `height` (zero internal overlap by construction).
-test('intersection mesh is single-height', () => {
+// Sloped zones: the mesh follows each leg's deck profile instead of being
+// flat. Every ring vertex (minus the 2cm crown) stays within the legs'
+// height range — no spikes, no pits.
+test('sloped zone mesh stays within leg height range', () => {
   for (const ix of intersections()) {
-    for (const v of ix.ring)
-      assert.ok(v.h === ix.height, `ring vertex off mesh height at ${ix.nodeId}`);
-    for (const [a, b, c] of ix.tris)
-      assert.ok(a.h === ix.height && b.h === ix.height && c.h === ix.height,
-        `tri off mesh height at ${ix.nodeId}`);
+    const p = nodePos(nodeById(ix.nodeId));
+    let lo = Infinity, hi = -Infinity;
+    for (const leg of ix.legs) {
+      if (leg.edge.kind === 'bridge') continue; // deck height handled by bridge.ts
+      const d = dirsOf(ix.nodeId).find(x => x.e === leg.edge)!;
+      for (const s of [0, leg.clip]) {
+        const h = deckNear(d, ix.nodeId, p.x + leg.dx * s, p.z + leg.dz * s);
+        lo = Math.min(lo, h); hi = Math.max(hi, h);
+      }
+    }
+    for (const v of ix.ring) {
+      assert.ok(v.h - 0.02 >= lo - 0.5 && v.h - 0.02 <= hi + 0.5,
+        `ring vertex out of leg height range at ${ix.nodeId}: ${v.h.toFixed(2)} vs [${lo.toFixed(2)},${hi.toFixed(2)}]`);
+    }
+  }
+});
+
+// The mesh meets each leg's deck at the clip line: clipHeight matches the
+// leg's deck height there (ribbon ramps to clipHeight, so no step).
+test('clipHeight matches leg deck height at clip lines', () => {
+  for (const ix of intersections()) {
+    const p = nodePos(nodeById(ix.nodeId));
+    for (const leg of ix.legs) {
+      if (leg.edge.kind === 'bridge') continue;
+      const d = dirsOf(ix.nodeId).find(x => x.e === leg.edge)!;
+      const cx = p.x + leg.dx * leg.clip, cz = p.z + leg.dz * leg.clip;
+      const deckH = deckNear(d, ix.nodeId, cx, cz) + 0.02;
+      assert.ok(Math.abs(leg.clipHeight - deckH) < 0.6,
+        `clipHeight/deck mismatch at ${ix.nodeId}: ${leg.clipHeight.toFixed(2)} vs ${deckH.toFixed(2)}`);
+    }
   }
 });
 
@@ -202,11 +230,10 @@ test('markings lie strictly inside the zone', () => {
   }
 });
 
-// Where two zones overlap in plan, their meshes must not be coplanar
-// (z-fighting). The de-coplanar pass guarantees >=3cm separation; the higher
-// occludes the lower and intersectionHeight returns the max.
-// Overlapping zones are merged structurally (not stacked with height offsets).
-// This test verifies the merge invariant: no two zones overlap in plan.
+// Where two zones overlap in plan AT THE SAME GRADE, their meshes must be
+// merged (not stacked/coplanar). Grade-separated zones (e.g. a bridge
+// landing 6m above a street) may overlap in plan — that's an overpass, not
+// a conflict.
 test('overlapping zones are merged, not stacked', () => {
   const ixs = intersections();
   const overlap = (a: Intersection, b: Intersection): boolean => {
@@ -214,11 +241,19 @@ test('overlapping zones are merged, not stacked', () => {
     for (const v of a.ring) if (intersectionContains(b, v.x, v.z)) return true;
     return false;
   };
+  const vRange = (ix: Intersection): [number, number] => {
+    let lo = Infinity, hi = -Infinity;
+    for (const v of ix.ring) { lo = Math.min(lo, v.h); hi = Math.max(hi, v.h); }
+    return [lo, hi];
+  };
   for (let i = 0; i < ixs.length; i++) {
     for (let j = i + 1; j < ixs.length; j++) {
       const a = ixs[i], b = ixs[j];
-      assert.ok(!overlap(a, b),
-        `zones ${a.nodeId} and ${b.nodeId} overlap — must be merged, not stacked`);
+      if (!overlap(a, b)) continue;
+      const [aLo, aHi] = vRange(a), [bLo, bHi] = vRange(b);
+      const separated = aHi < bLo - 1.0 || bHi < aLo - 1.0;
+      assert.ok(separated,
+        `zones ${a.nodeId} and ${b.nodeId} overlap at grade — must be merged, not stacked`);
     }
   }
 });
@@ -231,7 +266,8 @@ test('intersectionContains matches zone geometry', () => {
     const p = nodePos(nodeById(ix.nodeId));
     assert.ok(intersectionContains(ix, p.x, p.z), `node outside own zone at ${ix.nodeId}`);
     const h = intersectionHeight(p.x, p.z);
-    assert.ok(h !== null && h >= ix.height - 1e-6, `no surface at node of ${ix.nodeId}`);
+    assert.ok(h !== null, `no surface at node of ${ix.nodeId}`);
+    // Height range is validated by 'sloped zone mesh stays within leg height range'.
     const far = ix.ring[0];
     assert.ok(!intersectionContains(ix, p.x + (far.x - p.x) * 3, p.z + (far.z - p.z) * 3),
       `far point inside zone at ${ix.nodeId}`);

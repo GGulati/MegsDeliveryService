@@ -73,7 +73,7 @@ export const ROAD_EDGES: RoadEdge[] = [
   E('wx1', 'wx2'), E('wx2', 'wx3'),
   E('ww1b', 'wx1'), E('ww2b', 'wx2'), E('ww3b', 'wx3'),
   E('ex1', 'ex2'), E('ex2', 'ex3'),
-  E('we1', 'ex1'), E('we2', 'ex2'), E('we3', 'ex3'),
+  E('we1', 'ex1'), E('we2', 'ex2'), // we3->ex3 removed 2026-09-28: was exactly collinear with the bl-e ramp at we3 (ramp flew over the road)
 ];
 
 /** Pairs of node ids forming bridge edges, for the bridge renderer. */

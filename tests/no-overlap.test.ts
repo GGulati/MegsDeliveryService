@@ -5,15 +5,24 @@ import { ROAD_EDGES, nodeById } from '../src/roads.js';
 import { polysOverlap, quadsOverlap, type Poly2 } from '../src/poly2d.js';
 
 describe('no-overlap: pavement ownership by construction', () => {
-  it('intersection zones are pairwise disjoint (merged, not stacked)', () => {
+  it('intersection zones are pairwise disjoint at grade (merged, not stacked)', () => {
     const ixs = intersections();
+    const vRange = (ix: (typeof ixs)[number]): [number, number] => {
+      let lo = Infinity, hi = -Infinity;
+      for (const v of ix.ring) { lo = Math.min(lo, v.h); hi = Math.max(hi, v.h); }
+      return [lo, hi];
+    };
     for (let i = 0; i < ixs.length; i++) {
       for (let j = i + 1; j < ixs.length; j++) {
         const a: Poly2 = ixs[i].ring.map(v => [v.x, v.z]);
         const b: Poly2 = ixs[j].ring.map(v => [v.x, v.z]);
+        if (!polysOverlap(a, b)) continue;
+        // Plan overlap is allowed only for grade-separated zones (overpass).
+        const [aLo, aHi] = vRange(ixs[i]), [bLo, bHi] = vRange(ixs[j]);
+        const separated = aHi < bLo - 1.0 || bHi < aLo - 1.0;
         assert.ok(
-          !polysOverlap(a, b),
-          `Zones ${ixs[i].nodeId} and ${ixs[j].nodeId} overlap — must be merged, not stacked`
+          separated,
+          `Zones ${ixs[i].nodeId} and ${ixs[j].nodeId} overlap at grade — must be merged, not stacked`
         );
       }
     }

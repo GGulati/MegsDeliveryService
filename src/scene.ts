@@ -5,7 +5,7 @@ import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
-import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, clipT, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections } from './road-deck';
+import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, clipT, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections, intersectionHeightAt } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
@@ -306,22 +306,27 @@ export class GameRenderer {
       // crosswalks) and sidewalk-colored fillets. Two draw calls total.
       const whitePos: number[] = [], whiteNor: number[] = [], whiteIdx: number[] = [];
       const walkPos: number[] = [], walkNor: number[] = [], walkIdx: number[] = [];
-      const quad = (pos: number[], nor: number[], idx: number[], y: number,
+      const quad = (pos: number[], nor: number[], idx: number[], ys: number[],
           a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
         const base = pos.length / 3;
-        for (const [x, z] of [a, b, c, d]) { pos.push(x, y, z); nor.push(0, 1, 0); }
+        const pts = [a, b, c, d];
+        for (let qi = 0; qi < 4; qi++) {
+          pos.push(pts[qi][0], ys[qi], pts[qi][1]); nor.push(0, 1, 0);
+        }
         idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
       };
       for (const ix of intersections()) {
-        const H = ix.height;
         const p = nodePos(nodeById(ix.nodeId));
-        // Flat asphalt base: triangle fan from the node over the zone.
-        const pos: number[] = [p.x, H, p.z];
+        // Sloped asphalt base: triangle fan from the node over the zone,
+        // using per-vertex mesh heights (sloped intersection zones follow
+        // each approach's profile). Matches roadGroundHeight exactly.
+        const centerH = intersectionHeightAt(ix, p.x, p.z);
+        const pos: number[] = [p.x, centerH, p.z];
         const nor: number[] = [0, 1, 0];
         const col: number[] = [asphalt.r, asphalt.g, asphalt.b];
         const idx: number[] = [];
         for (const v of ix.ring) {
-          pos.push(v.x, H, v.z); nor.push(0, 1, 0);
+          pos.push(v.x, v.h, v.z); nor.push(0, 1, 0);
           col.push(asphalt.r, asphalt.g, asphalt.b);
         }
         for (let k = 0; k < ix.ring.length; k++)
@@ -361,10 +366,12 @@ export class GameRenderer {
           const el = Math.hypot(ex, ez) || 1;
           const ox = ez / el, oz = -ex / el;
           const ty = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z));
-          const topY = H - 0.02;
+          // Sloped skirt: top follows the mesh (2cm below each vertex).
+          const topYa = a.h - 0.02, topYb = b.h - 0.02;
+          const topY = Math.min(topYa, topYb);
           const by = ty < topY - 0.3 ? Math.max(ty - 0.1, topY - 3) : topY;
           const base = spos.length / 3;
-          spos.push(a.x, topY, a.z, a.x, by, a.z, b.x, topY, b.z, b.x, by, b.z);
+          spos.push(a.x, topYa, a.z, a.x, by, a.z, b.x, topYb, b.z, b.x, by, b.z);
           snor.push(ox, 0, oz, ox, 0, oz, ox, 0, oz, ox, 0, oz);
           sidx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
         }
@@ -382,10 +389,14 @@ export class GameRenderer {
         // separation than desktop; the offset pulls decals toward the camera
         // in depth without a visible float.
         const { white, walk } = intersectionMarkings(ix);
+        // Markings follow the sloped mesh: each corner lifted 8cm above the
+        // interpolated surface (never coplanar, never floating).
+        const markHeights = (q: [number, number][], lift: number): number[] =>
+          q.map(([x, z]) => intersectionHeightAt(ix, x, z) + lift);
         for (const q of white)
-          quad(whitePos, whiteNor, whiteIdx, H + 0.08, q[0], q[1], q[2], q[3]);
+          quad(whitePos, whiteNor, whiteIdx, markHeights(q, 0.08), q[0], q[1], q[2], q[3]);
         for (const q of walk)
-          quad(walkPos, walkNor, walkIdx, H + 0.085, q[0], q[1], q[2], q[3]);
+          quad(walkPos, walkNor, walkIdx, markHeights(q, 0.085), q[0], q[1], q[2], q[3]);
       }
       // Emit the merged marking meshes.
       // Markings sit 1-2cm above the road surface (never coplanar) with

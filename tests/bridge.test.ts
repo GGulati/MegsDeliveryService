@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { ROAD_EDGES, nodeById, nodePos } from '../src/roads.js';
 import { buildBridge } from '../src/bridge.js';
+import { shortestPath } from '../src/trips.js';
 
 describe('bridge', () => {
   it('exactly one bridge edge exists with a deck above water', () => {
@@ -48,6 +49,19 @@ describe('bridge', () => {
       const box = new THREE.Box3().setFromObject(col);
       assert.ok(box.min.y <= 0.5, `tower column should reach the waterline (min.y=${box.min.y})`);
       assert.ok(box.max.y >= deckY + 12 - 0.01, `tower top unchanged above deck (max.y=${box.max.y})`);
+    }
+  });
+
+  it('bridge-enabled car routes use bl-w->bl-e; ped routes stay bridge-free', () => {
+    // West to east: with the bridge allowed, the shortest path must cross it.
+    const carRoute = shortestPath('wx2', 'we2', true);
+    assert.ok(carRoute, 'car route wx2->we2 should exist with bridge allowed');
+    const usesBridge = carRoute.some((e: any) => e.kind === 'bridge');
+    assert.ok(usesBridge, 'bridge-enabled car route should include the bridge edge');
+    // Without the bridge (peds), the route must avoid it entirely.
+    const pedRoute = shortestPath('wx2', 'we2', false);
+    if (pedRoute) {
+      assert.ok(!pedRoute.some((e: any) => e.kind === 'bridge'), 'ped route must not use the bridge');
     }
   });
 });
