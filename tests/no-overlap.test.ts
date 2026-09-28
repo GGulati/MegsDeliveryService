@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { intersections, intersectionMarkings } from '../src/road-deck.js';
+import { ROAD_EDGES, nodeById } from '../src/roads.js';
 import { polysOverlap, quadsOverlap, type Poly2 } from '../src/poly2d.js';
 
 describe('no-overlap: pavement ownership by construction', () => {
@@ -47,4 +48,49 @@ describe('no-overlap: pavement ownership by construction', () => {
       }
     }
   });
+
+  it('bridge ramps never sit on top of regular roads (8m clearance)', () => {
+    // Ramps are the non-bridge edges touching a bridge landing (bl-w, bl-e).
+    // They must keep 8m centerline clearance from every regular road they
+    // don't share an endpoint with — otherwise the ramp deck lands on top
+    // of another road's surface.
+    const landings = new Set(['bl-w', 'bl-e']);
+    const ramps = ROAD_EDGES.filter(e =>
+      e.kind !== 'bridge' && (landings.has(e.a) || landings.has(e.b)));
+    assert.ok(ramps.length > 0, 'no bridge ramps found');
+    for (const r of ramps) {
+      const ra = nodeById(r.a), rb = nodeById(r.b);
+      for (const e of ROAD_EDGES) {
+        if (e === r) continue;
+        if (e.kind === 'bridge') continue;
+        if (e.a === r.a || e.b === r.a || e.a === r.b || e.b === r.b) continue;
+        const ea = nodeById(e.a), eb = nodeById(e.b);
+        const d = segSegDistXZ(ra.x, ra.z, rb.x, rb.z, ea.x, ea.z, eb.x, eb.z);
+        assert.ok(d >= 8,
+          `ramp ${r.a}-${r.b} overlaps regular road ${e.a}-${e.b} (dist ${d.toFixed(1)}m)`);
+      }
+    }
+  });
 });
+
+// Minimum distance between segments AB and CD in the XZ plane.
+function segSegDistXZ(ax: number, az: number, bx: number, bz: number,
+                      cx: number, cz: number, dx: number, dz: number): number {
+  const rx = bx - ax, rz = bz - az, sx = dx - cx, sz = dz - cz;
+  const r2 = rx * rx + rz * rz, s2 = sx * sx + sz * sz;
+  if (r2 < 1e-9 || s2 < 1e-9) return Math.hypot(ax - cx, az - cz);
+  const qx = cx - ax, qz = cz - az;
+  const rxs = rx * sz - rz * sx;
+  if (Math.abs(rxs) > 1e-9) {
+    const t = (qx * sz - qz * sx) / rxs, u = (qx * rz - qz * rx) / rxs;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return 0;
+  }
+  const ptSeg = (px: number, pz: number, x1: number, z1: number, x2: number, z2: number) => {
+    const ddx = x2 - x1, ddz = z2 - z1;
+    const t = Math.max(0, Math.min(1, ((px - x1) * ddx + (pz - z1) * ddz) / (ddx * ddx + ddz * ddz)));
+    return Math.hypot(px - (x1 + t * ddx), pz - (z1 + t * ddz));
+  };
+  return Math.min(
+    ptSeg(ax, az, cx, cz, dx, dz), ptSeg(bx, bz, cx, cz, dx, dz),
+    ptSeg(cx, cz, ax, az, bx, bz), ptSeg(dx, dz, ax, az, bx, bz));
+}
