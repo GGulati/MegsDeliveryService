@@ -652,6 +652,11 @@ export function roadGroundHeight(e: RoadEdge, t: number, x: number, z: number): 
   let inside = false;
 
   for (const ix of intersections()) {
+    // Grade separation: only consider zones where this edge is a leg. A car
+    // on the road below the bridge must not snap to the bridge deck 6m
+    // above just because its (x,z) falls in the bridge zone's 2D footprint.
+    // (Fixed 2026-09-28: cars warping onto the bridge/onramp.)
+    if (!ix.legs.some(l => l.edge === e)) continue;
     const d = intersectionSignedDist(ix, x, z);
     if (d > 0) {
       inside = true;
