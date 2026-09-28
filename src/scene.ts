@@ -388,14 +388,15 @@ export class GameRenderer {
           quad(walkPos, walkNor, walkIdx, H + 0.085, q[0], q[1], q[2], q[3]);
       }
       // Emit the merged marking meshes.
-      // Depth-independent: lines render after opaque roads with depth test
-      // off, so mobile 16-bit depth precision can't cause flicker. renderOrder
-      // 1 draws them after roads (0); cars/buildings (opaque, depth-tested)
-      // still occlude correctly via the road depth in the buffer.
+      // Markings sit 1-2cm above the road surface (never coplanar) with
+      // polygonOffset to defeat mobile 16-bit depth flicker. depthTest stays
+      // ON so buildings/houses correctly occlude the lines.
       const markMat = toon(0xf5f1e6);
       markMat.side = THREE.DoubleSide;
-      markMat.depthTest = false;
       markMat.depthWrite = false;
+      markMat.polygonOffset = true;
+      markMat.polygonOffsetFactor = -2;
+      markMat.polygonOffsetUnits = -2;
       if (whiteIdx.length) {
         const wgeo = new THREE.BufferGeometry();
         wgeo.setAttribute('position', new THREE.Float32BufferAttribute(whitePos, 3));
@@ -408,8 +409,10 @@ export class GameRenderer {
       }
       const walkMat = toon(0xb8b0a0);
       walkMat.side = THREE.DoubleSide;
-      walkMat.depthTest = false;
       walkMat.depthWrite = false;
+      walkMat.polygonOffset = true;
+      walkMat.polygonOffsetFactor = -2;
+      walkMat.polygonOffsetUnits = -2;
       if (walkIdx.length) {
         const fgeo = new THREE.BufferGeometry();
         fgeo.setAttribute('position', new THREE.Float32BufferAttribute(walkPos, 3));
@@ -435,17 +438,24 @@ export class GameRenderer {
       const t1 = clips.b ? clipT(e, 'b', Math.max(0, clips.b.dist - 0.05)) : 1;
       g.add(makeFlatRoad(e, curve, width, t0, t1));
     }
+    // Center dashes: merged into a single geometry (not individual meshes).
+    // Individual meshes cause flicker on tile-based mobile GPUs due to
+    // hundreds of draw calls with overlapping screen-space bounds.
+    const dashMat = toon(0xfff6d8);
+    dashMat.side = THREE.DoubleSide;
+    dashMat.depthWrite = false;
+    dashMat.polygonOffset = true;
+    dashMat.polygonOffsetFactor = -2;
+    dashMat.polygonOffsetUnits = -2;
+    const dashPos: number[] = [];
+    const dashNor: number[] = [];
+    const dashIdx: number[] = [];
     for (const e of ROAD_EDGES) {
       if (e.kind === 'bridge') continue;
       const curve = roadCurve(e);
       // Center dashes (flat, on the road surface). Dashes TERMINATE at
       // intersection clip lines (with a 1m margin) — they never enter the
       // intersection, like real lane markings.
-      // Depth-independent (see intersection markings): no mobile flicker.
-      const dashMat = toon(0xfff6d8);
-      dashMat.side = THREE.DoubleSide;
-      dashMat.depthTest = false;
-      dashMat.depthWrite = false;
       const len = curve.getLength();
       const clips = edgeClips(e);
       const cA = clips.a ? clips.a.dist : 0;
@@ -453,15 +463,37 @@ export class GameRenderer {
       for (let d = cA + 1; d < len - cB - 3; d += 4) {
         const p0 = curve.getPointAt(d / len), p1 = curve.getPointAt(Math.min(1, (d + 2) / len));
         const dp = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
-        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
-        dash.rotation.x = -Math.PI / 2;
-        dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
-        // Match the ribbon height (follows the clip ramp like the road itself).
+        // Dash quad: 0.24m wide, 2m long, oriented along the road direction.
+        // Build directly in world space (no per-mesh transform).
+        const angle = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+        const cosA = Math.cos(angle), sinA = Math.sin(angle);
+        // Local: x = width (0.24), z = length (2). Rotate by angle around Y.
+        const hw = 0.12, hl = 1.0;
         const dy = ribbonHeightAt(e, (d + 1) / len) + 0.02;
-        dash.position.set(dp.x, dy, dp.z);
-        dash.renderOrder = 1;
-        g.add(dash);
+        // Corners: (±hw, ±hl) rotated
+        const corners: [number, number][] = [
+          [-hw, -hl], [hw, -hl], [hw, hl], [-hw, hl],
+        ];
+        const base = dashPos.length / 3;
+        for (const [lx, lz] of corners) {
+          // Rotate: x' = lx*cosA + lz*sinA, z' = -lx*sinA + lz*cosA
+          // (matches rotation.z = angle for a plane rotated x=-90°)
+          const wx = dp.x + lx * cosA + lz * sinA;
+          const wz = dp.z + (-lx * sinA + lz * cosA);
+          dashPos.push(wx, dy, wz);
+          dashNor.push(0, 1, 0);
+        }
+        dashIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
       }
+    }
+    if (dashIdx.length > 0) {
+      const dashGeo = new THREE.BufferGeometry();
+      dashGeo.setAttribute('position', new THREE.Float32BufferAttribute(dashPos, 3));
+      dashGeo.setAttribute('normal', new THREE.Float32BufferAttribute(dashNor, 3));
+      dashGeo.setIndex(dashIdx);
+      const dashMesh = new THREE.Mesh(dashGeo, dashMat);
+      dashMesh.renderOrder = 1;
+      g.add(dashMesh);
     }
     // Intersections: one flat asphalt mesh per junction at a single height,
     // with painted markings as flat decals 1-2cm above (never coplanar).
