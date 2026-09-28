@@ -249,11 +249,10 @@ function buildPed(seed: number): { group: THREE.Group; armR: THREE.Mesh } {
   armR.position.set(0.32, 1.25, 0);
   armR.rotation.z = -0.15;
   g.add(armR);
-  // Left arm (static, part of visual — use same shared geo, no wave).
+  // Left arm (static — same shared geo, hangs down like the right arm).
   const armL = new THREE.Mesh(geos.pedArm, cloth);
   armL.position.set(-0.32, 1.25, 0);
   armL.rotation.z = 0.15;
-  armL.scale.y = -1; // mirror (arm geo is translated for right side)
   g.add(armL);
 
   return { group: g, armR };
@@ -372,7 +371,20 @@ export class Life {
         spawnT = rnd();
         curve.getPointAt(spawnT, this.tmpP);
         curve.getTangentAt(spawnT, this.tmpT);
+        // Choose a sidewalk side that isn't in water or inside a solid.
+        // (Some roads run close to the bay; the 4m offset can land in water.)
         spawnSide = rnd() < 0.5 ? 1 : -1;
+        const trySide = (s: 1 | -1): boolean => {
+          const ox = (-this.tmpT.z) * 4 * s;
+          const oz = (this.tmpT.x) * 4 * s;
+          const px = this.tmpP.x + ox, pz = this.tmpP.z + oz;
+          return !isInBay(px, pz) && pedClear(px, pz);
+        };
+        if (!trySide(spawnSide)) {
+          const other: 1 | -1 = spawnSide === 1 ? -1 : 1;
+          if (trySide(other)) spawnSide = other;
+          // If both sides are bad, keep the original (test will catch it).
+        }
         spawnOffX = (-this.tmpT.z) * 4 * spawnSide;
         spawnOffZ = (this.tmpT.x) * 4 * spawnSide;
         x = this.tmpP.x + spawnOffX;
@@ -425,9 +437,9 @@ export class Life {
     for (const ped of this.peds) this.updatePed(ped, dt, playerPos, playerSpeed, playerVelY, time);
   }
 
-  private nextEdge(current: RoadEdge, nodeId: string): { edge: RoadEdge; dir: 1 | -1; t: number } {
+  private nextEdge(current: RoadEdge, nodeId: string, allowBridge: boolean = false): { edge: RoadEdge; dir: 1 | -1; t: number } {
     const options = ROAD_EDGES.filter(e =>
-      e.kind !== 'bridge' && (e.a === nodeId || e.b === nodeId) &&
+      (allowBridge || e.kind !== 'bridge') && (e.a === nodeId || e.b === nodeId) &&
       !(e.a === current.a && e.b === current.b)
     );
     const next = options.length > 0
@@ -442,10 +454,11 @@ export class Life {
    * destination is reachable (e.g. bridge-isolated components). */
   private assignTrip(e: Car | Ped, fromNode: string): void {
     const dests = destinations();
+    const allowBridge = 'variant' in e; // cars can use the bridge, peds cannot
     for (let tries = 0; tries < 8; tries++) {
       const d = dests[(Math.random() * dests.length) | 0];
       if (d.nodeId === fromNode) continue;
-      const route = shortestPath(fromNode, d.nodeId);
+      const route = shortestPath(fromNode, d.nodeId, allowBridge);
       if (route && route.length > 0) {
         e.destNode = d.nodeId;
         e.route = route;
@@ -491,7 +504,8 @@ export class Life {
       e.t = THREE.MathUtils.clamp(e.t, 0, 1);
       return 'dwell';
     }
-    const n = this.nextEdge(e.edge, nodeId);
+    const isCar = 'variant' in e;
+    const n = this.nextEdge(e.edge, nodeId, isCar);
     this.mountEdge(e, n.edge, nodeId, n.dir, n.t);
     if (e.destNode === null) this.assignTrip(e, nodeId);
     return 'wander';
@@ -506,7 +520,8 @@ export class Life {
       const re = e.route.shift()!;
       this.mountEdge(e, re, nodeId);
     } else {
-      const n = this.nextEdge(e.edge, nodeId);
+      const isCar = 'variant' in e;
+      const n = this.nextEdge(e.edge, nodeId, isCar);
       this.mountEdge(e, n.edge, nodeId, n.dir, n.t);
     }
   }
@@ -529,6 +544,58 @@ export class Life {
       speed = Math.min(speed, other.speed * (dist / SAFE_GAP));
     }
     return speed;
+  }
+
+  /** Distance from a car to a node, whether approaching it or just departed.
+   * Returns Infinity if the car is not on an edge touching the node. */
+  private carDistToNode(car: Car, nodeId: string): number {
+    if (car.dir === 1) {
+      if (car.edge.b === nodeId) return (1 - car.t) * car.edgeLen; // approaching
+      if (car.edge.a === nodeId) return car.t * car.edgeLen; // just departed
+    } else {
+      if (car.edge.a === nodeId) return car.t * car.edgeLen; // approaching
+      if (car.edge.b === nodeId) return (1 - car.t) * car.edgeLen; // just departed
+    }
+    return Infinity;
+  }
+
+  /** Intersection yielding: only one car in an intersection zone at a time.
+   * A car approaching a node yields (slows to a stop at the stop line) if
+   * another car is already in the zone. Priority goes to the car already
+   * in the intersection, then to the closer car, with a deterministic
+   * tiebreaker to avoid deadlock. (User feedback 2026-09-27.) */
+  private carIntersectionSpeed(car: Car): number {
+    const ZONE = 9; // meters: intersection zone radius
+    const STOP = 2.5; // meters: stop line distance from node center
+    const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
+    const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
+    if (myDist > ZONE) return car.baseSpeed;
+
+    const myIdx = this.cars.indexOf(car);
+    for (const other of this.cars) {
+      if (other === car || other.dwellT > 0) continue;
+      const otherDist = this.carDistToNode(other, targetNode);
+      if (otherDist > ZONE) continue;
+      // Other car is in the intersection zone. Check priority.
+      const otherDeparting =
+        (other.dir === 1 && other.edge.a === targetNode) ||
+        (other.dir === -1 && other.edge.b === targetNode);
+      let yieldToOther = false;
+      if (otherDeparting) {
+        yieldToOther = true; // already in the intersection, let it clear
+      } else if (otherDist < myDist - 0.5) {
+        yieldToOther = true; // other is closer to the node
+      } else if (Math.abs(otherDist - myDist) <= 0.5) {
+        // Tie: deterministic priority by car index (avoids deadlock).
+        yieldToOther = this.cars.indexOf(other) < myIdx;
+      }
+      if (yieldToOther) {
+        if (myDist <= STOP) return 0; // hold at the stop line
+        // Slow down on approach to the stop line.
+        return car.baseSpeed * Math.max(0, (myDist - STOP) / (ZONE - STOP));
+      }
+    }
+    return car.baseSpeed;
   }
 
   /** Speed for a sidewalk ped considering the ped ahead on the same edge,
@@ -562,6 +629,9 @@ export class Life {
     // Collision avoidance: don't tailgate the car ahead on the same edge.
     // (User feedback 2026-09-27: traffic should not collide.)
     car.speed = this.carFollowSpeed(car);
+    // Intersection yielding: don't enter an intersection occupied by another car.
+    // (User feedback 2026-09-27: cars passing through each other at intersections.)
+    car.speed = Math.min(car.speed, this.carIntersectionSpeed(car));
     const prevT = car.t;
     car.t += (car.dir * car.speed * dt) / car.edgeLen;
     // Arrival fires only when t CROSSES the node boundary this frame — not

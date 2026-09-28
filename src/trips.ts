@@ -50,10 +50,11 @@ export function destinations(): Destination[] {
 }
 
 interface Adj { to: string; edge: RoadEdge; w: number }
-let adjCache: Map<string, Adj[]> | null = null;
+let adjCache: Record<string, Map<string, Adj[]> | null> = { withBridge: null, noBridge: null };
 
-function adjacency(): Map<string, Adj[]> {
-  if (adjCache) return adjCache;
+function adjacency(allowBridge: boolean = false): Map<string, Adj[]> {
+  const cacheKey = allowBridge ? 'withBridge' : 'noBridge';
+  if (adjCache[cacheKey]) return adjCache[cacheKey];
   const m = new Map<string, Adj[]>();
   const add = (from: string, to: string, edge: RoadEdge) => {
     if (!m.has(from)) m.set(from, []);
@@ -61,19 +62,19 @@ function adjacency(): Map<string, Adj[]> {
     m.get(from)!.push({ to, edge, w: Math.hypot(a.x - b.x, a.z - b.z) });
   };
   for (const e of ROAD_EDGES) {
-    if (e.kind === 'bridge') continue; // ambient traffic never used bridges
+    if (e.kind === 'bridge' && !allowBridge) continue;
     add(e.a, e.b, e);
     add(e.b, e.a, e);
   }
-  adjCache = m;
+  adjCache[cacheKey] = m;
   return m;
 }
 
 /** Dijkstra shortest path: ordered edges from `from` to `to`, or null when the
  * destination is unreachable on the (bridge-free) ambient graph. */
-export function shortestPath(from: string, to: string): RoadEdge[] | null {
+export function shortestPath(from: string, to: string, allowBridge: boolean = false): RoadEdge[] | null {
   if (from === to) return [];
-  const adj = adjacency();
+  const adj = adjacency(allowBridge);
   const dist = new Map<string, number>([[from, 0]]);
   const prev = new Map<string, { edge: RoadEdge; from: string }>();
   const done = new Set<string>();

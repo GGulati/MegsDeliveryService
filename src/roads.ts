@@ -48,7 +48,7 @@ export const ROAD_EDGES: RoadEdge[] = [
   E('ww1', 'ww2'), E('ww2', 'ww3'), E('ww1b', 'ww2b'), E('ww2b', 'ww3b'),
   E('ww1', 'ww1b'), E('ww2', 'ww2b'), E('ww3', 'ww3b'),
   E('we1', 'we2'), E('we2', 'we3'), E('we1b', 'we2b'), E('we1', 'we1b'), E('we2', 'we2b'),
-  E('wx3', 'bl-w'), E('bl-w', 'bl-e', 'bridge', 6), E('bl-e', 'we3'),
+  E('wx2', 'bl-w'), E('bl-w', 'bl-e', 'bridge', 6), E('bl-e', 'we3'),
   E('ww1', 'sw1', 'switchback'), E('sw1', 'sw2', 'switchback'), E('sw2', 'sw3', 'switchback'),
   E('sw3', 'sw4', 'switchback'), E('sw4', 'm1', 'switchback'),
   E('we1', 'se1', 'switchback'), E('se2', 'se3', 'switchback'),
