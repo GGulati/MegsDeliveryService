@@ -11,7 +11,7 @@ export const ROAD_NODES: RoadNode[] = [
   N('ww1b', -35, 10), N('ww2b', -35, 70), N('ww3b', -35, 130),
   N('we1', 85, -10), N('we2', 85, 50), N('we3', 85, 110),
   N('we1b', 120, -10), N('we2b', 120, 50),
-  N('bl-w', -8, 100, 6), N('bl-e', 68, 100, 6),
+  N('bl-w', -15, 100, 6), N('bl-e', 68, 100, 6),
   N('sw1', -75, -8), N('sw2', -95, -25), N('sw3', -65, -42), N('sw4', -90, -58),
   N('se1', 85, -28), N('se2', 105, -45), N('se3', 75, -60), N('se4', 95, -75),
   N('m1', -60, -72), N('m2', -20, -72), N('m3', 20, -72), N('m4', 60, -72),
@@ -36,9 +36,10 @@ export const ROAD_NODES: RoadNode[] = [
   N('ui5', 130, -160), // upper east corner
   // Observatory rise spur.
   N('ob3', 125, -100),
-  // Waterfront west strip (x=-15) and east strip (x=65).
-  N('wx1', -15, 10), N('wx2', -15, 70), N('wx3', -15, 130),
-  N('ex1', 65, -10), N('ex2', 65, 50), N('ex3', 65, 110),
+  // Waterfront west strip. wx1/wx2 at x=-25 (were -15): bay shore at z=10
+  // is x≈-18, terrain h=-1.6 underwater at (-15,10) and (-15,70) (2026-09-27).
+  N('wx1', -25, 10), N('wx2', -25, 70), N('wx3', -15, 130),
+  N('ex1', 65, -10), N('ex2', 65, 50), N('ex3', 75, 110), // ex3 x=75 (was 65): h=-1.6 underwater at (65,110)
 ];
 
 const E = (a: string, b: string, kind: RoadEdge['kind'] = 'street', deckY?: number): RoadEdge => ({ a, b, kind, deckY });
