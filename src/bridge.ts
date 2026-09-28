@@ -46,6 +46,13 @@ export function buildBridge(g: THREE.Group): void {
   deck.rotation.y = yawFor('x');
   g.add(deck);
 
+  // Asphalt road surface on top of the deck (the road goes OVER the bridge).
+  const roadMat = new THREE.MeshToonMaterial({ color: 0x3a3a3a });
+  const road = new THREE.Mesh(new THREE.BoxGeometry(span, 0.1, DECK_WIDTH - 1), roadMat);
+  road.position.set((a.x + b.x) / 2, deckY + 0.05, (a.z + b.z) / 2);
+  road.rotation.y = yawFor('x');
+  g.add(road);
+
   // Two towers at 1/3 and 2/3 along the span.
   for (const t of [1 / 3, 2 / 3]) {
     for (const side of [-CABLE_OFFSET, CABLE_OFFSET]) {
