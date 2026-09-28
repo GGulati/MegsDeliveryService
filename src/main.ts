@@ -44,7 +44,12 @@ function flashSaveFyi(message: string, ms = 8000): void {
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function resume() { if (!bootReady || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();draw(0); }
+function resume() { if (!bootReady || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();
+  // No synchronous draw(0) here: the rAF loop draws on the next frame anyway.
+  // A full WebGL render inside the tap handler blocks the main thread on
+  // mobile (30-80ms) before the browser can paint the dismissed modal,
+  // which reads as a freeze. (Fixed 2026-09-28.)
+}
 function fullscreen() { if (document.fullscreenElement) void document.exitFullscreen?.(); else void document.documentElement.requestFullscreen?.().catch(() => {}); }
 const ui = new UI(root, {
   start() { if(!bootReady)return; if (state.profile.tutorialDone) enterHome(state); else startTutorial(state); input?.clear(); (document.activeElement as HTMLElement)?.blur(); persist(); draw(0); },
