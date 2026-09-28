@@ -441,12 +441,13 @@ export class GameRenderer {
       const width = roadWidth(e);
       // Clip the ribbon at intersection nodes: it ends at the plan-distance
       // clip where the intersection mesh takes over. clipT converts the plan
-      // distance to a curve parameter; the 5cm margin keeps the ribbon end
-      // strictly inside its own zone so it never overlaps the flat mesh
-      // (coplanar overlap = z-fighting flicker, fixed 2026-09-27).
+      // distance to a curve parameter. The ribbon meets the mesh at a shared
+      // boundary edge (no margin): the mesh's 2cm crown keeps them from being
+      // coplanar, so there is no z-fighting and no gap. (The old 5cm margin
+      // left a visible 5cm hole on sloped zones; removed 2026-09-28.)
       const clips = edgeClips(e);
-      const t0 = clips.a ? clipT(e, 'a', Math.max(0, clips.a.dist - 0.05)) : 0;
-      const t1 = clips.b ? clipT(e, 'b', Math.max(0, clips.b.dist - 0.05)) : 1;
+      const t0 = clips.a ? clipT(e, 'a', clips.a.dist) : 0;
+      const t1 = clips.b ? clipT(e, 'b', clips.b.dist) : 1;
       g.add(makeFlatRoad(e, curve, width, t0, t1));
     }
     // Center dashes: merged into a single geometry (not individual meshes).

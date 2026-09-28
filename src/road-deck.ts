@@ -466,11 +466,18 @@ export function intersections(): Intersection[] {
         };
         const newRing: ZoneVertex[] = mergedPoly.map(([x, z]) => ({ x, z, h: nearestH(x, z) }));
         const newHeight = Math.max(...newRing.map(v => v.h));
-        const center: ZoneVertex = {
-          x: newRing.reduce((s, v) => s + v.x, 0) / newRing.length,
-          z: newRing.reduce((s, v) => s + v.z, 0) / newRing.length,
-          h: newRing.reduce((s, v) => s + v.h, 0) / newRing.length,
+        // Fan center: polyUnionStar guarantees star-shapedness w.r.t. the
+        // polar center (midpoint of the two input centroids), NOT the sample
+        // centroid. Fanning from the sample centroid can fold triangles on
+        // non-convex unions. (Fixed 2026-09-28 per reviewer.)
+        const centroidOf = (verts: ZoneVertex[]): [number, number] => {
+          let x = 0, z = 0;
+          for (const v of verts) { x += v.x; z += v.z; }
+          return [x / verts.length, z / verts.length];
         };
+        const [acx, acz] = centroidOf(a.ring), [bcx, bcz] = centroidOf(b.ring);
+        const pcx = (acx + bcx) / 2, pcz = (acz + bcz) / 2;
+        const center: ZoneVertex = { x: pcx, z: pcz, h: nearestH(pcx, pcz) };
         const newTris: [ZoneVertex, ZoneVertex, ZoneVertex][] = [];
         for (let k = 0; k < newRing.length; k++) {
           newTris.push([center, newRing[k], newRing[(k + 1) % newRing.length]]);

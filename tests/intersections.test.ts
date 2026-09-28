@@ -191,7 +191,7 @@ test('sloped zone mesh stays within leg height range', () => {
       }
     }
     for (const v of ix.ring) {
-      assert.ok(v.h - 0.02 >= lo - 0.5 && v.h - 0.02 <= hi + 0.5,
+      assert.ok(v.h - 0.02 >= lo - 0.05 && v.h - 0.02 <= hi + 0.05,
         `ring vertex out of leg height range at ${ix.nodeId}: ${v.h.toFixed(2)} vs [${lo.toFixed(2)},${hi.toFixed(2)}]`);
     }
   }
@@ -207,7 +207,11 @@ test('clipHeight matches leg deck height at clip lines', () => {
       const d = dirsOf(ix.nodeId).find(x => x.e === leg.edge)!;
       const cx = p.x + leg.dx * leg.clip, cz = p.z + leg.dz * leg.clip;
       const deckH = deckNear(d, ix.nodeId, cx, cz) + 0.02;
-      assert.ok(Math.abs(leg.clipHeight - deckH) < 0.6,
+      // 0.3m tolerance: the ribbon ramps to clipHeight over 3m, so a small
+      // difference is a gentle ramp (<=6°), not a step. (Tightened from 0.6m
+      // 2026-09-28; the 0.05m reviewer suggestion was too tight for steep
+      // mountain nodes where sampling differs by ~0.18m.)
+      assert.ok(Math.abs(leg.clipHeight - deckH) < 0.3,
         `clipHeight/deck mismatch at ${ix.nodeId}: ${leg.clipHeight.toFixed(2)} vs ${deckH.toFixed(2)}`);
     }
   }

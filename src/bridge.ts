@@ -2,7 +2,7 @@
 // Static geometry only (built once in makeWorld); international orange throughout.
 import * as THREE from 'three';
 import { ROAD_EDGES, nodeById, nodePos } from './roads';
-import { edgeClips } from './road-deck';
+import { edgeClips, deckHeightAt } from './road-deck';
 
 const ORANGE = 0xc0362c; // international orange
 const DECK_WIDTH = 7;
@@ -20,7 +20,12 @@ export function buildBridge(g: THREE.Group): void {
   if (!edge) return;
   const a = nodePos(nodeById(edge.a));
   const b = nodePos(nodeById(edge.b));
-  const deckY = edge.deckY ?? 6;
+  // Vertical datum: the riding surface is deckHeightAt (6.33), not edge.deckY
+  // (6.0). deckY is the TOP of the orange deck box; the 0.1m asphalt sits on
+  // it with its top at the riding height, meeting the landing zones (6.35
+  // with 2cm crown) with no step. (Fixed 2026-09-28 per reviewer: the 0.30m
+  // mismatch floated cars 0.28m above the bridge.)
+  const deckY = deckHeightAt(edge, 0.5) - 0.1;
 
   const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z);
   const span = dir.length();
@@ -101,9 +106,10 @@ export function buildBridge(g: THREE.Group): void {
   }
 
   // Suspenders: vertical thin cylinders every 6m from cable down to the deck.
+  // Start after clipA: the deck begins where the landing zone ends.
   for (const curve of cableCurves) {
     const samples = curve.getPoints(400);
-    for (let s = 6; s < span - 3; s += 6) {
+    for (let s = clipA + 3; s < span - clipB - 3; s += 6) {
       const t = s / span;
       const px = a.x + (b.x - a.x) * t;
       // Nearest cable sample by x (cable x is monotonic along the span).
@@ -121,8 +127,9 @@ export function buildBridge(g: THREE.Group): void {
   }
 
   // Lamp posts on the deck every 12m, alternating sides: simple pole + head.
+  // Start after clipA: the deck begins where the landing zone ends.
   let lampSide = 1;
-  for (let s = 6; s < span - 3; s += 12) {
+  for (let s = clipA + 6; s < span - clipB - 3; s += 12) {
     const t = s / span;
     const p = at(t, lampSide * (DECK_WIDTH / 2 - 0.7), deckY);
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 4.2, 8), orange);
