@@ -354,10 +354,13 @@ export function intersections(): Intersection[] {
         const un = Math.abs(ux * -d.dz + uz * d.dx);
         let r: number;
         if (ud > 1e-6) {
-          // Cap at `cap`: the rectangle corner (cap/ud, ud<1) must not poke
-          // past the node's stubLen (breaks Pass 1b). Capped here so the
-          // owner tie-breaker below sees the capped values.
-          r = Math.min(d.hw / Math.max(un, 1e-6), cap / ud, cap);
+          // True rectangle union: the leg's stub is a rectangle [0,cap] x
+          // [-hw,hw]; its polar boundary is min(hw/|sin|, cap/cos). Do NOT
+          // cap the radius at `cap` — that flattens the union into a disc
+          // when cap ~= hw (circular intersections, 2026-09-28). The corner's
+          // projection onto the leg is still `cap`, so Pass 1b (clip distance
+          // along the edge) is unaffected.
+          r = Math.min(d.hw / Math.max(un, 1e-6), cap / ud);
         } else {
           r = Math.min(d.hw, cap);
         }
@@ -365,6 +368,12 @@ export function intersections(): Intersection[] {
         // This keeps each leg's own direction owned by itself (not a neighbor
         // 18° away), so the mesh follows the leg's profile at its clip line.
         const ang = Math.acos(Math.max(-1, Math.min(1, ud)));
+        // A leg OWNS its own direction outright: at the exact leg angle the
+        // point is on the leg's centerline, so the mesh height there must
+        // follow this leg's profile (not a neighbor with longer reach —
+        // that broke clipHeight at wx2, 2026-09-28). Tolerance 1e-7:
+        // acos floating-point noise makes the angle ~1e-8, not 0.
+        if (ang < 1e-7) { rMax = r; owner = di; bestAng = ang; break; }
         if (r > rMax + 1e-9 || (Math.abs(r - rMax) <= 1e-9 && ang < bestAng)) {
           rMax = r; owner = di; bestAng = ang;
         }
