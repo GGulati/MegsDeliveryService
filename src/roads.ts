@@ -39,7 +39,7 @@ export const ROAD_NODES: RoadNode[] = [
   // Waterfront west strip. wx1/wx2 at x=-25 (were -15): bay shore at z=10
   // is x≈-18, terrain h=-1.6 underwater at (-15,10) and (-15,70) (2026-09-27).
   N('wx1', -25, 10), N('wx2', -25, 70), N('wx3', -15, 130),
-  N('ex1', 65, -10), N('ex2', 65, 50), N('ex3', 75, 110), // ex3 x=75 (was 65): h=-1.6 underwater at (65,110)
+  N('ex1', 65, -10), N('ex2', 65, 50), N('ex3', 65, 110, 0), // ex3 y=0: terrain h=-1.6 underwater at (65,110), elevated as causeway
 ];
 
 const E = (a: string, b: string, kind: RoadEdge['kind'] = 'street', deckY?: number): RoadEdge => ({ a, b, kind, deckY });

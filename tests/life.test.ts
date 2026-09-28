@@ -23,7 +23,7 @@ before(() => {
 import { Life, CAR_COUNT, PED_COUNT } from '../src/life.js';
 import { SOLIDS, MANSION_GROUNDS, isInBay } from '../src/world.js';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from '../src/roads.js';
-import { deckHeightAt, roadWidth, intersectionHeight, ribbonHeightAt } from '../src/road-deck.js';
+import { deckHeightAt, roadWidth, roadGroundHeight } from '../src/road-deck.js';
 
 describe('ambient life', () => {
   it('spawns exactly 16 cars and 44 pedestrians', () => {
@@ -151,10 +151,8 @@ describe('ambient life', () => {
     for (const car of cars) {
       const pos = car.group.position;
       const t = THREE.MathUtils.clamp(car.t, 0, 1);
-      // Ground truth is the same height the renderer uses for the road ribbon
-      // (slope-limited deck), or the intersection mesh surface inside
-      // intersections.
-      const expectedY = intersectionHeight(pos.x, pos.z) ?? ribbonHeightAt(car.edge, t);
+      // Ground truth is the blended heightfield (roadGroundHeight).
+      const expectedY = roadGroundHeight(car.edge, t, pos.x, pos.z);
       assert.ok(Math.abs(pos.y - expectedY) < 0.05,
         `car y=${pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }
@@ -174,8 +172,8 @@ describe('ambient life', () => {
     for (const ped of peds) {
       if (ped.inPark) continue;
       const t = THREE.MathUtils.clamp(ped.t, 0, 1);
-      // Inside intersections peds stand on the intersection mesh surface.
-      const expectedY = intersectionHeight(ped.pos.x, ped.pos.z) ?? ribbonHeightAt(ped.edge, t);
+      // Peds stand on the blended heightfield (roadGroundHeight).
+      const expectedY = roadGroundHeight(ped.edge, t, ped.pos.x, ped.pos.z);
       assert.ok(Math.abs(ped.pos.y - expectedY) < 0.1,
         `ped y=${ped.pos.y.toFixed(2)} vs deck ${expectedY.toFixed(2)}`);
     }

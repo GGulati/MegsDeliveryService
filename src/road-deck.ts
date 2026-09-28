@@ -529,12 +529,43 @@ export function intersectionHeight(x: number, z: number): number | null {
 }
 
 // Ground truth for entity ride height: the intersection surface inside zones,
-// otherwise the road deck.
+// otherwise the road deck. Blends across zone boundaries over a 1.5m radius
+// to prevent vertical warps when entities cross the boundary (2026-09-27).
+const HEIGHT_BLEND_RADIUS = 1.5;
+
 export function roadGroundHeight(e: RoadEdge, t: number, x: number, z: number): number {
   // The rendered ribbon surface (deck ramped to the intersection mesh at
   // clips), or the intersection mesh top where zones overlap. Matches
   // exactly what scene.ts renders so wheels/feet never float or sink.
-  return intersectionHeight(x, z) ?? ribbonHeightAt(e, t);
+  const ribbonH = ribbonHeightAt(e, t);
+
+  let nearestDist = Infinity;
+  let nearestH = 0;
+  let maxInsideH: number | null = null;
+  let inside = false;
+
+  for (const ix of intersections()) {
+    const d = intersectionSignedDist(ix, x, z);
+    if (d > 0) {
+      inside = true;
+      maxInsideH = maxInsideH === null ? ix.height : Math.max(maxInsideH, ix.height);
+    }
+    if (Math.abs(d) < Math.abs(nearestDist)) {
+      nearestDist = d;
+      nearestH = ix.height;
+    }
+  }
+
+  // Well outside all zones: pure ribbon.
+  if (!inside && nearestDist < -HEIGHT_BLEND_RADIUS) return ribbonH;
+  // Well inside: max intersection height (preserves existing behavior).
+  if (inside && nearestDist > HEIGHT_BLEND_RADIUS) return maxInsideH!;
+
+  // Transition zone: smooth blend from ribbon to intersection height.
+  // At -RADIUS: pure ribbon. At +RADIUS: pure intersection. Continuous.
+  const s = smoothstep(-HEIGHT_BLEND_RADIUS, HEIGHT_BLEND_RADIUS, nearestDist);
+  const targetH = inside ? maxInsideH! : nearestH;
+  return ribbonH + (targetH - ribbonH) * s;
 }
 
 // Plan-view marking layout for an intersection (pure geometry; scene.ts
@@ -707,4 +738,29 @@ export function intersectionContains(ix: Intersection, x: number, z: number): bo
       inside = !inside;
   }
   return inside;
+}
+
+// Signed distance from (x,z) to the intersection ring boundary: positive
+// inside, negative outside. Used to blend the heightfield across zone
+// boundaries (ped warp fix, 2026-09-27).
+export function intersectionSignedDist(ix: Intersection, x: number, z: number): number {
+  const r = ix.ring;
+  let minDistSq = Infinity;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const ax = r[j].x, az = r[j].z, bx = r[i].x, bz = r[i].z;
+    const abx = bx - ax, abz = bz - az;
+    const denom = abx * abx + abz * abz || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * abx + (z - az) * abz) / denom));
+    const cx = ax + abx * t, cz = az + abz * t;
+    const dx = x - cx, dz = z - cz;
+    const dSq = dx * dx + dz * dz;
+    if (dSq < minDistSq) minDistSq = dSq;
+  }
+  const dist = Math.sqrt(minDistSq);
+  return intersectionContains(ix, x, z) ? dist : -dist;
+}
+
+function smoothstep(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
 }
