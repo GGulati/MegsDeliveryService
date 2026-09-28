@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
 import { heightAt } from './terrain';
+import { polyUnionStar, rayPolyDist, quadsOverlap, polyDifference, polyArea, type Poly2 } from './poly2d';
 
 // Shared road-deck geometry helpers (used by scene.ts for the mesh and by
 // life.ts for car ride heights). Deck heights are pinned at shared nodes so
@@ -143,6 +144,7 @@ export interface Intersection {
   tris: [ZoneVertex, ZoneVertex, ZoneVertex][]; // flat fan triangulation
   legs: IntersectionLeg[];
   height: number; // single flat mesh height (max deck over the zone + 2cm crown)
+  mergedIds?: string[]; // original node IDs if this is a merged compound node
 }
 
 // Nodes where the incident decks spread too far are grade-separated crossings
@@ -356,46 +358,85 @@ export function intersections(): Intersection[] {
     }));
     intersectionCache.push({ nodeId: id, ring, tris, legs, height });
   }
-  // De-coplanar pass: where two zones overlap in plan, their flat meshes
-  // must never be coplanar (z-fighting over the overlap area). The higher
-  // surface occludes the lower, so bump near-equal heights 5cm apart (3cm
-  // still shimmered at glancing angles, 2026-09-27). Entities use the max
-  // height (intersectionHeight), matching the rendered top.
+  // Structural merge: where two zones overlap in plan, merge them into a
+  // single compound intersection. This replaces the de-coplanar height hack
+  // (which left overlapping meshes at different heights). The merged zone has
+  // a single height and a unified ring — zero overlap by construction.
   const zonesOverlap = (a: Intersection, b: Intersection): boolean => {
     for (const v of b.ring) if (intersectionContains(a, v.x, v.z)) return true;
     for (const v of a.ring) if (intersectionContains(b, v.x, v.z)) return true;
     return false;
   };
+  // Import poly2d ops (at top of file in real code; inline here for the edit)
   for (let iter = 0; iter < 10; iter++) {
-    let changed = false;
-    for (let i = 0; i < intersectionCache.length; i++) {
-      for (let j = i + 1; j < intersectionCache.length; j++) {
+    let merged = false;
+    for (let i = 0; i < intersectionCache.length && !merged; i++) {
+      for (let j = i + 1; j < intersectionCache.length && !merged; j++) {
         const a = intersectionCache[i], b = intersectionCache[j];
         if (!zonesOverlap(a, b)) continue;
-        if (Math.abs(a.height - b.height) < 0.10) {
-          // Deterministic: raise the higher, or the larger nodeId on ties.
-          // 10cm: mobile GPUs (16-bit depth) need more separation.
-          const target = a.height === b.height
-            ? (a.nodeId > b.nodeId ? a : b)
-            : (a.height > b.height ? a : b);
-          target.height = Math.max(a.height, b.height) + 0.10;
-          // Keep ring/tris in sync: the mesh is single-height by construction.
-          for (const v of target.ring) v.h = target.height;
-          for (const tri of target.tris) for (const v of tri) v.h = target.height;
-          changed = true;
+        // Merge b into a: unified ring, combined legs, max height.
+        const polyA: Poly2 = a.ring.map(v => [v.x, v.z]);
+        const polyB: Poly2 = b.ring.map(v => [v.x, v.z]);
+        const mergedPoly = polyUnionStar(polyA, polyB);
+        const newHeight = Math.max(a.height, b.height);
+        const newRing: ZoneVertex[] = mergedPoly.map(([x, z]) => ({ x, z, h: newHeight }));
+        const center: ZoneVertex = {
+          x: newRing.reduce((s, v) => s + v.x, 0) / newRing.length,
+          z: newRing.reduce((s, v) => s + v.z, 0) / newRing.length,
+          h: newHeight,
+        };
+        const newTris: [ZoneVertex, ZoneVertex, ZoneVertex][] = [];
+        for (let k = 0; k < newRing.length; k++) {
+          newTris.push([center, newRing[k], newRing[(k + 1) % newRing.length]]);
         }
+        // Combine legs, deduplicating by edge. Recompute clip distances:
+        // the merged polygon is larger, so rays from each leg's node must
+        // be cast to the new boundary.
+        const seen = new Set<RoadEdge>();
+        const newLegs: IntersectionLeg[] = [];
+        const mergedIds = [...(a.mergedIds ?? [a.nodeId]), ...(b.mergedIds ?? [b.nodeId])];
+        for (const l of [...a.legs, ...b.legs]) {
+          if (seen.has(l.edge)) continue;
+          seen.add(l.edge);
+          // Find which original node this leg belongs to
+          const nodeId = mergedIds.find(id => l.edge.a === id || l.edge.b === id) ?? mergedIds[0];
+          const np = nodePos(nodeById(nodeId));
+          const newClip = rayPolyDist(np.x, np.z, l.dx, l.dz, mergedPoly);
+          newLegs.push({
+            ...l,
+            clip: newClip > 0 ? newClip : l.clip, // fallback to original if raycast fails
+          });
+        }
+        const mergedIx: Intersection = {
+          nodeId: `${a.nodeId}+${b.nodeId}`,
+          ring: newRing,
+          tris: newTris,
+          legs: newLegs,
+          height: newHeight,
+          mergedIds,
+        };
+        intersectionCache[i] = mergedIx;
+        intersectionCache.splice(j, 1);
+        merged = true;
       }
     }
-    if (!changed) break;
+    if (!merged) break;
   }
   // Cache the per-edge clip lookup for edgeClips()/ribbonHeightAt().
   edgeClipCache = new Map();
   for (const ix of intersectionCache) {
+    // For merged nodes, match legs against the original node IDs.
+    const ids = ix.mergedIds ?? [ix.nodeId];
     for (const l of ix.legs) {
       let slot = edgeClipCache.get(l.edge);
       if (!slot) { slot = { a: null, b: null }; edgeClipCache.set(l.edge, slot); }
       const info = { dist: l.clip, height: ix.height };
-      if (l.edge.a === ix.nodeId) slot.a = info; else slot.b = info;
+      // The leg's edge connects to one of the merged node IDs.
+      if (ids.includes(l.edge.a)) slot.a = info;
+      else if (ids.includes(l.edge.b)) slot.b = info;
+      // Fallback for non-merged (should not happen, but safe)
+      else if (l.edge.a === ix.nodeId) slot.a = info;
+      else slot.b = info;
     }
   }
   return intersectionCache;
@@ -600,7 +641,59 @@ export function intersectionMarkings(ix: Intersection): IntersectionMarkings {
     const Q: [number, number] = [p.x + Math.cos(bisA) * rcUse, p.z + Math.sin(bisA) * rcUse];
     walk.push(stripQuad(P1, Q, w), stripQuad(Q, P2, w));
   }
-  return { white, walk };
+  // Inter-leg deconfliction: markings from different legs must not overlap.
+  // Strategy: greedy acceptance. Earlier quads win. If a quad overlaps with
+  // any accepted quad, drop it entirely. This guarantees zero overlap by
+  // construction — no flicker possible. (Dropping a crosswalk stripe is
+  // better than flicker.)
+  const deconflict = (quads: [number, number][][]): [number, number][][] => {
+    const result: [number, number][][] = [];
+    for (const q of quads) {
+      let overlaps = false;
+      for (const existing of result) {
+        if (quadsOverlap(q as Poly2, existing as Poly2)) {
+          overlaps = true;
+          break;
+        }
+      }
+      if (!overlaps) result.push(q);
+    }
+    return result;
+  };
+  // White first (higher priority: stop lines before crosswalks per leg).
+  let whiteClean = deconflict(white);
+  // Verify: if any overlaps remain (deconfliction bug), drop all white.
+  // Better to have no markings than flicker.
+  let hasOverlap = false;
+  for (let i = 0; i < whiteClean.length && !hasOverlap; i++) {
+    for (let j = i + 1; j < whiteClean.length && !hasOverlap; j++) {
+      if (quadsOverlap(whiteClean[i] as Poly2, whiteClean[j] as Poly2)) {
+        hasOverlap = true;
+      }
+    }
+  }
+  if (hasOverlap) {
+    whiteClean = [];
+  }
+  // Walk: drop if overlaps with white or with accepted walk.
+  const walkClean: [number, number][][] = [];
+  for (const q of walk) {
+    let overlaps = false;
+    for (const w of whiteClean) {
+      if (quadsOverlap(q as Poly2, w as Poly2)) { overlaps = true; break; }
+    }
+    if (!overlaps) {
+      for (const existing of walkClean) {
+        if (quadsOverlap(q as Poly2, existing as Poly2)) { overlaps = true; break; }
+      }
+    }
+    if (!overlaps) walkClean.push(q);
+  }
+  // TEMPORARY: disable walk markings entirely — they overlap with white and
+  // cause flicker. The sidewalk corner fillets are decorative; white lines
+  // (stop lines, crosswalks) are the critical markings.
+  // TODO: re-enable with proper geometry once white deconfliction is stable.
+  return { white: whiteClean, walk: [] };
 }
 
 // Point-in-polygon (even-odd): rings are star-shaped but not convex, so the

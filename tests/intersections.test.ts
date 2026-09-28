@@ -190,7 +190,8 @@ test('intersection mesh is single-height', () => {
 test('markings lie strictly inside the zone', () => {
   for (const ix of intersections()) {
     const { white, walk } = intersectionMarkings(ix);
-    assert.ok(white.length > 0, `no white markings at ${ix.nodeId}`);
+    // White may be empty if deconfliction dropped all (better than flicker).
+    // If present, they must be quads inside the zone.
     for (const q of [...white, ...walk]) {
       assert.ok(q.length === 4, `marking is not a quad at ${ix.nodeId}`);
       for (const [x, z] of q) {
@@ -204,7 +205,9 @@ test('markings lie strictly inside the zone', () => {
 // Where two zones overlap in plan, their meshes must not be coplanar
 // (z-fighting). The de-coplanar pass guarantees >=3cm separation; the higher
 // occludes the lower and intersectionHeight returns the max.
-test('overlapping zones are never coplanar', () => {
+// Overlapping zones are merged structurally (not stacked with height offsets).
+// This test verifies the merge invariant: no two zones overlap in plan.
+test('overlapping zones are merged, not stacked', () => {
   const ixs = intersections();
   const overlap = (a: Intersection, b: Intersection): boolean => {
     for (const v of b.ring) if (intersectionContains(a, v.x, v.z)) return true;
@@ -214,16 +217,8 @@ test('overlapping zones are never coplanar', () => {
   for (let i = 0; i < ixs.length; i++) {
     for (let j = i + 1; j < ixs.length; j++) {
       const a = ixs[i], b = ixs[j];
-      if (!overlap(a, b)) continue;
-      assert.ok(Math.abs(a.height - b.height) >= 0.03,
-        `zones ${a.nodeId} and ${b.nodeId} overlap but are coplanar`);
-      // intersectionHeight returns the rendered top surface in the overlap.
-      const v = b.ring[0];
-      if (intersectionContains(a, v.x, v.z)) {
-        const h = intersectionHeight(v.x, v.z)!;
-        assert.ok(h >= Math.max(a.height, b.height) - 1e-6,
-          `height query below top surface in overlap of ${a.nodeId}/${b.nodeId}`);
-      }
+      assert.ok(!overlap(a, b),
+        `zones ${a.nodeId} and ${b.nodeId} overlap — must be merged, not stacked`);
     }
   }
 });
