@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { ROAD_EDGES, nodeById, nodePos } from '../src/roads.js';
 import { buildBridge } from '../src/bridge.js';
+import { shortestPath } from '../src/trips.js';
+import { deckHeightAt } from '../src/road-deck.js';
 
 describe('bridge', () => {
   it('exactly one bridge edge exists with a deck above water', () => {
@@ -49,5 +51,39 @@ describe('bridge', () => {
       assert.ok(box.min.y <= 0.5, `tower column should reach the waterline (min.y=${box.min.y})`);
       assert.ok(box.max.y >= deckY + 12 - 0.01, `tower top unchanged above deck (max.y=${box.max.y})`);
     }
+  });
+
+  it('bridge-enabled car routes use bl-w->bl-e; ped routes stay bridge-free', () => {
+    // West to east: with the bridge allowed, the shortest path must cross it.
+    const carRoute = shortestPath('wx2', 'we2', true);
+    assert.ok(carRoute, 'car route wx2->we2 should exist with bridge allowed');
+    const usesBridge = carRoute.some((e: any) => e.kind === 'bridge');
+    assert.ok(usesBridge, 'bridge-enabled car route should include the bridge edge');
+    // Without the bridge (peds), the route must exist AND avoid it entirely.
+    // (Not conditional: a missing ped route would hide a bridge-leak bug.)
+    const pedRoute = shortestPath('wx2', 'we2', false);
+    assert.ok(pedRoute, 'ped route wx2->we2 should exist without the bridge');
+    assert.ok(!pedRoute.some((e: any) => e.kind === 'bridge'), 'ped route must not use the bridge');
+  });
+
+  it('bridge asphalt top matches the riding height (no vertical step at landings)', () => {
+    // Regression test for the 0.30m datum mismatch (2026-09-28 reviewer):
+    // the landing zone mesh is at deckHeightAt + 0.02 crown; the bridge
+    // asphalt must meet it, not sit 0.30m below (which floated cars).
+    const edge = ROAD_EDGES.find(e => e.kind === 'bridge')!;
+    const rideY = deckHeightAt(edge, 0.5);
+    const g = new THREE.Group();
+    buildBridge(g);
+    // Find the asphalt mesh (dark gray, thin box on top of the deck).
+    let asphaltTop = -Infinity;
+    g.traverse((o: any) => {
+      if (o.isMesh && o.geometry?.parameters?.height === 0.1) {
+        const top = o.position.y + 0.05;
+        if (top > asphaltTop) asphaltTop = top;
+      }
+    });
+    assert.ok(asphaltTop > -Infinity, 'asphalt mesh should exist');
+    assert.ok(Math.abs(asphaltTop - rideY) < 0.05,
+      `asphalt top ${asphaltTop.toFixed(2)} should match riding height ${rideY.toFixed(2)}`);
   });
 });

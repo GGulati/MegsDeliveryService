@@ -4,16 +4,18 @@ import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, 
 import { buildWater, WaterMesh } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
-import { ROAD_EDGES, nodeById, nodePos } from './roads';
+import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
+import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, clipT, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections, intersectionHeightAt } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
+import { toon } from './materials';
+import { Life } from './life';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
-import { grainSpeckles, GRAIN_SEED, GRAIN_SIZE } from './grain';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 /** Pastel Painted-Ladies body colors for bungalow-lanes infill (lot.palette 1-4). */
@@ -28,7 +30,7 @@ export function solidBlocker(s: Solid): THREE.Mesh {
 }
 export class GameRenderer {
   readonly scene = new THREE.Scene();
-  readonly camera = new THREE.PerspectiveCamera(62, 1, .1, 900);
+  readonly camera = new THREE.PerspectiveCamera(62, 1, .5, 600);
   private renderer: THREE.WebGLRenderer;
   private effects: FlightEffects;
   private hero = new THREE.Group();
@@ -47,6 +49,7 @@ export class GameRenderer {
   private ray = new THREE.Raycaster();
   private blockers: THREE.Object3D[] = [];
   private outlines: THREE.Mesh[] = [];
+  private life!: Life;
   private beamGroup: THREE.Group | null = null;
   private beamLight: THREE.PointLight | null = null;
   private lighthouseLit = true;
@@ -78,6 +81,7 @@ export class GameRenderer {
     this.sun.position.set(-80, 115, 48);
     this.scene.add(this.sun);
     this.world=this.makeWorld();
+    this.life = new Life(this.world);
     this.scene.add(this.world, this.hero, this.dropParcel, this.glowColumn, this.targetRing, this.clouds, this.birds, this.room.group);
     this.makeHero(); this.makeDropParcel(); this.makeGlowColumn(); this.makeSkyLife(); this.resize();
   }
@@ -122,9 +126,15 @@ export class GameRenderer {
     this.hero.rotation.y = modelRotation(state.player.yaw);
     this.hero.rotation.x = state.player.pitch * .4;
     this.hero.rotation.z = 0;
-    this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .62);
+    // Meg is scaled to the world: peds are ~1.75m, so the broom rig reads
+    // ~3m long (user feedback 2026-09-27 — she was 4x human scale before).
+    this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .28);
     this.hero.position.y += visual.bob;
     this.animateSky(settings.reducedMotion, step);
+    // Ambient life: cars and pedestrians (Phase 2). Hidden at home with the world.
+    if (!atHome && step > 0) {
+      this.life.update(step, player, state.player.speed, state.player.velocity.y, this.clock);
+    }
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateGlowColumn(state, settings.reducedMotion);
     this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
@@ -145,7 +155,6 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    const roadMat = toon(0xffedc4);
     // One water plane for the whole world. The shader discovers depth from the
     // baked heightfield, so foam and color follow the true coastline — no polygons.
     const water = buildWater();
@@ -182,36 +191,77 @@ export class GameRenderer {
     // Roads are FLAT ribbons (not tubes) so they don't swallow nearby houses
     // (user feedback 2026-09-27). The deck follows the smooth curve grade;
     // earthwork skirts drop from the deck edges to the terrain on slopes.
-    roadMat.side = THREE.DoubleSide;
+    // Deck heights are node-pinned (road-deck.ts) so adjacent edges meet
+    // exactly — no vertical steps at nodes (user feedback 2026-09-27).
+    const deckMat = toon(0xffffff);
+    deckMat.vertexColors = true;
+    deckMat.side = THREE.DoubleSide;
     const earthMat = toon(0x8a6f4d);
     earthMat.side = THREE.DoubleSide;
-    const makeFlatRoad = (curve: THREE.CatmullRomCurve3, width: number): THREE.Group => {
+    // Cross-section bands: [offset, color] verts from left edge to right edge.
+    // Town streets: car lanes + bike lanes + sidewalks. Switchbacks: plain.
+    const bandCache = new Map<string, [number, number][]>();
+    const bandLayout = (width: number): [number, number][] => {
+      const key = width.toFixed(1);
+      let bands = bandCache.get(key);
+      if (!bands) {
+        const asphalt = 0x43434a;
+        if (width > 5) {
+          const bike = 0xa85b4a, walk = 0xb8b0a0;
+          bands = [
+            [-WALK_HALF, walk], [-BIKE_HALF, walk],
+            [-BIKE_HALF, bike], [-CAR_HALF, bike],
+            [-CAR_HALF, asphalt], [CAR_HALF, asphalt],
+            [CAR_HALF, bike], [BIKE_HALF, bike],
+            [BIKE_HALF, walk], [WALK_HALF, walk],
+          ];
+        } else {
+          bands = [[-width / 2, asphalt], [width / 2, asphalt]];
+        }
+        bandCache.set(key, bands);
+      }
+      return bands;
+    };
+    const makeFlatRoad = (e: RoadEdge, curve: THREE.CatmullRomCurve3, width: number, t0: number, t1: number): THREE.Group => {
       const grp = new THREE.Group();
       const segs = 24, hw = width / 2;
-      const pos: number[] = [], nor: number[] = [], idx: number[] = [];
+      const bands = bandLayout(width);
+      const nv = bands.length;
+      const pos: number[] = [], nor: number[] = [], col: number[] = [], idx: number[] = [];
       // Skirts: [leftTop, leftBottom, rightTop, rightBottom] per station.
       // Collapsed (top==bottom) where the terrain meets the deck.
       const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+      const cc = new THREE.Color();
       for (let i = 0; i <= segs; i++) {
-        const t = i / segs;
+        // Ribbons are clipped at intersection nodes: the station range runs
+        // from t0 to t1 (not 0..1) so the ribbon ends exactly at the clip
+        // line where the intersection mesh begins — zero overlap.
+        const t = t0 + (i / segs) * (t1 - t0);
         const p = curve.getPointAt(t);
         const tan = curve.getTangentAt(t);
         const px = -tan.z, pz = tan.x;
         const plen = Math.hypot(px, pz) || 1;
         const nx = px / plen, nz = pz / plen;
+        // Deck clears the highest terrain across the road width and is pinned
+        // at shared nodes so neighboring edges meet exactly. Near an
+        // intersection the profile ramps to the flat mesh height so the
+        // ribbon end meets the intersection with no step.
+        const roadY = ribbonHeightAt(e, t);
+        for (const [off, hex] of bands) {
+          pos.push(p.x + nx * off, roadY, p.z + nz * off);
+          nor.push(0, 1, 0);
+          cc.setHex(hex);
+          col.push(cc.r, cc.g, cc.b);
+        }
+        if (i < segs) {
+          for (let v = 0; v < nv - 1; v++) {
+            const a = i * nv + v, b = a + nv;
+            idx.push(a, b, a + 1, a + 1, b, b + 1);
+          }
+        }
+        // Skirt verts for this station (left edge, then right edge).
         const lx = p.x + nx * hw, lz = p.z + nz * hw;
         const rx = p.x - nx * hw, rz = p.z - nz * hw;
-        // Deck clears the highest terrain across the road width: the smooth
-        // curve grade can dip below terrain bulges between nodes (which
-        // swallowed segments). The skirts below handle the fill on the low side.
-        const roadY = Math.max(p.y, heightAt(p.x, p.z), heightAt(lx, lz), heightAt(rx, rz)) + 0.15;
-        pos.push(lx, roadY, lz, rx, roadY, rz);
-        nor.push(0, 1, 0, 0, 1, 0);
-        if (i < segs) {
-          const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
-          idx.push(a, c, b, b, c, d);
-        }
-        // Skirt verts for this station (left side, then right side).
         const sides: [number, number, number, number][] = [
           [lx, lz, nx, nz], [rx, rz, -nx, -nz],
         ];
@@ -231,8 +281,9 @@ export class GameRenderer {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       geo.setIndex(idx);
-      const deck = new THREE.Mesh(geo, roadMat);
+      const deck = new THREE.Mesh(geo, deckMat);
       deck.receiveShadow = true;
       grp.add(deck);
       const sgeo = new THREE.BufferGeometry();
@@ -244,31 +295,223 @@ export class GameRenderer {
       grp.add(skirt);
       return grp;
     };
+    // Intersections (clean-break redesign 2026-09-27, replacing junction
+    // patches): one flat asphalt mesh per junction at a single height, with
+    // stop lines, crosswalks, and sidewalk corner fillets as flat decals
+    // 1-2cm above the base (never coplanar). Road ribbons end exactly at clip
+    // lines; the mesh begins there — zero overlap by construction.
+    const buildIntersections = (g: THREE.Group, deckMat: THREE.Material, earthMat: THREE.Material): void => {
+      const asphalt = new THREE.Color(0x43434a);
+      // Merged marking geometry for the whole map: white paint (stop lines +
+      // crosswalks) and sidewalk-colored fillets. Two draw calls total.
+      const whitePos: number[] = [], whiteNor: number[] = [], whiteIdx: number[] = [];
+      const walkPos: number[] = [], walkNor: number[] = [], walkIdx: number[] = [];
+      const quad = (pos: number[], nor: number[], idx: number[], ys: number[],
+          a: [number, number], b: [number, number], c: [number, number], d: [number, number]) => {
+        const base = pos.length / 3;
+        const pts = [a, b, c, d];
+        for (let qi = 0; qi < 4; qi++) {
+          pos.push(pts[qi][0], ys[qi], pts[qi][1]); nor.push(0, 1, 0);
+        }
+        idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      };
+      for (const ix of intersections()) {
+        const p = nodePos(nodeById(ix.nodeId));
+        // Sloped asphalt base: triangle fan from the node over the zone,
+        // using per-vertex mesh heights (sloped intersection zones follow
+        // each approach's profile). Matches roadGroundHeight exactly.
+        const centerH = intersectionHeightAt(ix, p.x, p.z);
+        const pos: number[] = [p.x, centerH, p.z];
+        const nor: number[] = [0, 1, 0];
+        const col: number[] = [asphalt.r, asphalt.g, asphalt.b];
+        const idx: number[] = [];
+        for (const v of ix.ring) {
+          pos.push(v.x, v.h, v.z); nor.push(0, 1, 0);
+          col.push(asphalt.r, asphalt.g, asphalt.b);
+        }
+        for (let k = 0; k < ix.ring.length; k++)
+          idx.push(0, 1 + k, 1 + ((k + 1) % ix.ring.length));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        geo.setIndex(idx);
+        const mesh = new THREE.Mesh(geo, deckMat);
+        mesh.receiveShadow = true;
+        g.add(mesh);
+        // Earthwork skirt around the perimeter, top 2cm below the mesh so no
+        // dirt wall pokes through the surface it supports. The skirt OMITS
+        // the spans where roads enter (the stub end caps): a rim wall across
+        // a road entry would cut the ribbon. Foundations only, never walls
+        // crossing roads.
+        const spos: number[] = [], snor: number[] = [], sidx: number[] = [];
+        const n = ix.ring.length;
+        // Road-entry angular spans (from the node): each leg's stub end cap
+        // covers [legAngle - atan2(hw,clip), legAngle + atan2(hw,clip)].
+        const entries = ix.legs.map(l => ({
+          la: Math.atan2(l.dz, l.dx),
+          ca: Math.atan2(l.hw, l.clip),
+        }));
+        const angDiff = (a: number, b: number) => {
+          const d = (a - b) % (Math.PI * 2);
+          return Math.abs(((d + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+        };
+        for (let i = 0; i < n; i++) {
+          const a = ix.ring[i], b = ix.ring[(i + 1) % n];
+          // Skip quads on a road-entry cap.
+          const mx = (a.x + b.x) / 2 - p.x, mz = (a.z + b.z) / 2 - p.z;
+          const midAng = Math.atan2(mz, mx);
+          if (entries.some(e => angDiff(midAng, e.la) <= e.ca + 1e-6)) continue;
+          const ex = b.x - a.x, ez = b.z - a.z;
+          const el = Math.hypot(ex, ez) || 1;
+          const ox = ez / el, oz = -ex / el;
+          const ty = Math.min(heightAt(a.x, a.z), heightAt(b.x, b.z));
+          // Sloped skirt: top follows the mesh (2cm below each vertex).
+          const topYa = a.h - 0.02, topYb = b.h - 0.02;
+          const topY = Math.min(topYa, topYb);
+          const by = ty < topY - 0.3 ? Math.max(ty - 0.1, topY - 3) : topY;
+          const base = spos.length / 3;
+          spos.push(a.x, topYa, a.z, a.x, by, a.z, b.x, topYb, b.z, b.x, by, b.z);
+          snor.push(ox, 0, oz, ox, 0, oz, ox, 0, oz, ox, 0, oz);
+          sidx.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+        }
+        const sgeo = new THREE.BufferGeometry();
+        sgeo.setAttribute('position', new THREE.Float32BufferAttribute(spos, 3));
+        sgeo.setAttribute('normal', new THREE.Float32BufferAttribute(snor, 3));
+        sgeo.setIndex(sidx);
+        const sm = new THREE.Mesh(sgeo, earthMat);
+        sm.receiveShadow = true;
+        g.add(sm);
+        // Painted markings as flat decals above the asphalt base (never
+        // coplanar): stop lines + crosswalks in white, sidewalk corner
+        // fillets in sidewalk color. Layout is pure geometry from road-deck.
+        // 8cm lift + polygon offset: mobile GPUs (16-bit depth) need more
+        // separation than desktop; the offset pulls decals toward the camera
+        // in depth without a visible float.
+        const { white, walk } = intersectionMarkings(ix);
+        // Markings follow the sloped mesh: each corner lifted 8cm above the
+        // interpolated surface (never coplanar, never floating).
+        const markHeights = (q: [number, number][], lift: number): number[] =>
+          q.map(([x, z]) => intersectionHeightAt(ix, x, z) + lift);
+        for (const q of white)
+          quad(whitePos, whiteNor, whiteIdx, markHeights(q, 0.08), q[0], q[1], q[2], q[3]);
+        for (const q of walk)
+          quad(walkPos, walkNor, walkIdx, markHeights(q, 0.085), q[0], q[1], q[2], q[3]);
+      }
+      // Emit the merged marking meshes.
+      // Markings sit 1-2cm above the road surface (never coplanar) with
+      // polygonOffset to defeat mobile 16-bit depth flicker. depthTest stays
+      // ON so buildings/houses correctly occlude the lines.
+      const markMat = toon(0xf5f1e6);
+      markMat.side = THREE.DoubleSide;
+      markMat.depthWrite = false;
+      markMat.polygonOffset = true;
+      markMat.polygonOffsetFactor = -2;
+      markMat.polygonOffsetUnits = -2;
+      if (whiteIdx.length) {
+        const wgeo = new THREE.BufferGeometry();
+        wgeo.setAttribute('position', new THREE.Float32BufferAttribute(whitePos, 3));
+        wgeo.setAttribute('normal', new THREE.Float32BufferAttribute(whiteNor, 3));
+        wgeo.setIndex(whiteIdx);
+        const wm = new THREE.Mesh(wgeo, markMat);
+        wm.receiveShadow = false;
+        wm.renderOrder = 1;
+        g.add(wm);
+      }
+      const walkMat = toon(0xb8b0a0);
+      walkMat.side = THREE.DoubleSide;
+      walkMat.depthWrite = false;
+      walkMat.polygonOffset = true;
+      walkMat.polygonOffsetFactor = -2;
+      walkMat.polygonOffsetUnits = -2;
+      if (walkIdx.length) {
+        const fgeo = new THREE.BufferGeometry();
+        fgeo.setAttribute('position', new THREE.Float32BufferAttribute(walkPos, 3));
+        fgeo.setAttribute('normal', new THREE.Float32BufferAttribute(walkNor, 3));
+        fgeo.setIndex(walkIdx);
+        const fm = new THREE.Mesh(fgeo, walkMat);
+        fm.receiveShadow = false;
+        fm.renderOrder = 1;
+        g.add(fm);
+      }
+    };
     for (const e of ROAD_EDGES) {
       if (e.kind === 'bridge') continue;
-      const a = nodePos(nodeById(e.a)), b = nodePos(nodeById(e.b));
-      const mid = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2 + 0.15, (a.z + b.z) / 2);
-      const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(a.x, a.y + 0.18, a.z), mid, new THREE.Vector3(b.x, b.y + 0.18, b.z),
-      ]);
-      const width = e.kind === 'switchback' ? 4.4 : 5.6;
-      g.add(makeFlatRoad(curve, width));
-      // Center dashes (flat, on the road surface).
-      const dashMat = toon(0xfff6d8);
-      dashMat.side = THREE.DoubleSide;
+      const curve = roadCurve(e);
+      const width = roadWidth(e);
+      // Clip the ribbon at intersection nodes: it ends at the plan-distance
+      // clip where the intersection mesh takes over. clipT converts the plan
+      // distance to a curve parameter. The ribbon meets the mesh at a shared
+      // boundary edge (no margin): the mesh's 2cm crown keeps them from being
+      // coplanar, so there is no z-fighting and no gap. (The old 5cm margin
+      // left a visible 5cm hole on sloped zones; removed 2026-09-28.)
+      const clips = edgeClips(e);
+      const t0 = clips.a ? clipT(e, 'a', clips.a.dist) : 0;
+      const t1 = clips.b ? clipT(e, 'b', clips.b.dist) : 1;
+      g.add(makeFlatRoad(e, curve, width, t0, t1));
+    }
+    // Center dashes: merged into a single geometry (not individual meshes).
+    // Individual meshes cause flicker on tile-based mobile GPUs due to
+    // hundreds of draw calls with overlapping screen-space bounds.
+    const dashMat = toon(0xfff6d8);
+    dashMat.side = THREE.DoubleSide;
+    dashMat.depthWrite = false;
+    dashMat.polygonOffset = true;
+    dashMat.polygonOffsetFactor = -2;
+    dashMat.polygonOffsetUnits = -2;
+    const dashPos: number[] = [];
+    const dashNor: number[] = [];
+    const dashIdx: number[] = [];
+    for (const e of ROAD_EDGES) {
+      if (e.kind === 'bridge') continue;
+      const curve = roadCurve(e);
+      // Center dashes (flat, on the road surface). Dashes TERMINATE at
+      // intersection clip lines (with a 1m margin) — they never enter the
+      // intersection, like real lane markings.
       const len = curve.getLength();
-      for (let d = 0; d < len - 2; d += 4) {
+      const clips = edgeClips(e);
+      const cA = clips.a ? clips.a.dist : 0;
+      const cB = clips.b ? clips.b.dist : 0;
+      for (let d = cA + 1; d < len - cB - 3; d += 4) {
         const p0 = curve.getPointAt(d / len), p1 = curve.getPointAt(Math.min(1, (d + 2) / len));
         const dp = new THREE.Vector3().addVectors(p0, p1).multiplyScalar(0.5);
-        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 2), dashMat);
-        dash.rotation.x = -Math.PI / 2;
-        dash.rotation.z = Math.atan2(p1.x - p0.x, p1.z - p0.z);
-        // Match the deck height (clears terrain bulges like the road itself).
-        const dy = Math.max(dp.y, heightAt(dp.x, dp.z)) + 0.18;
-        dash.position.set(dp.x, dy, dp.z);
-        g.add(dash);
+        // Dash quad: 0.24m wide, 2m long, oriented along the road direction.
+        // Build directly in world space (no per-mesh transform).
+        const angle = Math.atan2(p1.x - p0.x, p1.z - p0.z);
+        const cosA = Math.cos(angle), sinA = Math.sin(angle);
+        // Local: x = width (0.24), z = length (2). Rotate by angle around Y.
+        const hw = 0.12, hl = 1.0;
+        const dy = ribbonHeightAt(e, (d + 1) / len) + 0.02;
+        // Corners: (±hw, ±hl) rotated
+        const corners: [number, number][] = [
+          [-hw, -hl], [hw, -hl], [hw, hl], [-hw, hl],
+        ];
+        const base = dashPos.length / 3;
+        for (const [lx, lz] of corners) {
+          // Rotate: x' = lx*cosA + lz*sinA, z' = -lx*sinA + lz*cosA
+          // (matches rotation.z = angle for a plane rotated x=-90°)
+          const wx = dp.x + lx * cosA + lz * sinA;
+          const wz = dp.z + (-lx * sinA + lz * cosA);
+          dashPos.push(wx, dy, wz);
+          dashNor.push(0, 1, 0);
+        }
+        dashIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
       }
     }
+    if (dashIdx.length > 0) {
+      const dashGeo = new THREE.BufferGeometry();
+      dashGeo.setAttribute('position', new THREE.Float32BufferAttribute(dashPos, 3));
+      dashGeo.setAttribute('normal', new THREE.Float32BufferAttribute(dashNor, 3));
+      dashGeo.setIndex(dashIdx);
+      const dashMesh = new THREE.Mesh(dashGeo, dashMat);
+      dashMesh.renderOrder = 1;
+      g.add(dashMesh);
+    }
+    // Intersections: one flat asphalt mesh per junction at a single height,
+    // with painted markings as flat decals 1-2cm above (never coplanar).
+    // Road ribbons end exactly at clip lines; the mesh begins there — zero
+    // overlap by construction, so z-fighting is impossible (2026-09-27).
+    buildIntersections(g, deckMat, earthMat);
     // Docks reach into the bay from both piers: west pier serves Harbor Cafe,
     // east pier serves Marina Works.
     buildBridge(g);
@@ -1395,8 +1638,3 @@ export class GameRenderer {
     this.camPos.copy(wanted);this.camLook.copy(look);this.camera.position.copy(this.camPos);this.camera.up.set(0,1,0);this.camera.lookAt(this.camLook);
   }
 }
-
-function toon(color: THREE.ColorRepresentation): THREE.MeshToonMaterial { return new THREE.MeshToonMaterial({color, map: grainTexture(), gradientMap: gradientTexture()}); }
-let grain:THREE.CanvasTexture|undefined, gradient:THREE.CanvasTexture|undefined;
-function grainTexture(): THREE.CanvasTexture { if(grain)return grain;const c=document.createElement('canvas');c.width=c.height=GRAIN_SIZE;const x=c.getContext('2d')!;x.fillStyle='rgba(255,255,255,.9)';x.fillRect(0,0,GRAIN_SIZE,GRAIN_SIZE);for(const s of grainSpeckles(GRAIN_SEED)){x.fillStyle=`rgba(85,55,45,${s.alpha})`;x.fillRect(s.x,s.y,1,1)}grain=new THREE.CanvasTexture(c);grain.colorSpace=THREE.SRGBColorSpace;grain.wrapS=grain.wrapT=THREE.RepeatWrapping;return grain;}
-function gradientTexture(): THREE.CanvasTexture {if(gradient)return gradient;const c=document.createElement('canvas');c.width=1;c.height=3;const x=c.getContext('2d')!;x.fillStyle='#202020';x.fillRect(0,0,1,1);x.fillStyle='#9a9a9a';x.fillRect(0,1,1,1);x.fillStyle='#fff';x.fillRect(0,2,1,1);gradient=new THREE.CanvasTexture(c);gradient.minFilter=gradient.magFilter=THREE.NearestFilter;return gradient;}
