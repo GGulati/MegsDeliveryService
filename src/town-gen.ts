@@ -77,6 +77,11 @@ const HERO_PAD = 2;           // hero AABB expansion for overlap checks (m)
 const MAX_LOTS = 275;
 const FLOOR_H = 3.4;
 
+/** Minimum building height: fits the 2.79m door + 0.35m top margin + roof.
+ *  Bungalows (1 floor = 3.4m) were too short — doors stuck through the roof.
+ *  (User feedback 2026-09-28: make short buildings taller, not doors shorter.) */
+const MIN_BUILDING_H = 4.4;
+
 function aabbOverlap(ax0: number, az0: number, ax1: number, az1: number,
                      bx0: number, bz0: number, bx1: number, bz1: number): boolean {
   return ax0 < bx1 && ax1 > bx0 && az0 < bz1 && az1 > bz0;
@@ -257,7 +262,7 @@ export function generateLots(): Lot[] {
           if (tierDistrict === 'midtown-mix') midtownAccepted++;
           lots.push({
             x, z, w, d,
-            h: floors * FLOOR_H,
+            h: Math.max(floors * FLOOR_H, MIN_BUILDING_H),
             floors, district,
             bayWindow: profile.bayWindow,
             palette,
@@ -321,7 +326,7 @@ export function generateLots(): Lot[] {
             if (tierDistrict === 'midtown-mix') midtownAccepted++;
             lots.push({
               x, z, w, d,
-              h: floors * FLOOR_H,
+              h: Math.max(floors * FLOOR_H, MIN_BUILDING_H),
               floors, district,
               bayWindow: profile.bayWindow,
               palette,
