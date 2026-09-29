@@ -120,8 +120,7 @@ function draw(dt: number) {
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     targetBearing: relativeBearing(state.player.position, target.position, state.player.yaw),
-    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,360-state.run.elapsed) : undefined,
-    elapsed: state.run ? state.run.elapsed : undefined });
+    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,360-state.run.elapsed) : undefined });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
