@@ -5,8 +5,7 @@ import { STOPS } from './world';
 export const SAVE_KEY = 'megs-delivery-save-v1';
 /** Cooperative cross-tab lock: { tabId, timestamp }. Stale after LOCK_STALE_MS. */
 const SAVE_LOCK_KEY = 'megs-delivery-save-lock-v1';
-const LOCK_HEARTBEAT_MS = 4000;
-const LOCK_STALE_MS = 10000;
+const LOCK_STALE_MS = 30000;
 
 type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
 type SaveResult = { kind: SaveResultKind; state?: GameState; message: string };
@@ -98,18 +97,21 @@ export class SaveStore {
   private status = '';
   private memory?: GameState;
   private tabId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  private heartbeat?: ReturnType<typeof setInterval>;
 
   get message(): string { return this.status; }
   get canSave(): boolean { return this.writable; }
+
+  private writeLock(storage: Storage): void {
+    try { storage.setItem(SAVE_LOCK_KEY, JSON.stringify({ tabId: this.tabId, timestamp: Date.now() })); } catch { /* lock write failed: save still works */ }
+  }
 
   async acquire(): Promise<SaveResult> {
     this.release(); const generation = ++this.generation;
     const storage = this.storage();
     if (!storage) return this.session('Saved games are unavailable in this browser.');
-    // Cooperative cross-tab lock via localStorage heartbeat. A lock is stale
-    // if its heartbeat is older than LOCK_STALE_MS (crashed/killed tab).
-    // This never hangs: it's a single synchronous read.
+    // Cooperative cross-tab lock via localStorage. A lock is stale if its
+    // timestamp is older than LOCK_STALE_MS (crashed/killed tab). The lock is
+    // refreshed on every save; acquisition is a synchronous read and can never hang.
     try {
       const rawLock = storage.getItem(SAVE_LOCK_KEY);
       if (rawLock !== null) {
@@ -121,15 +123,9 @@ export class SaveStore {
           }
         } catch { /* corrupt lock: treat as stale and take over */ }
       }
-      // Take the lock and keep it fresh with a heartbeat.
-      const writeLock = () => {
-        try { storage.setItem(SAVE_LOCK_KEY, JSON.stringify({ tabId: this.tabId, timestamp: Date.now() })); } catch { /* lock write failed: save still works */ }
-      };
-      writeLock();
-      this.heartbeat = setInterval(() => { if (generation === this.generation) writeLock(); }, LOCK_HEARTBEAT_MS);
+      this.writeLock(storage);
       this.releaseLock = () => {
         this.releaseLock = undefined;
-        if (this.heartbeat !== undefined) { clearInterval(this.heartbeat); this.heartbeat = undefined; }
         try {
           const current = storage.getItem(SAVE_LOCK_KEY);
           if (current !== null) {
@@ -157,7 +153,7 @@ export class SaveStore {
   save(state: GameState): boolean {
     if (!this.writable) return false;
     const storage = this.storage(); if (!storage) { this.writable = false; this.status = 'Saving is unavailable in this browser.'; return false; }
-    try { storage.setItem(SAVE_KEY, encodeSave(state)); this.memory = state; this.status = 'Saved.'; return true; }
+    try { storage.setItem(SAVE_KEY, encodeSave(state)); this.writeLock(storage); this.memory = state; this.status = 'Saved.'; return true; }
     catch { this.memory = state; this.writable = false; this.status = 'Could not save; progress remains in this tab.'; return false; }
   }
 

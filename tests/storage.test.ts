@@ -33,8 +33,8 @@ test('SaveStore makes one atomic write and leaves old storage untouched on failu
   const backing = new Map<string, string>(); let writes = 0; let fail = false;
   const oldStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => backing.get(key) ?? null, setItem: (key: string, value: string) => { if (fail) throw new Error('quota'); writes++; backing.set(key, value); } } });
-  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { locks: { request: async (_: string, _o: unknown, callback: (lock: object) => Promise<void>) => callback({}) } } });
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => backing.get(key) ?? null, setItem: (key: string, value: string) => { if (fail) throw new Error('quota'); if (key === SAVE_KEY) writes++; backing.set(key, value); } } });
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
   try {
     const store = new SaveStore(); assert.equal((await store.acquire()).kind, 'ready');
     assert.equal(store.save(createState()), true); assert.equal(writes, 1); const before = backing.get(SAVE_KEY);
@@ -51,7 +51,7 @@ test('an unreadable save can be discarded to start a new game with saving on', a
   const backing=new Map<string,string>(); let writes=0;
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
     getItem:(key:string)=>backing.get(key)??null,
-    setItem:(key:string,value:string)=>{writes++;backing.set(key,value);},
+    setItem:(key:string,value:string)=>{if(key===SAVE_KEY)writes++;backing.set(key,value);},
     removeItem:(key:string)=>{backing.delete(key);},
   }});
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
@@ -63,6 +63,7 @@ test('an unreadable save can be discarded to start a new game with saving on', a
     assert.equal(store.canSave,false);
     store.discardUnreadable();
     assert.equal(backing.has(SAVE_KEY),false,'discard removes the corrupt save');
+    writes=0;
     assert.equal(store.save(createState()),true,'saving works again after discard');
     assert.equal(writes,1,'the fresh state is written');
     const loaded=decodeSave(backing.get(SAVE_KEY)!);
@@ -93,10 +94,10 @@ test('discardUnreadable never deletes a save that now decodes', async () => {
   finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
 });
 
-test('malformed saves remain recoverable without Web Locks', async () => {
+test('malformed saves remain recoverable', async () => {
   const storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),nav=Object.getOwnPropertyDescriptor(globalThis,'navigator');
   let writes=0;
-  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:()=>'{broken',setItem:()=>writes++}});
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(key:string)=>'{broken',setItem:(key:string)=>{if(key===SAVE_KEY)writes++}}});
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
   try {const store=new SaveStore();assert.equal((await store.acquire()).kind,'invalid');assert.equal(store.canSave,false);store.continueSession();assert.equal(store.save(createState()),false);assert.equal(writes,0);}
   finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
