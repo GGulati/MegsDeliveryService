@@ -59,7 +59,6 @@ export class GameRenderer {
   private hemi: THREE.HemisphereLight;
   private skyDome: SkyDome | null = null;
   private clockHands: Array<{ hour: THREE.Group; minute: THREE.Group }> = [];
-  private ambientElapsed = 0;
   private lampMat: THREE.MeshToonMaterial | null = null;
   private beamMat: THREE.MeshBasicMaterial | null = null;
   private disposed = false;
@@ -152,10 +151,8 @@ export class GameRenderer {
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
     this.lastMode = state.mode;
     // Time-of-day: 7am→7pm over the 360s shift. Drives sky shader, sun orbit,
-    // hemisphere, fog, and the clock tower hands. Outside a run (title screen)
-    // the world stays alive on a looping ambient clock.
-    if (!state.run) this.ambientElapsed = (this.ambientElapsed + step) % 360;
-    const elapsed = state.run ? state.run.elapsed : this.ambientElapsed;
+    // hemisphere, fog, and the clock tower hands. Only ticks during a run.
+    const elapsed = state.run ? state.run.elapsed : 0;
     const t = timeOfDay(elapsed);
     const sky = skyAt(t);
     const gm = gameMinutes(elapsed);
