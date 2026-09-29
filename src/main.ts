@@ -9,6 +9,7 @@ import { TouchControls, landingCommitted, touchControlsVisible } from './touch-c
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from './home';
 import { SaveStore } from './storage';
 import { GameAudio } from './audio';
+import { gameMinutes, formatGameTime } from './time-of-day';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const root = document.querySelector<HTMLElement>('#app')!;
@@ -120,7 +121,8 @@ function draw(dt: number) {
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     targetBearing: relativeBearing(state.player.position, target.position, state.player.yaw),
-    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,360-state.run.elapsed) : undefined });
+    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,360-state.run.elapsed) : undefined,
+    gameTime: state.run ? formatGameTime(gameMinutes(state.run.elapsed)) : undefined });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
