@@ -33,7 +33,7 @@ function readProfile(value: unknown): Profile | null {
 
 function readRun(value: unknown): Run | null | undefined {
   if (value === null) return null;
-  if (!isRecord(value) || !integer(value.seed, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) || !finite(value.elapsed, 0, 480) || !finite(value.earnings, 0) || !integer(value.deliveries) || typeof value.returning !== 'boolean' || !text(value.lastStop, 64) || !STOP_IDS.has(value.lastStop as string) || !Array.isArray(value.offers) || value.offers.length > 2) return undefined;
+  if (!isRecord(value) || !integer(value.seed, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) || !finite(value.elapsed, 0, 360) || !finite(value.earnings, 0) || !integer(value.deliveries) || typeof value.returning !== 'boolean' || !text(value.lastStop, 64) || !STOP_IDS.has(value.lastStop as string) || !Array.isArray(value.offers) || value.offers.length > 2) return undefined;
   const job = value.job === null ? null : readJob(value.job);
   const offers = value.offers.map(readJob);
   if ((value.job !== null && !job) || offers.some((offer) => !offer) || new Set(offers.map((offer) => offer!.to)).size !== offers.length) return undefined;

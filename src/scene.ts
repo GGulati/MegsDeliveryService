@@ -16,6 +16,8 @@ import { Life } from './life';
 import { followHeading, modelRotation, homeCameraFrame, homeLookStep, HOME_CAM_OFFSET, HOME_LOOK_Y } from './camera-motion';
 import { RoomView } from './room';
 import { FlightEffects, flightVisuals } from './flight-visuals';
+import { SkyDome } from './sky';
+import { timeOfDay, gameMinutes, skyAt, sunDirection, handAngles, SHIFT_SECONDS } from './time-of-day';
 
 /** The deliberately self contained little world that sits behind the DOM game UI. */
 /** Pastel Painted-Ladies body colors for bungalow-lanes infill (lot.palette 1-4). */
@@ -54,6 +56,11 @@ export class GameRenderer {
   private beamLight: THREE.PointLight | null = null;
   private lighthouseLit = true;
   private sun: THREE.DirectionalLight;
+  private hemi: THREE.HemisphereLight;
+  private skyDome: SkyDome | null = null;
+  private clockHands: Array<{ hour: THREE.Group; minute: THREE.Group }> = [];
+  private lampMat: THREE.MeshToonMaterial | null = null;
+  private beamMat: THREE.MeshBasicMaterial | null = null;
   private disposed = false;
   private lastMode: GameState['mode'] | undefined;
   private lastWidth = -1;
@@ -76,10 +83,13 @@ export class GameRenderer {
     this.camera.position.copy(this.camPos);
 
     const hemi = new THREE.HemisphereLight(0xd9f1ff, 0xc77f78, 2.35);
+    this.hemi = hemi;
     this.scene.add(hemi);
     this.sun = new THREE.DirectionalLight(0xffd1a0, 2.5);
     this.sun.position.set(-80, 115, 48);
     this.scene.add(this.sun);
+    this.skyDome = new SkyDome();
+    this.scene.add(this.skyDome.mesh);
     this.world=this.makeWorld();
     this.life = new Life(this.world);
     this.scene.add(this.world, this.hero, this.dropParcel, this.glowColumn, this.targetRing, this.clouds, this.birds, this.room.group);
@@ -140,9 +150,37 @@ export class GameRenderer {
     this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
     this.updateCamera(state, player, step, settings.reducedMotion, snap);
     this.lastMode = state.mode;
-    const dusk = state.run ? Math.min(1, state.run.elapsed / 480) : .1;
-    this.sun.color.setHSL(.095 - dusk * .08, .9, .78); this.sun.intensity = 2.5 - dusk * .45;
-    (this.scene.fog as THREE.FogExp2).color.setHSL(.55 - dusk * .48, .42, .82 - dusk * .12);
+    // Time-of-day: 7am→7pm over the 360s shift. Drives sky shader, sun orbit,
+    // hemisphere, fog, and the clock tower hands.
+    const elapsed = state.run ? state.run.elapsed : 0;
+    const t = timeOfDay(elapsed);
+    const sky = skyAt(t);
+    const gm = gameMinutes(elapsed);
+    const angles = handAngles(gm);
+    for (const h of this.clockHands) {
+      h.hour.rotation.z = -angles.hour;
+      h.minute.rotation.z = -angles.minute;
+    }
+    if (this.skyDome) this.skyDome.setElapsed(elapsed, step);
+    const [sx, sy, sz] = sunDirection(sky.sunElevation, sky.sunAzimuth);
+    this.sun.position.set(sx * 160, Math.max(8, sy * 160), sz * 160);
+    this.sun.color.setRGB(...sky.sun);
+    this.sun.intensity = sky.sunIntensity;
+    this.hemi.color.setRGB(...sky.hemiSky);
+    this.hemi.groundColor.setRGB(...sky.hemiGround);
+    const fog = this.scene.fog as THREE.FogExp2;
+    if (fog) fog.color.setRGB(...sky.fog);
+    // Toon tint: grade the whole scene warm at golden hour via renderer clear
+    // color blend — applied to fog-matched background.
+    this.renderer.setClearColor(new THREE.Color(...sky.horizon));
+    // Dusk: street lamps glow on, lighthouse beam brightens.
+    const dusk = sky.duskFactor;
+    if (this.lampMat) {
+      this.lampMat.emissive.setRGB(1.0 * dusk, 0.75 * dusk, 0.4 * dusk);
+      this.lampMat.emissiveIntensity = 1.6 * dusk;
+    }
+    if (this.beamLight) this.beamLight.intensity = 3 + dusk * 5;
+    if (this.beamMat) this.beamMat.opacity = 0.28 + dusk * 0.25;
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -658,6 +696,7 @@ export class GameRenderer {
   private makeStreetLamps(g: THREE.Group): void {
     // Warm lamp posts along merchant row and the old-town square.
     const poleMat = toon(0x3a3a42), lampMat = toon(0xffd98a);
+    this.lampMat = lampMat;
     const spots: [number, number][] = [
       [-70, 30], [-62, 42], [-78, 48],          // merchant row west
       [-92, 12], [-92, 20],                      // merchant row north
@@ -1237,6 +1276,7 @@ export class GameRenderer {
     // Rotating beam: two opposite translucent blades from the lamp room.
     const beamGroup = new THREE.Group(); beamGroup.position.set(x, 31.8 + dy, z);
     const beamMat = new THREE.MeshBasicMaterial({ color: 0xffdf8e, transparent: true, opacity: .28, depthWrite: false, side: THREE.DoubleSide });
+    this.beamMat = beamMat;
     [0, Math.PI].forEach(a => {
       const blade = new THREE.Mesh(new THREE.ConeGeometry(3.2, 26, 12, 1, true), beamMat);
       blade.rotation.z = Math.PI / 2; blade.rotation.y = a;
@@ -1277,17 +1317,47 @@ export class GameRenderer {
       [0, -4.32, Math.PI], [0, 4.32, 0], [-4.32, 0, -Math.PI / 2], [4.32, 0, Math.PI / 2],
     ];
     for (const [ox, oz, rot] of faceDefs) {
-      // Clock face: light disc with hands, set into the shaft near the top.
+      // Clock face group: local +Z is the outward face normal.
+      const faceGroup = new THREE.Group();
+      faceGroup.position.set(cx + ox, by + 17, cz + oz);
+      faceGroup.rotation.y = rot;
+      g.add(faceGroup);
+      // Face disc: 0.3 thick, centered at local z=0 → surface at z=0.15.
       const face = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.3, 24),
         new THREE.MeshBasicMaterial({ color: 0xf8f0d8 }));
-      face.rotation.x = Math.PI / 2; face.rotation.z = rot;
-      face.position.set(cx + ox, by + 17, cz + oz); g.add(face);
-      // Hands: hour and minute, fixed at a charming time.
+      face.rotation.x = Math.PI / 2;
+      faceGroup.add(face);
+      // Tick marks: 12 small boxes around the rim, at z=0.16 (just off the face).
+      const tickMat = new THREE.MeshBasicMaterial({ color: 0x2a2a35 });
+      for (let ti = 0; ti < 12; ti++) {
+        const tick = new THREE.Mesh(new THREE.BoxGeometry(0.09, ti % 3 === 0 ? 0.34 : 0.2, 0.02), tickMat);
+        const a = (ti / 12) * Math.PI * 2;
+        tick.position.set(Math.sin(a) * 1.9, Math.cos(a) * 1.9, 0.16);
+        tick.rotation.z = -a;
+        faceGroup.add(tick);
+      }
+      // Hands: pivot groups at z=0.30 — a full 0.15 clear of the face surface
+      // (no z-fighting). Each hand mesh extends +Y from its pivot; the render
+      // loop sets pivot.rotation.z = -angle (clockwise).
       const handMat = new THREE.MeshBasicMaterial({ color: 0x2a2a35 });
-      const hour = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.1), handMat);
-      hour.position.set(cx + ox * 1.02, by + 17.3, cz + oz * 1.02); hour.rotation.z = -0.6; hour.rotation.y = rot; g.add(hour);
-      const minute = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.6, 0.1), handMat);
-      minute.position.set(cx + ox * 1.02, by + 17.2, cz + oz * 1.02); minute.rotation.z = 0.9; minute.rotation.y = rot; g.add(minute);
+      const hourPivot = new THREE.Group();
+      hourPivot.position.set(0, 0, 0.30);
+      const hour = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.1, 0.06), handMat);
+      hour.position.y = 0.45; // pivot slightly below center so tail shows
+      hourPivot.add(hour);
+      faceGroup.add(hourPivot);
+      const minutePivot = new THREE.Group();
+      minutePivot.position.set(0, 0, 0.36); // minute hand above hour hand
+      const minute = new THREE.Mesh(new THREE.BoxGeometry(0.13, 1.65, 0.06), handMat);
+      minute.position.y = 0.62;
+      minutePivot.add(minute);
+      faceGroup.add(minutePivot);
+      // Center cap.
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.1, 12), handMat);
+      cap.rotation.x = Math.PI / 2;
+      cap.position.z = 0.38;
+      faceGroup.add(cap);
+      this.clockHands.push({ hour: hourPivot, minute: minutePivot });
       // Belfry opening (dark arch suggestion).
       const opening = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2), openingMat);
       opening.position.set(cx + ox * 1.01, by + 21.5, cz + oz * 1.01); opening.rotation.y = rot; g.add(opening);

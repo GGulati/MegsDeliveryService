@@ -94,12 +94,12 @@ test('offers advance clock while paused clock does not', () => {
   setPaused(state, true, 'menu'); step(state, input, 10); assert.equal(state.run!.elapsed, 1);
 });
 
-test('deadline allows banking at 479.99 but rescues at 480', () => {
+test('deadline allows banking at 359.99 but rescues at 360', () => {
   const early = createState(); startCafeFlight(early, 4); land(early, 'harbor-cafe'); interact(early); finishDrop(early);
-  returnHome(early); early.run!.elapsed = 479.99; land(early, 'home'); interact(early); finishDrop(early);
+  returnHome(early); early.run!.elapsed = 359.99; land(early, 'home'); interact(early); finishDrop(early);
   assert.equal(early.mode, 'home', 'banking just before the deadline lands at home'); assert.equal(early.summary, null); assert.equal(early.profile.coins, 50);
   const late = createState(); startCafeFlight(late, 4); land(late, 'harbor-cafe'); interact(late); finishDrop(late);
-  late.profile.coins = 17; returnHome(late); late.run!.elapsed = 480; land(late, 'home'); interact(late);
+  late.profile.coins = 17; returnHome(late); late.run!.elapsed = 360; land(late, 'home'); interact(late);
   assert.equal(late.summary?.success, false); assert.equal(late.profile.coins, 17);
 });
 
