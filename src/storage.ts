@@ -3,6 +3,10 @@ import { STOPS } from './world';
 
 /** The single, versioned localStorage record used by the game. */
 export const SAVE_KEY = 'megs-delivery-save-v1';
+/** Cooperative cross-tab lock: { tabId, timestamp }. Stale after LOCK_STALE_MS. */
+const SAVE_LOCK_KEY = 'megs-delivery-save-lock-v1';
+const LOCK_HEARTBEAT_MS = 4000;
+const LOCK_STALE_MS = 10000;
 
 type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
 type SaveResult = { kind: SaveResultKind; state?: GameState; message: string };
@@ -93,6 +97,8 @@ export class SaveStore {
   private writable = false;
   private status = '';
   private memory?: GameState;
+  private tabId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  private heartbeat?: ReturnType<typeof setInterval>;
 
   get message(): string { return this.status; }
   get canSave(): boolean { return this.writable; }
@@ -101,39 +107,51 @@ export class SaveStore {
     this.release(); const generation = ++this.generation;
     const storage = this.storage();
     if (!storage) return this.session('Saved games are unavailable in this browser.');
-    const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
-    if (!locks) {
-      try { const raw = storage.getItem(SAVE_KEY);const decoded=raw===null?undefined:decodeSave(raw);if(raw!==null&&!decoded){this.status='Saved game could not be read. It was left untouched.';return {kind:'invalid',message:this.status};}return this.session('This browser cannot safely share saved games; playing in this tab only.',decoded??undefined); }
-      catch { return this.session('Saved games are unavailable in this browser.'); }
+    // Cooperative cross-tab lock via localStorage heartbeat. A lock is stale
+    // if its heartbeat is older than LOCK_STALE_MS (crashed/killed tab).
+    // This never hangs: it's a single synchronous read.
+    try {
+      const rawLock = storage.getItem(SAVE_LOCK_KEY);
+      if (rawLock !== null) {
+        try {
+          const lock = JSON.parse(rawLock) as { tabId?: unknown; timestamp?: unknown };
+          const age = typeof lock.timestamp === 'number' ? Date.now() - lock.timestamp : Infinity;
+          if (typeof lock.tabId === 'string' && lock.tabId !== this.tabId && age < LOCK_STALE_MS) {
+            return { kind: 'readonly', message: 'Saved game is open in another tab. Retry after closing it.' };
+          }
+        } catch { /* corrupt lock: treat as stale and take over */ }
+      }
+      // Take the lock and keep it fresh with a heartbeat.
+      const writeLock = () => {
+        try { storage.setItem(SAVE_LOCK_KEY, JSON.stringify({ tabId: this.tabId, timestamp: Date.now() })); } catch { /* lock write failed: save still works */ }
+      };
+      writeLock();
+      this.heartbeat = setInterval(() => { if (generation === this.generation) writeLock(); }, LOCK_HEARTBEAT_MS);
+      this.releaseLock = () => {
+        this.releaseLock = undefined;
+        if (this.heartbeat !== undefined) { clearInterval(this.heartbeat); this.heartbeat = undefined; }
+        try {
+          const current = storage.getItem(SAVE_LOCK_KEY);
+          if (current !== null) {
+            const lock = JSON.parse(current) as { tabId?: unknown };
+            if (lock.tabId === this.tabId) storage.removeItem(SAVE_LOCK_KEY);
+          }
+        } catch { /* lock cleanup failed: it goes stale on its own */ }
+        this.writable = false;
+      };
+    } catch {
+      return this.session('Saved games are unavailable in this browser.');
     }
-    // Timeout: if the Web Locks API hangs (seen on some mobile browsers),
-    // fall back to session mode instead of leaving the game stuck loading.
-    const timeout = new Promise<SaveResult>((resolve) => {
-      setTimeout(() => {
-        if (generation === this.generation) resolve(this.session('Save lock timed out; playing in this tab only.'));
-      }, 5000);
-    });
-    const attempt = new Promise<SaveResult>((resolve) => {
-      void locks.request('megs-delivery-save', { ifAvailable: true }, (lock) => {
-        if (generation !== this.generation || !lock) { resolve({ kind: 'readonly', message: 'Saved game is open in another tab. Retry after closing it.' }); return; }
-        let unlock!: () => void;
-        const held = new Promise<void>((done) => { unlock = done; });
-        this.releaseLock = () => { this.releaseLock = undefined; this.writable = false; unlock(); };
-        let raw: string | null;
-        try { raw = storage.getItem(SAVE_KEY); }
-        catch { this.releaseLock?.(); resolve(this.session('Saved games are unavailable in this browser.')); return held; }
-        const decoded = raw === null ? undefined : decodeSave(raw) ?? undefined;
-        if (raw !== null && !decoded) {
-          this.status = 'Saved game could not be read. It was left untouched.';
-          resolve({ kind: 'invalid', message: this.status });
-          return held;
-        }
-        this.writable = true; this.memory = decoded; this.status = 'Saved game ready.';
-        resolve({ kind: 'ready', state: decoded, message: this.status });
-        return held;
-      }).catch(() => resolve(this.session('Saved games are unavailable in this browser.')));
-    });
-    return Promise.race([attempt, timeout]);
+    let raw: string | null;
+    try { raw = storage.getItem(SAVE_KEY); }
+    catch { this.releaseLock?.(); return this.session('Saved games are unavailable in this browser.'); }
+    const decoded = raw === null ? undefined : decodeSave(raw) ?? undefined;
+    if (raw !== null && !decoded) {
+      this.status = 'Saved game could not be read. It was left untouched.';
+      return { kind: 'invalid', message: this.status };
+    }
+    this.writable = true; this.memory = decoded; this.status = 'Saved game ready.';
+    return { kind: 'ready', state: decoded, message: this.status };
   }
 
   save(state: GameState): boolean {
