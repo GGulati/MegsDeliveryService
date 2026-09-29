@@ -1,6 +1,6 @@
 import type { FlightInput, GameState, Player, Stop, Vec3, Solid } from './types';
 import { enterHome, interactHome, stepHome } from './home';
-import { SOLIDS, STOPS, WALLS, WORLD_LIMIT } from './world';
+import { SOLIDS, STOPS, WALLS, INFRA_SOLIDS, WORLD_LIMIT } from './world';
 import { heightAt } from './terrain';
 import { generateLots, lotsToSolids } from './town-gen';
 
@@ -17,8 +17,8 @@ const ACCELERATION = 12;
  *  fly through them. Deterministic via TOWN_SEED; computed once at load. */
 export const INFILL_SOLIDS: Solid[] = lotsToSolids(generateLots());
 
-/** Full collision set: hero solids + infill solids + walls. */
-export const COLLISION_SOLIDS: Solid[] = [...SOLIDS, ...INFILL_SOLIDS, ...WALLS];
+/** Full collision set: hero solids + infill solids + walls + bridge/ramp infra. */
+export const COLLISION_SOLIDS: Solid[] = [...SOLIDS, ...INFILL_SOLIDS, ...WALLS, ...INFRA_SOLIDS];
 
 /** Curved braking ("fade like a bike"): the manual decel rate scales with
  * speed — strong initial bite at full cruise that eases off as the drone

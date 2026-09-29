@@ -170,3 +170,38 @@ export const WALLS: Solid[] = [
   // (z~170), inside WORLD_LIMIT, as the thematic edge before open water.
   { min: { x: 15, y: 0, z: 168 }, max: { x: 100, y: 100, z: 172 } },
 ];
+
+/** Staircase of AABBs approximating a sloped ramp from (x1,z1,y1) to
+ *  (x2,z2,y2). Each step overlaps its neighbors vertically so there's no
+ *  gap to slip through. (User feedback 2026-09-28: collide with ramps.) */
+function rampColliders(
+  x1: number, z1: number, y1: number,
+  x2: number, z2: number, y2: number,
+  width: number, steps: number,
+): Solid[] {
+  const out: Solid[] = [];
+  const hw = width / 2;
+  for (let i = 0; i < steps; i++) {
+    const t0 = i / steps, t1 = (i + 1) / steps;
+    const xa = x1 + (x2 - x1) * t0, xb = x1 + (x2 - x1) * t1;
+    const za = z1 + (z2 - z1) * t0, zb = z1 + (z2 - z1) * t1;
+    const ya = y1 + (y2 - y1) * t0, yb = y1 + (y2 - y1) * t1;
+    out.push({
+      min: { x: Math.min(xa, xb) - hw, y: Math.min(ya, yb) - 0.5, z: Math.min(za, zb) - hw },
+      max: { x: Math.max(xa, xb) + hw, y: Math.max(ya, yb) + 0.5, z: Math.max(za, zb) + hw },
+    });
+  }
+  return out;
+}
+
+/** Bridge and ramp collision: invisible, never rendered. The player collides
+ *  with the bridge deck and onramps just like buildings — no flying through.
+ *  (User feedback 2026-09-28.) */
+export const INFRA_SOLIDS: Solid[] = [
+  // Bridge deck (bl-w→bl-e): axis-aligned, x from -15 to 73 at z=100, deck at y=6.
+  { min: { x: -15, y: 5.4, z: 100 - 4.4 }, max: { x: 73, y: 6.8, z: 100 + 4.4 } },
+  // West onramp (wx2→bl-w): (-25, 70, 0) → (-15, 100, 6).
+  ...rampColliders(-25, 70, 0, -15, 100, 6, 8.8, 6),
+  // East onramp (bl-e→we3): (73, 100, 6) → (85, 85, 0).
+  ...rampColliders(73, 100, 6, 85, 85, 0, 8.8, 4),
+];
