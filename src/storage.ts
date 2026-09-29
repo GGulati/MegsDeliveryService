@@ -106,7 +106,14 @@ export class SaveStore {
       try { const raw = storage.getItem(SAVE_KEY);const decoded=raw===null?undefined:decodeSave(raw);if(raw!==null&&!decoded){this.status='Saved game could not be read. It was left untouched.';return {kind:'invalid',message:this.status};}return this.session('This browser cannot safely share saved games; playing in this tab only.',decoded??undefined); }
       catch { return this.session('Saved games are unavailable in this browser.'); }
     }
-    return new Promise<SaveResult>((resolve) => {
+    // Timeout: if the Web Locks API hangs (seen on some mobile browsers),
+    // fall back to session mode instead of leaving the game stuck loading.
+    const timeout = new Promise<SaveResult>((resolve) => {
+      setTimeout(() => {
+        if (generation === this.generation) resolve(this.session('Save lock timed out; playing in this tab only.'));
+      }, 5000);
+    });
+    const attempt = new Promise<SaveResult>((resolve) => {
       void locks.request('megs-delivery-save', { ifAvailable: true }, (lock) => {
         if (generation !== this.generation || !lock) { resolve({ kind: 'readonly', message: 'Saved game is open in another tab. Retry after closing it.' }); return; }
         let unlock!: () => void;
@@ -126,6 +133,7 @@ export class SaveStore {
         return held;
       }).catch(() => resolve(this.session('Saved games are unavailable in this browser.')));
     });
+    return Promise.race([attempt, timeout]);
   }
 
   save(state: GameState): boolean {
