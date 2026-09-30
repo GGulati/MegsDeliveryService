@@ -128,7 +128,6 @@ function draw(dt: number) {
   (document.querySelector('#start-btn') as HTMLButtonElement).disabled=!bootReady;
   if(state.profile.tutorialDone)document.querySelector('#start-btn')!.innerHTML='Come on in <span>→</span>';
   document.querySelector('#next-day-btn')!.innerHTML='Back to your room <span>→</span>';
-  document.querySelector<HTMLElement>('.sun-pill')!.hidden=!state.run;
   saveBanner.hidden=saveKind==='ready'&&saveFyi===null;
   const bannerKey=saveKind+saveMessage+(saveFyi??'');
   if(saveBanner.dataset.key!==bannerKey){saveBanner.dataset.key=bannerKey;saveBanner.textContent=saveKind==='ready'?(saveFyi??''):saveMessage;if(saveKind==='readonly')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="retry">Retry</button>');}
