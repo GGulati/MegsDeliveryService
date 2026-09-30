@@ -38,13 +38,13 @@ test('tutorial marks Harbor Cafe from the start', () => {
 
 test('active flight job marks its stop', () => {
   const state = createState();
-  startCafeFlight(state, 4);
+  startCafeFlight(state, 11);
   assert.equal(glowColumnTarget(state)?.id, 'harbor-cafe');
 });
 
 test('column follows a newly chosen job', () => {
   const state = createState();
-  startCafeFlight(state, 4);
+  startCafeFlight(state, 11);
   land(state, 'harbor-cafe');
   interact(state);
   finishDrop(state);
@@ -57,7 +57,7 @@ test('column follows a newly chosen job', () => {
 
 test('column marks home when returning to bank', () => {
   const state = createState();
-  startCafeFlight(state, 4);
+  startCafeFlight(state, 11);
   land(state, 'harbor-cafe');
   interact(state);
   finishDrop(state);
@@ -67,7 +67,7 @@ test('column marks home when returning to bank', () => {
 
 test('column hides after the delivery completes', () => {
   const state = createState();
-  startCafeFlight(state, 4);
+  startCafeFlight(state, 11);
   assert.ok(glowColumnTarget(state), 'column visible while carrying the parcel');
   land(state, 'harbor-cafe');
   interact(state);
@@ -78,7 +78,7 @@ test('column hides after the delivery completes', () => {
 
 test('column hides in offers and summary modes', () => {
   const state = createState();
-  startCafeFlight(state, 4);
+  startCafeFlight(state, 11);
   state.mode = 'offers';
   assert.equal(glowColumnTarget(state), undefined);
   state.mode = 'summary';

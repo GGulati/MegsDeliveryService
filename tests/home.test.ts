@@ -62,7 +62,7 @@ test('completion needs every decor item and every broom track at level two', () 
 test('broom upgrades affect actual flight speed, turning, and hover braking', () => {
   const base = createState();
   base.mode = 'flight';
-  base.run = { seed: 1, elapsed: 0, earnings: 0, deliveries: 0, job: null, offers: [], returning: false, lastStop: 'home' };
+  base.run = { seed: 1, elapsed: 0, earnings: 0, deliveries: 0, job: null, offers: [], returning: false, lastStop: 'home', recentStops: [] };
   base.player.throttle = 18; base.player.speed = 18;
   const upgraded = structuredClone(base);
   upgraded.profile.upgrades = { speed: 2, handling: 2, braking: 2 };

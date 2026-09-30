@@ -33,7 +33,7 @@ export interface DeliveryDescent {
   /** Seconds since the descent began (drives the circling ramp-in). */
   t: number;
 }
-export interface Run { seed: number; elapsed: number; earnings: number; deliveries: number; job: Job | null; offers: Job[]; returning: boolean; lastStop: string }
+export interface Run { seed: number; elapsed: number; earnings: number; deliveries: number; job: Job | null; offers: Job[]; returning: boolean; lastStop: string; recentStops: string[] }
 export type Mode = 'title' | 'tutorial' | 'flight' | 'offers' | 'home' | 'summary';
 export type HomePanel = 'none' | 'jobs' | 'brooms' | 'decor' | 'cat';
 /** Seconds left on the pre-drop halo fade-out; 0 when no auto-drop is pending.

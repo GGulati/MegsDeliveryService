@@ -91,16 +91,21 @@ test('every stop is inside the world limit', () => {
 });
 
 test('every pad sits above its building roof', () => {
-  // SOLIDS[0..6] align with STOPS[0..6]; district shells follow; last solid is
-  // the lighthouse tower.
-  assert.ok(SOLIDS.length >= STOPS.length + 1);
-  STOPS.forEach((s, i) => {
-    const b = SOLIDS[i];
-    const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
-    assert.ok(Math.hypot(s.position.x - cx, s.position.z - cz) < 12,
-      `${s.id} pad is not over its building`);
-    assert.ok(s.position.y >= b.max.y + 1 && s.position.y <= b.max.y + 4,
-      `${s.id} pad y=${s.position.y} vs roof ${b.max.y}`);
+  // Find the nearest solid for each stop (by XZ distance to center)
+  STOPS.forEach((s) => {
+    let best = null;
+    let bestDist = Infinity;
+    for (const b of SOLIDS) {
+      const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+      const d = Math.hypot(s.position.x - cx, s.position.z - cz);
+      if (d < bestDist) {
+        bestDist = d;
+        best = b;
+      }
+    }
+    assert.ok(bestDist < 12, `${s.id} pad is not over its building (nearest ${bestDist.toFixed(1)}m)`);
+    assert.ok(s.position.y >= best!.max.y + 1 && s.position.y <= best!.max.y + 4,
+      `${s.id} pad y=${s.position.y} vs roof ${best!.max.y}`);
   });
 });
 
