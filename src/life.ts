@@ -779,9 +779,22 @@ export class Life {
       // Same fix as cars: the node reached is determined by travel direction
       // alone (dir=1 → edge.b, dir=-1 → edge.a).
       const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
+      // Capture travel direction before the node: if the new edge turns
+      // sharply, skip the crosswalk side-switch. Combining a sharp turn with
+      // a side flip swings the offset up to ~9m diagonally across the
+      // intersection (user-reported "warp across crosswalks when turning",
+      // 2026-09-30). Peds either turn the corner OR cross the street, not both.
+      const tB = THREE.MathUtils.clamp(ped.t, 0, 1);
+      ped.curve.getTangentAt(tB, this.tmpT);
+      if (ped.dir === -1) this.tmpT.negate();
+      const beforeX = this.tmpT.x, beforeZ = this.tmpT.z;
       this.arriveNode(ped, nodeId);
+      const tA = THREE.MathUtils.clamp(ped.t, 0, 1);
+      ped.curve.getTangentAt(tA, this.tmpT);
+      if (ped.dir === -1) this.tmpT.negate();
+      const straightEnough = (beforeX * this.tmpT.x + beforeZ * this.tmpT.z) > 0.819; // cos(35°)
       // Occasionally switch sides at intersections (reads as using a crosswalk).
-      if (this.rng() < 0.15) ped.side *= -1;
+      if (straightEnough && this.rng() < 0.15) ped.side *= -1;
     }
     const t = THREE.MathUtils.clamp(ped.t, 0, 1);
     ped.curve.getPointAt(t, this.tmpP);
@@ -794,11 +807,14 @@ export class Life {
     ped.sideOff += THREE.MathUtils.clamp(dOff, -3 * dt, 3 * dt);
     // Ease the 2D offset vector too: when the road turns at a node, the
     // tangent normal snaps, so glide the vector at a bounded rate instead of
-    // popping laterally (user feedback 2026-09-27).
+    // popping laterally (user feedback 2026-09-27). 8 m/s (up from 4):
+    // a 90° corner swings the 4m offset ~5.7m, which now completes in ~0.7s
+    // instead of ~1.4s — a quick step around the corner, not a long diagonal
+    // slide across the intersection (user feedback 2026-09-30).
     const wantX = (-this.tmpT.z) * ped.sideOff;
     const wantZ = (this.tmpT.x) * ped.sideOff;
-    ped.offX += THREE.MathUtils.clamp(wantX - ped.offX, -4 * dt, 4 * dt);
-    ped.offZ += THREE.MathUtils.clamp(wantZ - ped.offZ, -4 * dt, 4 * dt);
+    ped.offX += THREE.MathUtils.clamp(wantX - ped.offX, -8 * dt, 8 * dt);
+    ped.offZ += THREE.MathUtils.clamp(wantZ - ped.offZ, -8 * dt, 8 * dt);
     const px = this.tmpP.x + ped.offX;
     const pz = this.tmpP.z + ped.offZ;
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
