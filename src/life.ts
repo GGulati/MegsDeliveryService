@@ -390,7 +390,10 @@ export class Life {
         x = this.tmpP.x + spawnOffX;
         z = this.tmpP.z + spawnOffZ;
       }
-      const y = heightAt(x, z);
+      // Sidewalk peds stand on the deck (roadGroundHeight), not the terrain —
+      // the deck can ride meters above the terrain on fills. Park peds use
+      // terrain height. (2026-09-30: matches the Y-glide target in update.)
+      const y = (!inPark && edge) ? roadGroundHeight(edge, spawnT, x, z) : heightAt(x, z);
       group.position.set(x, y, z);
       this.group.add(group);
       const bubble = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -507,8 +510,8 @@ export class Life {
     const isCar = 'variant' in e;
     // Assign a trip first, then mount the route's first edge — mounting a
     // random edge before assigning (the old order) desyncs the route from the
-    // car's actual position, leaving a stale route that later drops and can
-    // teleport the car (2026-09-30: 8.81m jump from stale trip chaining).
+    // car's actual position, leaving a stale route that is dropped as stale
+    // at the next arrival and the car never actually follows trips (2026-09-30).
     if (e.destNode === null) this.assignTrip(e, nodeId);
     if (e.route.length > 0) {
       const re = e.route.shift()!;
