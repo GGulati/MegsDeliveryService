@@ -352,8 +352,17 @@ function hash(seed: number): number {
   return (value ^ (value >>> 16)) >>> 0;
 }
 
+function hashString(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 0x5bd1e995);
+    h ^= h >>> 13;
+  }
+  return h >>> 0;
+}
+
 export function makeOffers(seed: number, delivery: number, from: string, recentStops: string[]): import('./types').Job[] {
-  let value = hash(seed ^ hash(delivery) ^ hash(from.length));
+  let value = hash(seed ^ hash(delivery) ^ hashString(from));
   const origin = STOPS.find((item) => item.id === from)!;
   const excluded = new Set(['home', from, ...recentStops]);
   const candidates = STOPS.filter((stop) => !excluded.has(stop.id))
@@ -372,11 +381,12 @@ export function makeOffers(seed: number, delivery: number, from: string, recentS
   // Pick 2 random categories (seeded)
   value = hash(value + 1);
   const catIndex1 = value % categories.length;
-  value = hash(value + 2);
-  let catIndex2 = value % categories.length;
+  let catIndex2 = catIndex1;
   if (categories.length > 1) {
+    let attempts = 0;
     while (catIndex2 === catIndex1) {
-      value = hash(value + 3);
+      attempts++;
+      value = hash(value + 2 + attempts);
       catIndex2 = value % categories.length;
     }
   }
