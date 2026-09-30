@@ -120,7 +120,7 @@ function draw(dt: number) {
   ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     targetBearing: relativeBearing(state.player.position, target.position, state.player.yaw),
-    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,480-state.run.elapsed) : undefined });
+    speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,360-state.run.elapsed) : undefined });
   homeUI.render(state);
   touchControls.render(state);
   if(!bootReady)document.querySelector<HTMLElement>('.home-interface')!.hidden=true;
@@ -128,7 +128,6 @@ function draw(dt: number) {
   (document.querySelector('#start-btn') as HTMLButtonElement).disabled=!bootReady;
   if(state.profile.tutorialDone)document.querySelector('#start-btn')!.innerHTML='Come on in <span>→</span>';
   document.querySelector('#next-day-btn')!.innerHTML='Back to your room <span>→</span>';
-  document.querySelector<HTMLElement>('.sun-pill')!.hidden=!state.run;
   saveBanner.hidden=saveKind==='ready'&&saveFyi===null;
   const bannerKey=saveKind+saveMessage+(saveFyi??'');
   if(saveBanner.dataset.key!==bannerKey){saveBanner.dataset.key=bannerKey;saveBanner.textContent=saveKind==='ready'?(saveFyi??''):saveMessage;if(saveKind==='readonly')saveBanner.insertAdjacentHTML('beforeend','<br><button data-save="retry">Retry</button>');}

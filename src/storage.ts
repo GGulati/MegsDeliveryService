@@ -3,6 +3,9 @@ import { STOPS } from './world';
 
 /** The single, versioned localStorage record used by the game. */
 export const SAVE_KEY = 'megs-delivery-save-v1';
+/** Cooperative cross-tab lock: { tabId, timestamp }. Stale after LOCK_STALE_MS. */
+const SAVE_LOCK_KEY = 'megs-delivery-save-lock-v1';
+const LOCK_STALE_MS = 30000;
 
 type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
 type SaveResult = { kind: SaveResultKind; state?: GameState; message: string };
@@ -33,7 +36,7 @@ function readProfile(value: unknown): Profile | null {
 
 function readRun(value: unknown): Run | null | undefined {
   if (value === null) return null;
-  if (!isRecord(value) || !integer(value.seed, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) || !finite(value.elapsed, 0, 480) || !finite(value.earnings, 0) || !integer(value.deliveries) || typeof value.returning !== 'boolean' || !text(value.lastStop, 64) || !STOP_IDS.has(value.lastStop as string) || !Array.isArray(value.offers) || value.offers.length > 2) return undefined;
+  if (!isRecord(value) || !integer(value.seed, -Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER) || !finite(value.elapsed, 0, 360) || !finite(value.earnings, 0) || !integer(value.deliveries) || typeof value.returning !== 'boolean' || !text(value.lastStop, 64) || !STOP_IDS.has(value.lastStop as string) || !Array.isArray(value.offers) || value.offers.length > 2) return undefined;
   const job = value.job === null ? null : readJob(value.job);
   const offers = value.offers.map(readJob);
   if ((value.job !== null && !job) || offers.some((offer) => !offer) || new Set(offers.map((offer) => offer!.to)).size !== offers.length) return undefined;
@@ -93,45 +96,64 @@ export class SaveStore {
   private writable = false;
   private status = '';
   private memory?: GameState;
+  private tabId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
   get message(): string { return this.status; }
   get canSave(): boolean { return this.writable; }
+
+  private writeLock(storage: Storage): void {
+    try { storage.setItem(SAVE_LOCK_KEY, JSON.stringify({ tabId: this.tabId, timestamp: Date.now() })); } catch { /* lock write failed: save still works */ }
+  }
 
   async acquire(): Promise<SaveResult> {
     this.release(); const generation = ++this.generation;
     const storage = this.storage();
     if (!storage) return this.session('Saved games are unavailable in this browser.');
-    const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
-    if (!locks) {
-      try { const raw = storage.getItem(SAVE_KEY);const decoded=raw===null?undefined:decodeSave(raw);if(raw!==null&&!decoded){this.status='Saved game could not be read. It was left untouched.';return {kind:'invalid',message:this.status};}return this.session('This browser cannot safely share saved games; playing in this tab only.',decoded??undefined); }
-      catch { return this.session('Saved games are unavailable in this browser.'); }
+    // Cooperative cross-tab lock via localStorage. A lock is stale if its
+    // timestamp is older than LOCK_STALE_MS (crashed/killed tab). The lock is
+    // refreshed on every save; acquisition is a synchronous read and can never hang.
+    try {
+      const rawLock = storage.getItem(SAVE_LOCK_KEY);
+      if (rawLock !== null) {
+        try {
+          const lock = JSON.parse(rawLock) as { tabId?: unknown; timestamp?: unknown };
+          const age = typeof lock.timestamp === 'number' ? Date.now() - lock.timestamp : Infinity;
+          if (typeof lock.tabId === 'string' && lock.tabId !== this.tabId && age < LOCK_STALE_MS) {
+            return { kind: 'readonly', message: 'Saved game is open in another tab. Retry after closing it.' };
+          }
+        } catch { /* corrupt lock: treat as stale and take over */ }
+      }
+      this.writeLock(storage);
+      this.releaseLock = () => {
+        this.releaseLock = undefined;
+        try {
+          const current = storage.getItem(SAVE_LOCK_KEY);
+          if (current !== null) {
+            const lock = JSON.parse(current) as { tabId?: unknown };
+            if (lock.tabId === this.tabId) storage.removeItem(SAVE_LOCK_KEY);
+          }
+        } catch { /* lock cleanup failed: it goes stale on its own */ }
+        this.writable = false;
+      };
+    } catch {
+      return this.session('Saved games are unavailable in this browser.');
     }
-    return new Promise<SaveResult>((resolve) => {
-      void locks.request('megs-delivery-save', { ifAvailable: true }, (lock) => {
-        if (generation !== this.generation || !lock) { resolve({ kind: 'readonly', message: 'Saved game is open in another tab. Retry after closing it.' }); return; }
-        let unlock!: () => void;
-        const held = new Promise<void>((done) => { unlock = done; });
-        this.releaseLock = () => { this.releaseLock = undefined; this.writable = false; unlock(); };
-        let raw: string | null;
-        try { raw = storage.getItem(SAVE_KEY); }
-        catch { this.releaseLock?.(); resolve(this.session('Saved games are unavailable in this browser.')); return held; }
-        const decoded = raw === null ? undefined : decodeSave(raw) ?? undefined;
-        if (raw !== null && !decoded) {
-          this.status = 'Saved game could not be read. It was left untouched.';
-          resolve({ kind: 'invalid', message: this.status });
-          return held;
-        }
-        this.writable = true; this.memory = decoded; this.status = 'Saved game ready.';
-        resolve({ kind: 'ready', state: decoded, message: this.status });
-        return held;
-      }).catch(() => resolve(this.session('Saved games are unavailable in this browser.')));
-    });
+    let raw: string | null;
+    try { raw = storage.getItem(SAVE_KEY); }
+    catch { this.releaseLock?.(); return this.session('Saved games are unavailable in this browser.'); }
+    const decoded = raw === null ? undefined : decodeSave(raw) ?? undefined;
+    if (raw !== null && !decoded) {
+      this.status = 'Saved game could not be read. It was left untouched.';
+      return { kind: 'invalid', message: this.status };
+    }
+    this.writable = true; this.memory = decoded; this.status = 'Saved game ready.';
+    return { kind: 'ready', state: decoded, message: this.status };
   }
 
   save(state: GameState): boolean {
     if (!this.writable) return false;
     const storage = this.storage(); if (!storage) { this.writable = false; this.status = 'Saving is unavailable in this browser.'; return false; }
-    try { storage.setItem(SAVE_KEY, encodeSave(state)); this.memory = state; this.status = 'Saved.'; return true; }
+    try { storage.setItem(SAVE_KEY, encodeSave(state)); this.writeLock(storage); this.memory = state; this.status = 'Saved.'; return true; }
     catch { this.memory = state; this.writable = false; this.status = 'Could not save; progress remains in this tab.'; return false; }
   }
 

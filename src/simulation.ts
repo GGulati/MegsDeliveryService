@@ -25,7 +25,7 @@ export const COLLISION_SOLIDS: Solid[] = [...SOLIDS, ...INFILL_SOLIDS, ...WALLS,
  * slows, like weight transfer under braking. */
 const BRAKE_BASE_DECEL = 5;
 const BRAKE_SPEED_FACTOR = 0.5;
-const RUN_SECONDS = 480;
+const RUN_SECONDS = 360;
 const LANDING_SPEED = 3.5;
 /** How long a dropped parcel takes to reach the pad. The drop is committed
  * when the player presses interact; the run clock and flight input freeze
