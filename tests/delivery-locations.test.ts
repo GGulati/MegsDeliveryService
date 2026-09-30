@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { STOPS } from '../src/world.js';
-import { createState, startRun } from '../src/simulation.js';
+import { createState, startRun, makeOffers } from '../src/simulation.js';
 
 describe('delivery locations', () => {
   test('has 22 delivery stops plus home', () => {
@@ -42,6 +42,26 @@ describe('delivery locations', () => {
     // (full delivery flow requires flight simulation)
     state.run!.recentStops = ['a', 'b', 'c', 'd'].slice(-3);
     assert.deepEqual(state.run!.recentStops, ['b', 'c', 'd'], 'keeps only last 3');
+  });
+
+  test('makeOffers excludes recentStops (no repeats across 3)', () => {
+    const recent = ['clocktower', 'cobblers', 'tinkers'];
+    // Test across many seeds and origins
+    for (let seed = 1; seed <= 30; seed++) {
+      for (const from of ['home', 'harbor-cafe', 'lighthouse', 'observatory']) {
+        const offers = makeOffers(seed, 5, from, recent);
+        for (const offer of offers) {
+          assert.ok(!recent.includes(offer.to),
+            `seed ${seed} from ${from}: offered ${offer.to} which is in recentStops`);
+          assert.notEqual(offer.to, 'home', 'home should never be offered');
+          assert.notEqual(offer.to, from, 'current location should never be offered');
+        }
+        // No duplicates in the offers
+        const dests = offers.map((o) => o.to);
+        assert.equal(new Set(dests).size, dests.length,
+          `seed ${seed} from ${from}: duplicate offers ${dests.join(', ')}`);
+      }
+    }
   });
 
   test('payout bands are valid (20/35/50)', () => {

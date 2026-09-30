@@ -165,7 +165,7 @@ test('control input during the fade cannot break the landing', () => {
   assert.ok(state.descent || state.drop, 'landing must continue despite the input');
   finishDrop(state);
   assert.equal(state.run!.deliveries, 1, 'delivery should complete');
-  assert.equal(state.run!.earnings, 20, 'delivery should pay out (harbor-cafe is now a 205m long haul)');
+  assert.equal(state.run!.earnings, 20, 'delivery should pay out (harbor-cafe is now a 30m short hop)');
 });
 
 test('no auto-brake without an active destination', () => {

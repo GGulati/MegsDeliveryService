@@ -352,7 +352,7 @@ function hash(seed: number): number {
   return (value ^ (value >>> 16)) >>> 0;
 }
 
-function makeOffers(seed: number, delivery: number, from: string, recentStops: string[]): import('./types').Job[] {
+export function makeOffers(seed: number, delivery: number, from: string, recentStops: string[]): import('./types').Job[] {
   let value = hash(seed ^ hash(delivery) ^ hash(from.length));
   const origin = STOPS.find((item) => item.id === from)!;
   const excluded = new Set(['home', from, ...recentStops]);
@@ -388,11 +388,26 @@ function makeOffers(seed: number, delivery: number, from: string, recentStops: s
   };
 
   const first = pickFrom(categories[catIndex1].items, 10);
+  // Edge case: if only one candidate exists total, return a single offer
+  if (candidates.length === 1) {
+    const payoutFor = (distance: number) => distance < 130 ? 20 : distance <= 260 ? 35 : 50;
+    const category = first.distance < 130 ? 'Short hop' : first.distance <= 260 ? 'Medium run' : 'Long haul';
+    return [{ from, to: first.stop.id, payout: payoutFor(first.distance), label: category, parcel: 'Delivery parcel' }];
+  }
   let second = pickFrom(categories[catIndex2].items, 20);
   // Guarantee no duplicates
-  if (second.stop.id === first.stop.id && categories[catIndex2].items.length > 1) {
+  if (second.stop.id === first.stop.id) {
     const alternatives = categories[catIndex2].items.filter((c) => c.stop.id !== first.stop.id);
-    second = pickFrom(alternatives, 30);
+    if (alternatives.length > 0) {
+      second = pickFrom(alternatives, 30);
+    } else {
+      // Same category, single item: pick from a different category
+      const otherCats = categories.filter((_, i) => i !== catIndex2 && _.items.length > 0);
+      if (otherCats.length > 0) {
+        second = pickFrom(otherCats[0].items, 30);
+      }
+      // If no alternatives exist (shouldn't happen with 22 stops), accept the duplicate
+    }
   }
 
   const payoutFor = (distance: number) => distance < 130 ? 20 : distance <= 260 ? 35 : 50;
