@@ -273,6 +273,11 @@ export class Life {
   private peds: Ped[] = [];
   private graph = roadGraph();
   private group = new THREE.Group();
+  // Seeded RNG (2026-09-30): deterministic ambient life tied to the save
+  // game's general-purpose seed. Replaces Math.random() for all runtime
+  // decisions so tests are reproducible and each save has stable traffic.
+  private rng: () => number;
+  private seed: number;
   // Reused temps (no per-frame allocation).
   private tmpP = new THREE.Vector3();
   private tmpT = new THREE.Vector3();
@@ -289,10 +294,18 @@ export class Life {
     group.rotation.x = -Math.asin(THREE.MathUtils.clamp(t.y, -1, 1));
   }
 
-  constructor(private scene: THREE.Group) {
+  constructor(private scene: THREE.Group, seed = Math.floor(Math.random() * 0x7fffffff)) {
+    this.seed = seed;
+    this.rng = mulberry32(seed);
     scene.add(this.group);
     this.spawnCars();
     this.spawnPeds();
+  }
+
+  /** Re-seed the runtime RNG (e.g. after a save game loads with its seed). */
+  reseed(seed: number): void {
+    this.seed = seed;
+    this.rng = mulberry32(seed);
   }
 
   private makeCurve(e: RoadEdge): THREE.CatmullRomCurve3 {
@@ -300,7 +313,9 @@ export class Life {
   }
 
   private spawnCars(): void {
-    const rnd = mulberry32(20260927);
+    // Spawn stream derives from the save seed: deterministic per save file,
+    // independent of the runtime RNG stream (2026-09-30).
+    const rnd = mulberry32((this.seed ^ 0x9e3779b9) >>> 0);
     const coreEdges = ROAD_EDGES.filter(e => {
       if (e.kind === 'bridge' || e.kind === 'switchback') return false;
       const a = nodeById(e.a), b = nodeById(e.b);
@@ -335,7 +350,9 @@ export class Life {
   }
 
   private spawnPeds(): void {
-    const rnd = mulberry32(20260928);
+    // Spawn stream derives from the save seed: deterministic per save file,
+    // independent of the runtime RNG stream (2026-09-30).
+    const rnd = mulberry32((this.seed ^ 0x85ebca6b) >>> 0);
     const texes = getBubbleTexes();
     const pedEdges = ROAD_EDGES.filter(e => {
       if (e.kind === 'bridge' || e.kind === 'switchback') return false;
@@ -446,7 +463,7 @@ export class Life {
       !(e.a === current.a && e.b === current.b)
     );
     const next = options.length > 0
-      ? options[Math.floor(Math.random() * options.length)]
+      ? options[Math.floor(this.rng() * options.length)]
       : current; // dead-end: U-turn
     if (next.a === nodeId) return { edge: next, dir: 1, t: 0 };
     return { edge: next, dir: -1, t: 1 }; // next is always incident to nodeId
@@ -459,7 +476,7 @@ export class Life {
     const dests = destinations();
     const allowBridge = 'variant' in e; // cars can use the bridge, peds cannot
     for (let tries = 0; tries < 8; tries++) {
-      const d = dests[(Math.random() * dests.length) | 0];
+      const d = dests[(this.rng() * dests.length) | 0];
       if (d.nodeId === fromNode) continue;
       const route = shortestPath(fromNode, d.nodeId, allowBridge);
       if (route && route.length > 0) {
@@ -499,7 +516,7 @@ export class Life {
       e.route = []; e.destNode = null; // stale route — drop it, don't teleport
     }
     if (e.destNode !== null && nodeId === e.destNode) {
-      e.dwellT = 2 + Math.random() * 3; // pause at the destination building
+      e.dwellT = 2 + this.rng() * 3; // pause at the destination building
       e.dwellNode = nodeId;
       // Clamp t to the node exactly — the car may have overshot slightly
       // (t=-0.003) before arriveNode was called. Without this, the dwell
@@ -764,7 +781,7 @@ export class Life {
       const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
       this.arriveNode(ped, nodeId);
       // Occasionally switch sides at intersections (reads as using a crosswalk).
-      if (Math.random() < 0.15) ped.side *= -1;
+      if (this.rng() < 0.15) ped.side *= -1;
     }
     const t = THREE.MathUtils.clamp(ped.t, 0, 1);
     ped.curve.getPointAt(t, this.tmpP);

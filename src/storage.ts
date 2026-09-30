@@ -74,7 +74,10 @@ export function decodeSave(raw: string): GameState | null {
   // A drop-freeze hover pin must never survive a reload: it held the drone
   // still during the 0.9 s landing animation, and a save taken with it set
   // would otherwise restore a drone pinned at speed 0 with no way to move.
-  const state = { mode, player, profile, run, paused: value.paused, pauseReason: value.pauseReason as string, message: value.message as string, tutorialStage: value.tutorialStage as number, homePosition: { x: value.homePosition.x as number, z: value.homePosition.z as number }, homeFacing: homeFacing as number, homePanel, summary, revision: value.revision as number } as GameState;
+  const state = { mode, player, profile, run, paused: value.paused, pauseReason: value.pauseReason as string, message: value.message as string, tutorialStage: value.tutorialStage as number, homePosition: { x: value.homePosition.x as number, z: value.homePosition.z as number }, homeFacing: homeFacing as number, homePanel, summary, revision: value.revision as number,
+    // General-purpose save seed (2026-09-30). Old saves predate it: mint one
+    // on load so every save file has a deterministic RNG stream.
+    seed: integer(value.seed, 0, 0x7fffffff) ? value.seed as number : Math.floor(Math.random() * 0x7fffffff) } as GameState;
   // A wall-clock gap must never advance a shift.  Resume interactive work explicitly.
   // A mid-drop save never resumes mid-animation: the drop was committed before
   // the save, so it simply restarts unfired on load.

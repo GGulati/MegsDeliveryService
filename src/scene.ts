@@ -101,6 +101,11 @@ export class GameRenderer {
     this.lastWidth = -1;
   }
 
+  /** Re-seed ambient life from the save game's general-purpose seed (2026-09-30). */
+  setSeed(seed: number): void {
+    this.life.reseed(seed);
+  }
+
   render(state: GameState, dt: number, settings: RenderSettings): void {
     if (this.disposed) return;
     const step = state.paused ? 0 : Math.min(.05, Math.max(0, dt)); this.clock += step;

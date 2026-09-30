@@ -28,7 +28,7 @@ import { deckHeightAt, roadWidth, roadGroundHeight } from '../src/road-deck.js';
 describe('ambient life', () => {
   it('spawns exactly 16 cars and 44 pedestrians', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     // Access via scene children: each car is a Group, each ped is a Group + Sprite.
     // We verify counts through the Life instance's group children.
     const cars = (life as unknown as { cars: unknown[] }).cars;
@@ -42,7 +42,7 @@ describe('ambient life', () => {
 
   it('car lineup has exactly one beetle and one sportscar', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const cars = (life as unknown as { cars: { variant: string }[] }).cars;
     const beetles = cars.filter(c => c.variant === 'beetle');
     const sports = cars.filter(c => c.variant === 'sports');
@@ -53,7 +53,7 @@ describe('ambient life', () => {
 
   it('cars stay on the road graph after simulated driving', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // Simulate 10 seconds of driving (600 frames at 60fps).
     for (let i = 0; i < 600; i++) {
@@ -72,7 +72,7 @@ describe('ambient life', () => {
 
   it('pedestrians stay out of buildings and water after wandering', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // Simulate 10 seconds of wandering.
     for (let i = 0; i < 600; i++) {
@@ -96,7 +96,7 @@ describe('ambient life', () => {
 
   it('greeting triggers when player flies by slowly nearby', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number; greetCd: number;
     }[] }).peds;
@@ -111,7 +111,7 @@ describe('ambient life', () => {
 
   it('greeting does not trigger when player is too fast', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number;
     }[] }).peds;
@@ -124,7 +124,7 @@ describe('ambient life', () => {
 
   it('startle triggers when player buzzes fast and close', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number; startleCd: number; hopT: number;
     }[] }).peds;
@@ -139,7 +139,7 @@ describe('ambient life', () => {
 
   it('cars ride at the road deck height (not buried, not floating)', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // Simulate 5 seconds.
     for (let i = 0; i < 300; i++) {
@@ -161,7 +161,7 @@ describe('ambient life', () => {
 
   it('sidewalk peds stand on the deck, not under it', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     for (let i = 0; i < 300; i++) {
       life.update(1 / 60, playerPos, 0, 0, i / 60);
@@ -206,7 +206,7 @@ describe('ambient life', () => {
 
   it('cooldowns prevent bubble spam', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number;
     }[] }).peds;
@@ -226,7 +226,7 @@ describe('ambient life', () => {
 describe('trip-based traffic (user feedback 2026-09-27)', () => {
   it('cars follow their route edge-by-edge with no random turns', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const anyLife = life as unknown as {
       cars: { edge: RoadEdge; dir: 1 | -1; destNode: string | null; route: RoadEdge[]; dwellT: number }[];
       assignTrip(e: unknown, from: string): void;
@@ -261,7 +261,7 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
 
   it('sidewalk peds follow trips and chain them like cars', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const anyLife = life as unknown as {
       peds: { edge: RoadEdge; dir: 1 | -1; inPark: boolean; destNode: string | null; route: RoadEdge[]; dwellT: number }[];
       assignTrip(e: unknown, from: string): void;
@@ -289,7 +289,7 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
 
   it('cars and peds never teleport between frames', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     const cars = (life as unknown as { cars: { group: THREE.Group; speed: number }[] }).cars;
     const peds = (life as unknown as { peds: { group: THREE.Group; speed: number }[] }).peds;
@@ -318,7 +318,7 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
 
   it('simulated traffic acquires trips and reaches destinations', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // 60 seconds of traffic.
     for (let i = 0; i < 3600; i++) {
