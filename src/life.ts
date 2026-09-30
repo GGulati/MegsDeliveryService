@@ -807,14 +807,19 @@ export class Life {
     ped.sideOff += THREE.MathUtils.clamp(dOff, -3 * dt, 3 * dt);
     // Ease the 2D offset vector too: when the road turns at a node, the
     // tangent normal snaps, so glide the vector at a bounded rate instead of
-    // popping laterally (user feedback 2026-09-27). 8 m/s (up from 4):
-    // a 90° corner swings the 4m offset ~5.7m, which now completes in ~0.7s
-    // instead of ~1.4s — a quick step around the corner, not a long diagonal
-    // slide across the intersection (user feedback 2026-09-30).
+    // popping laterally (user feedback 2026-09-27).
     const wantX = (-this.tmpT.z) * ped.sideOff;
     const wantZ = (this.tmpT.x) * ped.sideOff;
-    ped.offX += THREE.MathUtils.clamp(wantX - ped.offX, -8 * dt, 8 * dt);
-    ped.offZ += THREE.MathUtils.clamp(wantZ - ped.offZ, -8 * dt, 8 * dt);
+    // During a sharp corner turn, glide at walking speed so the ped doesn't
+    // visibly speed up (user feedback 2026-09-30: same speed along the turn
+    // route). Detect the turn by the angle between current and target offset.
+    const curAng = Math.atan2(ped.offZ, ped.offX);
+    const wantAng = Math.atan2(wantZ, wantX);
+    let angDiff = Math.abs(wantAng - curAng);
+    if (angDiff > Math.PI) angDiff = 2 * Math.PI - angDiff;
+    const glideRate = angDiff > 0.5 ? ped.speed : 8; // 0.5 rad ≈ 29°
+    ped.offX += THREE.MathUtils.clamp(wantX - ped.offX, -glideRate * dt, glideRate * dt);
+    ped.offZ += THREE.MathUtils.clamp(wantZ - ped.offZ, -glideRate * dt, glideRate * dt);
     const px = this.tmpP.x + ped.offX;
     const pz = this.tmpP.z + ped.offZ;
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
