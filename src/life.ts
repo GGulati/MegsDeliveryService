@@ -69,6 +69,7 @@ interface Car {
   edgeLen: number;
   offX: number; // smoothed lateral offset (right-hand lane, no snap on turns)
   offZ: number;
+  turnSlowT: number; // seconds remaining of turn slowdown (0 = full speed)
   // Trip state: destination building's road node, remaining route edges, and
   // park-at-destination timer. destNode null = wandering (no route found yet).
   destNode: string | null;
@@ -343,7 +344,7 @@ export class Life {
       this.cars.push({
         edge, t: rnd(), dir: rnd() < 0.5 ? 1 : -1,
         speed, baseSpeed: speed, variant, group, curve, edgeLen: curve.getLength(),
-        offX: 0, offZ: 0,
+        offX: 0, offZ: 0, turnSlowT: 0,
         destNode: null, route: [], dwellT: 0, dwellNode: null,
       });
     }
@@ -497,6 +498,8 @@ export class Life {
     else { e.dir = -1; e.t = 1; }
     e.curve = this.makeCurve(edge);
     e.edgeLen = e.curve.getLength();
+    // Reset turn slowdown when the edge changes (cars).
+    if ((e as Car).turnSlowT !== undefined) (e as Car).turnSlowT = 0;
   }
 
   /**
@@ -662,6 +665,12 @@ export class Life {
     // Intersection yielding: don't enter an intersection occupied by another car.
     // (User feedback 2026-09-27: cars passing through each other at intersections.)
     car.speed = Math.min(car.speed, this.carIntersectionSpeed(car));
+    // Turn slowdown: reduce speed for 1.5s after a sharp turn (user feedback
+    // 2026-09-30: cars should slow down for turns, not maintain full speed).
+    if (car.turnSlowT > 0) {
+      car.turnSlowT -= dt;
+      car.speed = Math.min(car.speed, car.baseSpeed * 0.5);
+    }
     const prevT = car.t;
     car.t += (car.dir * car.speed * dt) / car.edgeLen;
     // Arrival fires only when t CROSSES the node boundary this frame — not
@@ -675,7 +684,19 @@ export class Life {
       // t>=1 vs t<=0 and sent dir=-1 arrivals to the wrong end — teleporting
       // cars to the opposite node. User feedback 2026-09-27.)
       const nodeId = car.dir === 1 ? car.edge.b : car.edge.a;
+      // Capture travel direction for turn slowdown (user feedback 2026-09-30:
+      // cars should slow down for turns, not maintain full speed).
+      const tB = THREE.MathUtils.clamp(car.t, 0, 1);
+      car.curve.getTangentAt(tB, this.tmpT);
+      if (car.dir === -1) this.tmpT.negate();
+      const beforeX = this.tmpT.x, beforeZ = this.tmpT.z;
       this.arriveNode(car, nodeId);
+      const tA = THREE.MathUtils.clamp(car.t, 0, 1);
+      car.curve.getTangentAt(tA, this.tmpT);
+      if (car.dir === -1) this.tmpT.negate();
+      const dot = beforeX * this.tmpT.x + beforeZ * this.tmpT.z;
+      // Sharp turn (>35°): slow down for 1.5 seconds.
+      if (dot < 0.819) car.turnSlowT = 1.5;
       // Switchbacks are slower (M5 fix: apply on transition, not just spawn).
       car.baseSpeed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
       car.speed = car.baseSpeed;
@@ -802,9 +823,13 @@ export class Life {
     if (ped.dir === -1) this.tmpT.negate();
     // Sidewalk offset glides smoothly when the side flips at intersections —
     // no teleporting across the road (user feedback 2026-09-27).
+    // During the crosswalk, glide at walking speed (not 3 m/s) for consistent
+    // visual speed (user feedback 2026-09-30). Use baseSpeed (not speed)
+    // so the switch completes even when stopped for a ped ahead.
     const targetOff = ped.side * 4;
     const dOff = targetOff - ped.sideOff;
-    ped.sideOff += THREE.MathUtils.clamp(dOff, -3 * dt, 3 * dt);
+    const offRate = Math.abs(dOff) > 0.1 ? ped.baseSpeed : 3;
+    ped.sideOff += THREE.MathUtils.clamp(dOff, -offRate * dt, offRate * dt);
     // Ease the 2D offset vector too: when the road turns at a node, the
     // tangent normal snaps, so glide the vector at a bounded rate instead of
     // popping laterally (user feedback 2026-09-27).
