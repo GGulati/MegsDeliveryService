@@ -244,7 +244,8 @@ function completeDrop(state: GameState, stopId: string): void {
   state.profile.deliveries++;
   run.job = null;
   run.lastStop = stop.id;
-  run.offers = makeOffers(run.seed, run.deliveries, stop.id);
+  run.recentStops = [...run.recentStops, stop.id].slice(-3);
+  run.offers = makeOffers(run.seed, run.deliveries, stop.id, run.recentStops);
   run.returning = false;
   state.mode = 'offers';
   state.message = 'Delivered! Choose the next parcel or return home.';
@@ -262,8 +263,8 @@ export function startRun(state: GameState, seed = Date.now()): void {
   state.run = {
     seed: safeSeed, elapsed: 0, earnings: 0, deliveries: 0,
     job: null,
-    offers: makeOffers(safeSeed, 0, 'home'),
-    returning: false, lastStop: 'home',
+    offers: makeOffers(safeSeed, 0, 'home', []),
+    returning: false, lastStop: 'home', recentStops: [],
   };
   state.summary = null;
   state.homePanel = 'none';
@@ -351,25 +352,82 @@ function hash(seed: number): number {
   return (value ^ (value >>> 16)) >>> 0;
 }
 
-function makeOffers(seed: number, delivery: number, from: string): import('./types').Job[] {
-  let value = hash(seed ^ hash(delivery) ^ hash(from.length));
+function hashString(str: string): number {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 0x5bd1e995);
+    h ^= h >>> 13;
+  }
+  return h >>> 0;
+}
+
+export function makeOffers(seed: number, delivery: number, from: string, recentStops: string[]): import('./types').Job[] {
+  let value = hash(seed ^ hash(delivery) ^ hashString(from));
   const origin = STOPS.find((item) => item.id === from)!;
-  const candidates = STOPS.filter((stop) => stop.id !== 'home' && stop.id !== from)
-    .map((stop) => ({ stop, distance: Math.hypot(stop.position.x - origin.position.x, stop.position.z - origin.position.z) }))
-    .sort((a, b) => a.distance - b.distance);
-  // One nearby and one distant choice makes the short/long decision legible, not cosmetic.
-  // Phase 1: the three-tier town spreads six stops across 0/10/20m tiers, so the
-  // bands cover three nearest / three farthest — with 2/2 banding, mid-distance
-  // stops (e.g. harbor-cafe from home) would be structurally unofferable.
+  const excluded = new Set(['home', from, ...recentStops]);
+  const candidates = STOPS.filter((stop) => !excluded.has(stop.id))
+    .map((stop) => ({ stop, distance: Math.hypot(stop.position.x - origin.position.x, stop.position.z - origin.position.z) }));
+
+  // Categorize by distance: short <130m, medium 130-260m, long >260m
+  const short = candidates.filter((c) => c.distance < 130);
+  const medium = candidates.filter((c) => c.distance >= 130 && c.distance <= 260);
+  const long = candidates.filter((c) => c.distance > 260);
+  const categories = [
+    { name: 'Short hop', items: short },
+    { name: 'Medium run', items: medium },
+    { name: 'Long haul', items: long },
+  ].filter((cat) => cat.items.length > 0);
+
+  // Pick 2 random categories (seeded)
   value = hash(value + 1);
-  const short = candidates[value % Math.min(3, candidates.length)];
-  const distant = candidates.slice(-Math.min(3, candidates.length));
-  value = hash(value + 2);
-  const long = distant[value % distant.length];
-  return [short, long].sort((a, b) => a.distance - b.distance).map(({ stop, distance }, index) => {
-    const payout = distance < 100 ? 20 : distance < 180 ? 35 : 50;
-    return { from, to: stop.id, payout, label: index === 0 ? 'Short hop' : 'Long haul', parcel: 'Delivery parcel' };
-  });
+  const catIndex1 = value % categories.length;
+  let catIndex2 = catIndex1;
+  if (categories.length > 1) {
+    let attempts = 0;
+    while (catIndex2 === catIndex1) {
+      attempts++;
+      value = hash(value + 2 + attempts);
+      catIndex2 = value % categories.length;
+    }
+  }
+
+  // Pick one stop from each category
+  const pickFrom = (items: typeof candidates, salt: number): typeof candidates[0] => {
+    value = hash(value + salt);
+    return items[value % items.length];
+  };
+
+  const first = pickFrom(categories[catIndex1].items, 10);
+  // Edge case: if only one candidate exists total, return a single offer
+  if (candidates.length === 1) {
+    const payoutFor = (distance: number) => distance < 130 ? 20 : distance <= 260 ? 35 : 50;
+    const category = first.distance < 130 ? 'Short hop' : first.distance <= 260 ? 'Medium run' : 'Long haul';
+    return [{ from, to: first.stop.id, payout: payoutFor(first.distance), label: category, parcel: 'Delivery parcel' }];
+  }
+  let second = pickFrom(categories[catIndex2].items, 20);
+  // Guarantee no duplicates
+  if (second.stop.id === first.stop.id) {
+    const alternatives = categories[catIndex2].items.filter((c) => c.stop.id !== first.stop.id);
+    if (alternatives.length > 0) {
+      second = pickFrom(alternatives, 30);
+    } else {
+      // Same category, single item: pick from a different category
+      const otherCats = categories.filter((_, i) => i !== catIndex2 && _.items.length > 0);
+      if (otherCats.length > 0) {
+        second = pickFrom(otherCats[0].items, 30);
+      }
+      // If no alternatives exist (shouldn't happen with 22 stops), accept the duplicate
+    }
+  }
+
+  const payoutFor = (distance: number) => distance < 130 ? 20 : distance <= 260 ? 35 : 50;
+
+  return [first, second]
+    .sort((a, b) => a.distance - b.distance)
+    .map(({ stop, distance }) => {
+      const category = distance < 130 ? 'Short hop' : distance <= 260 ? 'Medium run' : 'Long haul';
+      return { from, to: stop.id, payout: payoutFor(distance), label: category, parcel: 'Delivery parcel' };
+    });
 }
 
 function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefined {

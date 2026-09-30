@@ -66,12 +66,35 @@ export const MANSION_GROUNDS: [number, number, number, number][] = [
 // the lighthouse on its headland, and Meg's cottage site on the north-west rise.
 export const STOPS: Stop[] = [
   { id: 'home', name: 'Bakery Attic', subtitle: 'Home — borrowed attic', position: { x: -25, y: 30, z: -48 }, color: '#f9cf68' },
-  { id: 'harbor-cafe', name: 'Harbor Cafe', subtitle: 'Tutorial delivery', position: { x: -80, y: 18.12, z: 150 }, color: '#63c7dc' },
-  { id: 'market', name: 'Sunset Market', subtitle: 'Fresh parcels', position: { x: -88, y: 33, z: -88 }, color: '#e88869' },
-  { id: 'lighthouse', name: 'The Lighthouse', subtitle: 'Beacon House', position: { x: 130, y: 15, z: 140 }, color: '#f4e5b8' },
-  { id: 'marina', name: 'Marina Works', subtitle: 'Dockside roof', position: { x: 102, y: 20, z: 125 }, color: '#79b9a0' },
-  { id: 'observatory', name: 'Hill Observatory', subtitle: 'East hill pad', position: { x: 130, y: 53, z: -55 }, color: '#ad91d1' },
-  { id: 'cliffside', name: 'Cliffside Books', subtitle: 'West avenue', position: { x: -115, y: 46, z: -177.5 }, color: '#db92a7' },
+  // Old Town (clock tower district)
+  { id: 'clocktower', name: 'Clocktower Spire', subtitle: 'Old town landmark', position: { x: -50, y: 40, z: -48 }, color: '#f4e5b8' },
+  { id: 'cobblers', name: "Cobbler's Corner", subtitle: 'Old town shop', position: { x: -88, y: 33, z: -88 }, color: '#e88869' },
+  { id: 'tinkers', name: "Tinker's Attic", subtitle: 'Old town rooftop', position: { x: -40, y: 27, z: -88 }, color: '#63c7dc' },
+  { id: 'bellfounders', name: "Bellfounder's Yard", subtitle: 'Old town workshop', position: { x: 0, y: 27, z: -88 }, color: '#ad91d1' },
+  { id: 'market', name: 'Sunset Market', subtitle: 'Old town market', position: { x: 40, y: 28, z: -88 }, color: '#e88869' },
+  // Merchant Row
+  { id: 'harbor-cafe', name: 'Harbor Cafe', subtitle: 'Merchant row cafe', position: { x: 5, y: 23, z: -48 }, color: '#63c7dc' },
+  { id: 'chandlery', name: 'Chandlery Loft', subtitle: 'Merchant row shop', position: { x: 30, y: 23, z: -48 }, color: '#79b9a0' },
+  // Harbor
+  { id: 'dockmaster', name: "Dockmaster's Office", subtitle: 'Harbor docks', position: { x: -80, y: 18, z: 150 }, color: '#e88869' },
+  { id: 'tavern', name: 'Net & Anchor Tavern', subtitle: 'Harbor waterfront', position: { x: 102, y: 20, z: 125 }, color: '#db92a7' },
+  { id: 'ferry', name: 'Ferry Landing', subtitle: 'Harbor pier', position: { x: -55, y: 12, z: 98 }, color: '#63c7dc' },
+  { id: 'marina', name: 'Marina Works', subtitle: 'Dockside roof', position: { x: 102, y: 12, z: 70 }, color: '#79b9a0' },
+  { id: 'ropemakers', name: "Ropemaker's Wharf", subtitle: 'Harbor wharf', position: { x: 102, y: 14, z: 20 }, color: '#ad91d1' },
+  // Bungalow Lanes
+  { id: 'garden-gate', name: 'Garden Gate Cottage', subtitle: 'Bungalow lanes', position: { x: -115, y: 46, z: -178 }, color: '#79b9a0' },
+  { id: 'willow-lane', name: 'Willow Lane Bungalow', subtitle: 'Bungalow lanes', position: { x: 50, y: 30, z: -178 }, color: '#f9cf68' },
+  { id: 'cliffside', name: 'Cliffside Books', subtitle: 'Bungalow lanes', position: { x: 68, y: 29, z: -178 }, color: '#db92a7' },
+  { id: 'hearthside', name: 'Hearthside Cottage', subtitle: 'Bungalow lanes', position: { x: -115, y: 29, z: -150 }, color: '#e88869' },
+  // Mansion Hill
+  { id: 'hilltop-manor', name: 'Hilltop Manor', subtitle: 'Mansion hill', position: { x: -70, y: 36, z: -178 }, color: '#f4e5b8' },
+  { id: 'rosewood', name: 'Rosewood Villa', subtitle: 'Mansion hill', position: { x: -50, y: 36, z: -178 }, color: '#db92a7' },
+  // Observatory Rise
+  { id: 'observatory', name: 'Hill Observatory', subtitle: 'Observatory rise', position: { x: 130, y: 53, z: -55 }, color: '#ad91d1' },
+  { id: 'starwatch', name: 'Starwatch Dome', subtitle: 'Observatory rise', position: { x: 140, y: 35, z: -90 }, color: '#63c7dc' },
+  { id: 'beacon', name: 'Beacon House', subtitle: 'Observatory rise', position: { x: 122, y: 59, z: -63 }, color: '#f4e5b8' },
+  // Lighthouse Headland
+  { id: 'lighthouse', name: "Lighthouse Keeper's Cottage", subtitle: 'Headland', position: { x: 130, y: 15, z: 140 }, color: '#f9cf68' },
 ];
 
 // These are the destination buildings only. Rendering may decorate the rest of the island

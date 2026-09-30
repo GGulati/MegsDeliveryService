@@ -44,7 +44,7 @@ test('swept collision cannot tunnel through a destination wall', () => {
 
 test('tutorial completes by interacting on the first destination', () => {
   const state = createState(); startTutorial(state); step(state, { turn: 0, climb: 0, throttle: 0 }, .1); toggleHover(state);
-  state.player.position = { ...STOPS[1].position }; state.player.speed = 0;
+  state.player.position = { ...STOPS.find((s) => s.id === 'harbor-cafe')!.position }; state.player.speed = 0;
   assert.equal(nearestStop(state)?.id, 'harbor-cafe'); interact(state);
   assert.ok(state.descent, 'practice descent starts, not applied instantly');
   for (let i = 0; i < 3600 && (state.descent || state.drop); i++) step(state, { turn: 0, climb: 0, throttle: 0 }, 1 / 60);

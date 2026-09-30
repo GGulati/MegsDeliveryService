@@ -40,7 +40,8 @@ function readRun(value: unknown): Run | null | undefined {
   const job = value.job === null ? null : readJob(value.job);
   const offers = value.offers.map(readJob);
   if ((value.job !== null && !job) || offers.some((offer) => !offer) || new Set(offers.map((offer) => offer!.to)).size !== offers.length) return undefined;
-  return { seed: value.seed as number, elapsed: value.elapsed as number, earnings: value.earnings as number, deliveries: value.deliveries as number, job, offers: offers as Job[], returning: value.returning, lastStop: value.lastStop as string };
+  const recentStops = Array.isArray(value.recentStops) ? (value.recentStops as string[]) : [];
+  return { seed: value.seed as number, elapsed: value.elapsed as number, earnings: value.earnings as number, deliveries: value.deliveries as number, job, offers: offers as Job[], returning: value.returning, lastStop: value.lastStop as string, recentStops };
 }
 
 /** Decodes only complete, bounded v1 save records.  It has no browser side effects. */
