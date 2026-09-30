@@ -505,9 +505,19 @@ export class Life {
       return 'dwell';
     }
     const isCar = 'variant' in e;
+    // Assign a trip first, then mount the route's first edge — mounting a
+    // random edge before assigning (the old order) desyncs the route from the
+    // car's actual position, leaving a stale route that later drops and can
+    // teleport the car (2026-09-30: 8.81m jump from stale trip chaining).
+    if (e.destNode === null) this.assignTrip(e, nodeId);
+    if (e.route.length > 0) {
+      const re = e.route.shift()!;
+      this.mountEdge(e, re, nodeId);
+      return 'route';
+    }
+    // No reachable destination: wander a random incident edge.
     const n = this.nextEdge(e.edge, nodeId, isCar);
     this.mountEdge(e, n.edge, nodeId, n.dir, n.t);
-    if (e.destNode === null) this.assignTrip(e, nodeId);
     return 'wander';
   }
 
@@ -774,7 +784,12 @@ export class Life {
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
     // under it — the deck can ride meters above the terrain on fills.
     // Inside intersections they stand on the intersection mesh surface.
-    ped.pos.set(px, roadGroundHeight(ped.edge, t, px, pz), pz);
+    // Glide Y: the 4m sidewalk offset can shift (x,z) across a sloped
+    // intersection mesh when the tangent turns at a node, causing a vertical
+    // pop. Glide at a bounded rate like offX/offZ (2026-09-30).
+    const targetY = roadGroundHeight(ped.edge, t, px, pz);
+    const dy = targetY - ped.pos.y;
+    ped.pos.set(px, ped.pos.y + THREE.MathUtils.clamp(dy, -4 * dt, 4 * dt), pz);
     ped.group.position.copy(ped.pos);
     this.orientToTangent(ped.group, this.tmpT);
     // Bob.

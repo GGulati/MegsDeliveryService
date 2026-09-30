@@ -673,6 +673,10 @@ export function roadGroundHeight(e: RoadEdge, t: number, x: number, z: number): 
   if (!inside && nearestDist < -HEIGHT_BLEND_RADIUS) return ribbonH;
   // Well inside: max intersection mesh height (preserves existing behavior).
   if (inside && nearestDist > HEIGHT_BLEND_RADIUS) return maxInsideH!;
+  // No intersection zones for this edge at (x,z): pure ribbon. (Without this,
+  // nearestDist stays Infinity, nearestH stays 0, and the blend below returns
+  // 0 instead of ribbonH — teleporting cars vertically at nodes, 2026-09-30.)
+  if (nearestDist === Infinity) return ribbonH;
 
   // Transition zone: smooth blend from ribbon to intersection height.
   // At -RADIUS: pure ribbon. At +RADIUS: pure intersection. Continuous.
