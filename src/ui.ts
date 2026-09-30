@@ -46,7 +46,7 @@ export class UI {
       this.el['sand-top'].setAttribute('height',(18*f).toFixed(1));
       const bh=18*(1-f); this.el['sand-bottom'].setAttribute('height',bh.toFixed(1)); this.el['sand-bottom'].setAttribute('y',(42-bh).toFixed(1)); }
     this.el['hourglass'].classList.toggle('pulse',info.timeRemaining!==undefined&&info.timeRemaining<=60);
-    this.el['hourglass'].classList.toggle('empty',info.timeRemaining===undefined||info.timeRemaining<=0);
+    this.el['hourglass'].classList.toggle('empty',info.timeRemaining!==undefined&&info.timeRemaining<=0);
     this.el['start-btn'].innerHTML=`${state.profile.tutorialDone?'Start a delivery day':'Learn to fly'} <span>→</span>`;
     this.el['target-name'].textContent=info.targetName; this.el['target-distance'].textContent=info.targetDistance>0?`${Math.round(info.targetDistance)} m away`:'Right here'; this.el['target-label'].textContent=state.run?.returning?'Return home':'Next delivery'; this.el['target-arrow'].style.transform=`rotate(${info.targetBearing??0}deg)`;
     this.el['speed-value'].textContent=String(Math.round(info.speed));
