@@ -642,7 +642,6 @@ export class Life {
    * destination building) don't hold traffic. */
   private carPedYieldSpeed(car: Car): number {
     const ZONE = Life.YIELD_ZONE, STOP = Life.YIELD_STOP, SLOW = Life.YIELD_SLOW;
-    const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
     const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
     // Departing: the car is already committed to the intersection — it
     // clears it, stopping only for a ped literally in its forward path.
@@ -650,20 +649,24 @@ export class Life {
     // their lane, not drive to its center and wait there. The old 9m-radius
     // check parked departing cars at the node for peds on the sidewalk.)
     const originDist = (car.dir === 1 ? car.t : 1 - car.t) * car.edgeLen;
-    if (originDist <= ZONE && this.pedInCarPath(car)) return 0;
+    if (originDist <= ZONE && this.pedInCarPath(car, 8)) return 0;
     if (myDist > SLOW) return car.baseSpeed;
-    if (!this.pedInNodeZone(targetNode, ZONE)) return car.baseSpeed;
+    // Approaching: yield only for a ped on the car's route through the
+    // intersection (inside the forward corridor) — not for peds on the
+    // sidewalk, e.g. heading away from a crosswalk the car has passed
+    // (user feedback 2026-10-01). The old 9m-radius check yielded for any
+    // ped near the node, even ones walking away on the sidewalk.
+    if (!this.pedInCarPath(car, myDist + 8)) return car.baseSpeed;
     if (myDist <= STOP) return 0; // hold at the stop line, before the intersection
     // Slow down on approach to the stop line.
     return car.baseSpeed * Math.max(0, (myDist - STOP) / (SLOW - STOP));
   }
 
   /** True when a non-park, non-dwelling ped is inside the car's forward
-   * path corridor (ahead of the front bumper, within lane width, inside
-   * stopping distance). Departing cars use this instead of the node radius:
-   * once committed they clear the intersection, stopping only for a ped
-   * literally in the way. */
-  private pedInCarPath(car: Car): boolean {
+   * path corridor (ahead of the front bumper within `aheadDist`, within
+   * lane width laterally). A ped only affects traffic when it's on the
+   * car's route (user feedback 2026-10-01). */
+  private pedInCarPath(car: Car, aheadDist: number): boolean {
     const tC = THREE.MathUtils.clamp(car.t, 0, 1);
     car.curve.getPointAt(tC, this.tmpP);
     car.curve.getTangentAt(tC, this.tmpT);
@@ -676,7 +679,7 @@ export class Life {
       if (ped.inPark || ped.dwellT > 0) continue;
       const rx = ped.pos.x - px, rz = ped.pos.z - pz;
       const ahead = rx * dx + rz * dz;
-      if (ahead < 0 || ahead > 8) continue; // behind or beyond stopping distance
+      if (ahead < 0 || ahead > aheadDist) continue;
       const lateral = Math.abs(rx * dz - rz * dx);
       if (lateral < 2.0) return true;
     }

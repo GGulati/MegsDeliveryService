@@ -438,6 +438,24 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     ped.pos.set(node.x + 50, 0, node.z + 50);
     assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed);
 
+    // Unit (2026-10-01): a ped on the sidewalk near the node — outside the
+    // car's forward route corridor, e.g. heading away from a crosswalk —
+    // does NOT affect traffic (user feedback: peds only affect traffic
+    // when they're on the car's route).
+    {
+      const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+      const tan = car.curve.getTangentAt(tC, new THREE.Vector3());
+      const pt = car.curve.getPointAt(tC, new THREE.Vector3());
+      const bx = pt.x + car.offX + tan.x * 2.4; // front bumper
+      const bz = pt.z + car.offZ + tan.z * 2.4;
+      const nx = -tan.z, nz = tan.x;
+      // 10m ahead of the bumper (at the node), 5m to the side: on the
+      // sidewalk, outside the 2m route corridor.
+      ped.pos.set(bx + tan.x * 10 + nx * 5, 0, bz + tan.z * 10 + nz * 5);
+      assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
+        'car must not yield for a ped on the sidewalk outside its route');
+    }
+
     // Unit: at the stop line with a ped in the zone → full stop.
     // The stop line (7m) keeps the car BEFORE the intersection: town roads
     // are 8.8m wide and cars 4.8m long, so the front bumper (at 4.6m from
