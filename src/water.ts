@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { WORLD_LIMIT } from './world';
-import { toon } from './materials';
 
 /**
  * Generates a tileable value-noise texture on a canvas.
@@ -150,25 +149,7 @@ export function createWaterMaterial(noiseTex: THREE.Texture): THREE.ShaderMateri
   return mat;
 }
 
-/** `?flatwater` forces the original flat toon disc (A/B comparison, device
- *  compat). Guarded for Node test compat, where `location` is undefined. */
-function useFlatWater(): boolean {
-  if (typeof location === 'undefined' || typeof URLSearchParams === 'undefined') return false;
-  return new URLSearchParams(location.search).has('flatwater');
-}
-
-/** The original flat water disc: a single toon-colored circle at y=-1.4.
- *  Used only via the `?flatwater` query-param fallback. */
-function buildFlatWater(): THREE.Mesh {
-  const mesh = new THREE.Mesh(new THREE.CircleGeometry(WATER_RADIUS, 72), toon(0x6abdc7));
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.y = -1.4;
-  mesh.renderOrder = 1;
-  return mesh;
-}
-
 export function createWater(): THREE.Mesh {
-  if (useFlatWater()) return buildFlatWater();
   const noiseCanvas = makeTileableNoise(256);
   const noiseTex = new THREE.CanvasTexture(noiseCanvas);
   noiseTex.wrapS = noiseTex.wrapT = THREE.RepeatWrapping;
@@ -187,8 +168,7 @@ export function createWater(): THREE.Mesh {
 
 /** Per-frame uniform update for the shader water. Call from the render loop
  *  with the accumulated (non-paused) clock and the current camera position.
- *  Skipped under reducedMotion, which freezes uTime. No-op for the
- *  `?flatwater` fallback mesh, which has no shader uniforms. */
+ *  Skipped under reducedMotion, which freezes uTime. */
 export function updateWater(mesh: THREE.Mesh, time: number, camPos: THREE.Vector3): void {
   const mat = mesh.userData.material as THREE.ShaderMaterial | undefined;
   if (!mat || !mat.uniforms || !mat.uniforms.uTime) return;
