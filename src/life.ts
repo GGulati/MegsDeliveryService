@@ -92,6 +92,7 @@ interface Ped {
   inPark: boolean;
   parkTarget: THREE.Vector3; // for park wanderers
   pos: THREE.Vector3;
+  vel: THREE.Vector3; // world-space velocity (for traffic yield prediction)
   group: THREE.Group;
   armR: THREE.Mesh;
   bubble: THREE.Sprite;
@@ -431,6 +432,7 @@ export class Life {
         speed: pedSpeed, baseSpeed: pedSpeed, inPark,
         parkTarget: new THREE.Vector3(x, 0, z),
         pos: new THREE.Vector3(x, y, z),
+        vel: new THREE.Vector3(), // updated in updatePed
         group, armR, bubble,
         greetCd: 0, startleCd: 0, bubbleT: 0, hopT: 0, waveT: 0,
         stuckT: 0, lastPos: new THREE.Vector3(x, y, z),
@@ -662,10 +664,12 @@ export class Life {
     return car.baseSpeed * Math.max(0, (myDist - STOP) / (SLOW - STOP));
   }
 
-  /** True when a non-park, non-dwelling ped is inside the car's forward
-   * path corridor (ahead of the front bumper within `aheadDist`, within
-   * lane width laterally). A ped only affects traffic when it's on the
-   * car's route (user feedback 2026-10-01). */
+  /** True when a non-park, non-dwelling ped is on the car's route: inside
+   * the forward path corridor (ahead within `aheadDist`, within lane width
+   * laterally), or predicted to enter it before the car arrives (e.g. a
+   * slow crosser — the car slows smoothly instead of braking late).
+   * A ped only affects traffic when it's on the car's route
+   * (user feedback 2026-10-01). */
   private pedInCarPath(car: Car, aheadDist: number): boolean {
     const tC = THREE.MathUtils.clamp(car.t, 0, 1);
     car.curve.getPointAt(tC, this.tmpP);
@@ -675,13 +679,26 @@ export class Life {
     // Front bumper position (car half-length 2.4m).
     const px = this.tmpP.x + car.offX + dx * 2.4;
     const pz = this.tmpP.z + car.offZ + dz * 2.4;
+    const nx = -dz, nz = dx; // left perpendicular
     for (const ped of this.peds) {
       if (ped.inPark || ped.dwellT > 0) continue;
       const rx = ped.pos.x - px, rz = ped.pos.z - pz;
       const ahead = rx * dx + rz * dz;
       if (ahead < 0 || ahead > aheadDist) continue;
-      const lateral = Math.abs(rx * dz - rz * dx);
-      if (lateral < 2.0) return true;
+      const lat = rx * nx + rz * nz; // signed lateral
+      const absLat = Math.abs(lat);
+      if (absLat < 2.0) return true; // in the lane corridor
+      // Proactive: will a ped just outside the corridor (on the sidewalk
+      // shoulder) enter it before the car arrives? Predict the ped's
+      // lateral position at the car's arrival time.
+      if (absLat < 4.5) {
+        const toward = -(ped.vel.x * nx + ped.vel.z * nz) * Math.sign(lat);
+        if (toward > 0.1) {
+          const tArrive = ahead / Math.max(car.speed, 0.5);
+          const latFuture = absLat - toward * tArrive;
+          if (latFuture < 2.2) return true; // 2.0 corridor + 0.2 margin
+        }
+      }
     }
     return false;
   }
@@ -1038,6 +1055,12 @@ export class Life {
       }
     } else {
       ped.stuckT = 0;
+    }
+    // Velocity for traffic yield prediction (cars read it one frame stale).
+    // Computed before lastPos is overwritten, guarded against teleports.
+    if (dt > 0) {
+      ped.vel.copy(ped.pos).sub(ped.lastPos).divideScalar(dt);
+      if (ped.vel.lengthSq() > 9) ped.vel.set(0, 0, 0); // >3 m/s: reposition, not walking
     }
     ped.lastPos.copy(ped.pos);
   }

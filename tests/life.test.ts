@@ -415,7 +415,7 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
       cars: { edge: RoadEdge; t: number; dir: 1 | -1; edgeLen: number;
         speed: number; baseSpeed: number; turnSlowT: number; dwellT: number;
         curve: THREE.CatmullRomCurve3; offX: number; offZ: number }[];
-      peds: { pos: THREE.Vector3; inPark: boolean; dwellT: number }[];
+      peds: { pos: THREE.Vector3; vel: THREE.Vector3; inPark: boolean; dwellT: number }[];
       carPedYieldSpeed(car: unknown): number;
       update(dt: number, playerPos: THREE.Vector3, playerSpeed: number, playerVelY: number, time: number): void;
     });
@@ -454,6 +454,32 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
       ped.pos.set(bx + tan.x * 10 + nx * 5, 0, bz + tan.z * 10 + nz * 5);
       assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
         'car must not yield for a ped on the sidewalk outside its route');
+    }
+
+    // Unit (2026-10-01, proactive): a ped just outside the corridor but
+    // moving toward the lane (slow crosser) triggers a yield — the car
+    // slows smoothly instead of braking late. A ped moving away does not.
+    {
+      const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+      const tan = car.curve.getTangentAt(tC, new THREE.Vector3());
+      const pt = car.curve.getPointAt(tC, new THREE.Vector3());
+      const bx = pt.x + car.offX + tan.x * 2.4; // front bumper
+      const bz = pt.z + car.offZ + tan.z * 2.4;
+      const nx = -tan.z, nz = tan.x;
+      car.speed = 10;
+      // 10m ahead, 3m to the side: outside the 2m corridor, inside 4.5m.
+      ped.pos.set(bx + tan.x * 10 + nx * 3, 0, bz + tan.z * 10 + nz * 3);
+      // Moving toward the lane at 1 m/s: enters (3-1*1=2 < 2.2) before the
+      // car arrives (10m at 10 m/s = 1s) → yield.
+      ped.vel.set(-nx * 1.0, 0, -nz * 1.0);
+      const proactive = exposed.carPedYieldSpeed(car);
+      assert.ok(proactive < car.baseSpeed,
+        `expected proactive yield for a ped entering the route, got ${proactive.toFixed(2)}`);
+      // Same ped moving away from the lane → no yield.
+      ped.vel.set(nx * 1.0, 0, nz * 1.0);
+      assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
+        'car must not yield for a ped moving away from its route');
+      ped.vel.set(0, 0, 0);
     }
 
     // Unit: at the stop line with a ped in the zone → full stop.
