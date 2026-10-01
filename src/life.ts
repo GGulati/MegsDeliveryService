@@ -63,6 +63,7 @@ interface Car {
   dir: 1 | -1;
   speed: number;
   baseSpeed: number; // cruising speed (collision avoidance modulates `speed`)
+  cruiseSpeed: number; // spawn cruising speed; baseSpeed = cruiseSpeed × switchback factor
   variant: CarVariant;
   group: THREE.Group;
   curve: THREE.CatmullRomCurve3;
@@ -84,7 +85,6 @@ interface Ped {
   t: number;
   dir: 1 | -1;
   side: 1 | -1; // which side of the road
-  sideOff: number; // smoothed lateral offset (glides across at intersections)
   offX: number; // smoothed 2D offset vector (no snap when the tangent turns)
   offZ: number;
   speed: number;
@@ -270,6 +270,9 @@ function pedClear(x: number, z: number): boolean {
 }
 
 export class Life {
+  // Intersection yield geometry, shared by car/car and car/ped yielding.
+  private static readonly YIELD_ZONE = 9; // meters: intersection zone radius
+  private static readonly YIELD_STOP = 2.5; // meters: stop line distance from node center
   private cars: Car[] = [];
   private peds: Ped[] = [];
   private graph = roadGraph();
@@ -301,12 +304,6 @@ export class Life {
     scene.add(this.group);
     this.spawnCars();
     this.spawnPeds();
-  }
-
-  /** Re-seed the runtime RNG (e.g. after a save game loads with its seed). */
-  reseed(seed: number): void {
-    this.seed = seed;
-    this.rng = mulberry32(seed);
   }
 
   private makeCurve(e: RoadEdge): THREE.CatmullRomCurve3 {
@@ -343,7 +340,7 @@ export class Life {
       const speed = variant === 'sports' ? 12 : 8 + rnd() * 4;
       this.cars.push({
         edge, t: rnd(), dir: rnd() < 0.5 ? 1 : -1,
-        speed, baseSpeed: speed, variant, group, curve, edgeLen: curve.getLength(),
+        speed, baseSpeed: speed, cruiseSpeed: speed, variant, group, curve, edgeLen: curve.getLength(),
         offX: 0, offZ: 0, turnSlowT: 0,
         destNode: null, route: [], dwellT: 0, dwellNode: null,
       });
@@ -425,7 +422,6 @@ export class Life {
       this.peds.push({
         edge: edge!, t: spawnT, dir: rnd() < 0.5 ? 1 : -1,
         side: spawnSide,
-        sideOff: spawnSide * 4,
         offX: spawnOffX, offZ: spawnOffZ,
         speed: pedSpeed, baseSpeed: pedSpeed, inPark,
         parkTarget: new THREE.Vector3(x, 0, z),
@@ -598,8 +594,8 @@ export class Life {
    * in the intersection, then to the closer car, with a deterministic
    * tiebreaker to avoid deadlock. (User feedback 2026-09-27.) */
   private carIntersectionSpeed(car: Car): number {
-    const ZONE = 9; // meters: intersection zone radius
-    const STOP = 2.5; // meters: stop line distance from node center
+    const ZONE = Life.YIELD_ZONE; // meters: intersection zone radius
+    const STOP = Life.YIELD_STOP; // meters: stop line distance from node center
     const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
     const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
     if (myDist > ZONE) return car.baseSpeed;
@@ -631,6 +627,42 @@ export class Life {
     return car.baseSpeed;
   }
 
+  /** Pedestrian right-of-way: a car approaching a node yields (slows to a
+   * stop at the stop line) if any pedestrian is inside the intersection
+   * zone, and a car still inside its origin node's zone waits for the
+   * crossing to clear before departing. Peds have right of way in
+   * intersections — cars wait for crossing peds rather than driving through
+   * them. (User feedback 2026-09-30.) Dwelling peds (paused at a
+   * destination building) don't hold traffic. */
+  private carPedYieldSpeed(car: Car): number {
+    const ZONE = Life.YIELD_ZONE, STOP = Life.YIELD_STOP;
+    const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
+    const originNode = car.dir === 1 ? car.edge.a : car.edge.b;
+    const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
+    // Departing: still inside the origin intersection zone — wait for any
+    // crossing ped to clear instead of pulling away through them
+    // (2026-10-01: review found departing cars ignored the origin node).
+    const originDist = (car.dir === 1 ? car.t : 1 - car.t) * car.edgeLen;
+    if (originDist <= ZONE && this.pedInNodeZone(originNode, ZONE)) return 0;
+    if (myDist > ZONE) return car.baseSpeed;
+    if (!this.pedInNodeZone(targetNode, ZONE)) return car.baseSpeed;
+    if (myDist <= STOP) return 0; // hold at the stop line
+    // Slow down on approach to the stop line.
+    return car.baseSpeed * Math.max(0, (myDist - STOP) / (ZONE - STOP));
+  }
+
+  /** True when a non-park, non-dwelling ped is inside the node's zone. */
+  private pedInNodeZone(nodeId: string, zone: number): boolean {
+    const n = nodeById(nodeId);
+    const r2 = zone * zone;
+    for (const ped of this.peds) {
+      if (ped.inPark || ped.dwellT > 0) continue;
+      const dx = ped.pos.x - n.x, dz = ped.pos.z - n.z;
+      if (dx * dx + dz * dz <= r2) return true;
+    }
+    return false;
+  }
+
   /** Speed for a sidewalk ped considering the ped ahead on the same edge,
    * direction, and side. Smaller gaps than cars. */
   private pedFollowSpeed(ped: Ped): number {
@@ -654,7 +686,7 @@ export class Life {
       car.dwellT -= dt;
       if (car.dwellT <= 0) {
         this.beginNextLeg(car);
-        car.baseSpeed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+        car.baseSpeed = car.cruiseSpeed * (car.edge.kind === 'switchback' ? 0.6 : 1);
         car.speed = car.baseSpeed;
       }
       return;
@@ -665,19 +697,56 @@ export class Life {
     // Intersection yielding: don't enter an intersection occupied by another car.
     // (User feedback 2026-09-27: cars passing through each other at intersections.)
     car.speed = Math.min(car.speed, this.carIntersectionSpeed(car));
+    // Pedestrian right-of-way: wait if any ped is inside the intersection.
+    // (User feedback 2026-09-30: peds have right of way in intersections.)
+    car.speed = Math.min(car.speed, this.carPedYieldSpeed(car));
     // Turn slowdown: reduce speed for 1.5s after a sharp turn (user feedback
     // 2026-09-30: cars should slow down for turns, not maintain full speed).
     if (car.turnSlowT > 0) {
       car.turnSlowT -= dt;
       car.speed = Math.min(car.speed, car.baseSpeed * 0.5);
     }
+    // Direction-vector movement (user feedback 2026-09-30): the car moves as
+    // a single world-space vector (forward + lane-offset glide), total
+    // magnitude <= car.speed. The old per-component 4 m/s clamp let the
+    // offset glide diagonally at 5.66 m/s on top of forward speed after turns
+    // (up to 1.9x measured) — the same acceleration bug peds had. The glide
+    // direction is not always perpendicular to travel (the lane frame rotates
+    // at nodes and curve endpoints), so the budget split is solved exactly
+    // for |a*T + b*ehat| = speed*dt (2026-09-30).
+    const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+    car.curve.getTangentAt(tC, this.tmpT);
+    if (car.dir === -1) this.tmpT.negate();
+    const wantX = (-this.tmpT.z) * 1.4, wantZ = (this.tmpT.x) * 1.4;
+    const dX = wantX - car.offX, dZ = wantZ - car.offZ;
+    const dist = Math.hypot(dX, dZ);
+    const S = car.speed * dt;
+    const bDes = Math.min(dist, S);
+    let arcStep: number, latStep: number;
+    // Pre-advance unit chase direction: the lateral step is applied along
+    // this exact vector, so the applied displacement is the budgeted one
+    // (2026-10-01: review noted the old post-advance recompute was only an
+    // approximation of the solved budget).
+    let eUX = 0, eUZ = 0;
+    if (bDes > 1e-9) {
+      eUX = dX / dist; eUZ = dZ / dist;
+      const cosT = (dX * this.tmpT.x + dZ * this.tmpT.z) / dist;
+      const sin2 = Math.max(0, 1 - cosT * cosT);
+      latStep = bDes;
+      arcStep = -latStep * cosT + Math.sqrt(Math.max(0, S * S - latStep * latStep * sin2));
+      arcStep = Math.min(Math.max(0, arcStep), S);
+    } else {
+      latStep = 0;
+      arcStep = S;
+    }
     const prevT = car.t;
-    car.t += (car.dir * car.speed * dt) / car.edgeLen;
+    car.t += (car.dir * arcStep) / car.edgeLen;
     // Arrival fires only when t CROSSES the node boundary this frame — not
     // when sitting exactly at 0/1. Collision avoidance can hold speed at 0
     // right after mounting (t=0/1), and the old >=/<= check then re-fired
     // arriveNode every frame at the WRONG node (dir=1, t=0 → edge.b),
     // teleporting cars across the edge (2026-09-27: 19m/35m jumps).
+    let arrived = false;
     if ((car.dir === 1 && prevT < 1 && car.t >= 1) || (car.dir === -1 && prevT > 0 && car.t <= 0)) {
       // The node reached is determined by travel direction alone: dir=1 runs
       // t up to edge.b, dir=-1 runs t down to edge.a. (The old code keyed off
@@ -698,8 +767,11 @@ export class Life {
       // Sharp turn (>35°): slow down for 1.5 seconds.
       if (dot < 0.819) car.turnSlowT = 1.5;
       // Switchbacks are slower (M5 fix: apply on transition, not just spawn).
-      car.baseSpeed = (car.variant === 'sports' ? 12 : 10) * (car.edge.kind === 'switchback' ? 0.6 : 1);
+      // Preserve the car's individual cruise speed — the old reset to a flat
+      // 10/12 sped cars up at their first node (user feedback 2026-09-30).
+      car.baseSpeed = car.cruiseSpeed * (car.edge.kind === 'switchback' ? 0.6 : 1);
       car.speed = car.baseSpeed;
+      arrived = true;
     }
     const t = THREE.MathUtils.clamp(car.t, 0, 1);
     // Node-pinned deck height — continuous across edge transitions, so cars
@@ -707,13 +779,15 @@ export class Life {
     car.curve.getPointAt(t, this.tmpP);
     car.curve.getTangentAt(t, this.tmpT);
     if (car.dir === -1) this.tmpT.negate();
-    // Right-hand lane offset: when the road turns at a node the tangent normal
-    // snaps, so glide the offset vector at a bounded rate instead of popping
-    // laterally (user feedback 2026-09-27).
-    const wantX = (-this.tmpT.z) * 1.4;
-    const wantZ = (this.tmpT.x) * 1.4;
-    car.offX += THREE.MathUtils.clamp(wantX - car.offX, -4 * dt, 4 * dt);
-    car.offZ += THREE.MathUtils.clamp(wantZ - car.offZ, -4 * dt, 4 * dt);
+    // Apply the lateral component along the pre-advance chase direction as
+    // a true vector step (magnitude = latStep <= dist, so the sidewalk
+    // target can't overshoot). Skipped on the arrival frame: the car already
+    // spent its budget reaching the node, and forward + lateral would sum
+    // past car.speed.
+    if (!arrived && latStep > 0) {
+      car.offX += eUX * latStep;
+      car.offZ += eUZ * latStep;
+    }
     const px = this.tmpP.x + car.offX;
     const pz = this.tmpP.z + car.offZ;
     // Ride the intersection mesh surface inside intersections so wheels stay
@@ -792,19 +866,60 @@ export class Life {
     // Collision avoidance: don't walk through the ped ahead on the same
     // sidewalk. (User feedback 2026-09-27: traffic should not collide.)
     ped.speed = this.pedFollowSpeed(ped);
+    // Direction-vector movement (user feedback 2026-09-30): the ped moves
+    // as a single world-space vector (forward + lateral) with total magnitude
+    // <= ped.speed. The lateral chase direction is NOT always perpendicular
+    // to travel — the sidewalk frame rotates at nodes and curve endpoints,
+    // swinging the offset target along the tangent — so the budget split is
+    // solved exactly for |a*T + b*ehat| = speed*dt (2026-09-30).
+    const tC = THREE.MathUtils.clamp(ped.t, 0, 1);
+    ped.curve.getTangentAt(tC, this.tmpT);
+    if (ped.dir === -1) this.tmpT.negate();
+    const nX = -this.tmpT.z, nZ = this.tmpT.x;
+    const tgtX = nX * ped.side * 4, tgtZ = nZ * ped.side * 4;
+    const dX = tgtX - ped.offX, dZ = tgtZ - ped.offZ;
+    const dist = Math.hypot(dX, dZ);
+    const S = ped.speed * dt;
+    // Lateral desire: close the offset gap, up to the whole frame budget.
+    let bDes = Math.min(dist, S);
+    // Pre-advance unit chase direction and curve point: the lateral step is
+    // applied along this exact vector, so the applied displacement is the
+    // budgeted one (2026-10-01).
+    let eUX = 0, eUZ = 0, prePX = 0, prePZ = 0;
+    // Blocked-lateral probe: if the lateral step would land in water/solids,
+    // walk forward instead of freezing mid-edge (2026-09-30).
+    if (bDes > 1e-9) {
+      ped.curve.getPointAt(tC, this.tmpP);
+      const ux = dX / dist, uz = dZ / dist;
+      const probeX = this.tmpP.x + ped.offX + ux * bDes;
+      const probeZ = this.tmpP.z + ped.offZ + uz * bDes;
+      if (pedClear(probeX, probeZ)) {
+        eUX = ux; eUZ = uz; prePX = this.tmpP.x; prePZ = this.tmpP.z;
+      } else {
+        bDes = 0;
+      }
+    }
+    // Exact budget split: given lateral spend b along ehat, the arc step a
+    // solves |a*T + b*ehat| = S → a = -b*cosT + sqrt(S² - b²·sin²T).
+    let arcStep: number, latStep: number;
+    if (bDes > 1e-9) {
+      const cosT = (dX * this.tmpT.x + dZ * this.tmpT.z) / dist;
+      const sin2 = Math.max(0, 1 - cosT * cosT);
+      latStep = bDes;
+      arcStep = -latStep * cosT + Math.sqrt(Math.max(0, S * S - latStep * latStep * sin2));
+      arcStep = Math.min(Math.max(0, arcStep), S);
+    } else {
+      latStep = 0;
+      arcStep = S;
+    }
+    // Advance along the edge.
     const pedPrevT = ped.t;
-    ped.t += (ped.dir * ped.speed * dt) / ped.edgeLen;
-    // Same crossing-only arrival as cars: pedFollowSpeed can hold a ped at
-    // t=0/1, and the old >=/<= check re-fired arriveNode at the wrong node.
+    ped.t += (ped.dir * arcStep) / ped.edgeLen;
+    // Arrival: only when t ACTUALLY crosses the boundary (not "will cross").
+    // The old willArrive check triggered mid-edge, teleporting to the node.
+    let arrived = false;
     if ((ped.dir === 1 && pedPrevT < 1 && ped.t >= 1) || (ped.dir === -1 && pedPrevT > 0 && ped.t <= 0)) {
-      // Same fix as cars: the node reached is determined by travel direction
-      // alone (dir=1 → edge.b, dir=-1 → edge.a).
       const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
-      // Capture travel direction before the node: if the new edge turns
-      // sharply, skip the crosswalk side-switch. Combining a sharp turn with
-      // a side flip swings the offset up to ~9m diagonally across the
-      // intersection (user-reported "warp across crosswalks when turning",
-      // 2026-09-30). Peds either turn the corner OR cross the street, not both.
       const tB = THREE.MathUtils.clamp(ped.t, 0, 1);
       ped.curve.getTangentAt(tB, this.tmpT);
       if (ped.dir === -1) this.tmpT.negate();
@@ -815,36 +930,40 @@ export class Life {
       if (ped.dir === -1) this.tmpT.negate();
       const straightEnough = (beforeX * this.tmpT.x + beforeZ * this.tmpT.z) > 0.819; // cos(35°)
       // Occasionally switch sides at intersections (reads as using a crosswalk).
-      if (straightEnough && this.rng() < 0.15) ped.side *= -1;
+      // Skipped on sharp turns: combining a corner turn with a side flip swung
+      // the offset ~9m diagonally (user-reported "warp across crosswalks when
+      // turning", 2026-09-30) — peds either turn the corner OR cross, not both.
+      // Only flip if the new side's sidewalk position is clear (not in water
+      // or a building) — 2026-09-30.
+      if (straightEnough && this.rng() < 0.15) {
+        ped.curve.getPointAt(tA, this.tmpP);
+        const flipSide = (ped.side * -1) as 1 | -1;
+        const fx = this.tmpP.x + (-this.tmpT.z) * flipSide * 4;
+        const fz = this.tmpP.z + (this.tmpT.x) * flipSide * 4;
+        if (pedClear(fx, fz)) ped.side = flipSide;
+      }
+      arrived = true;
+    }
+    // Apply the lateral component along the pre-advance chase direction —
+    // exactly the vector the budget was solved for (latStep <= dist, so the
+    // target can't overshoot). Guard: never step the offset into
+    // water/solids — the 4m sidewalk target can sit over the bay on
+    // waterfront edges (2026-09-30).
+    // Skipped on the arrival frame: the ped already spent its budget reaching
+    // the node, and forward + lateral would sum past ped.speed (2026-09-30).
+    if (!arrived && latStep > 0) {
+      const candX = prePX + ped.offX + eUX * latStep;
+      const candZ = prePZ + ped.offZ + eUZ * latStep;
+      if (pedClear(candX, candZ)) {
+        ped.offX += eUX * latStep;
+        ped.offZ += eUZ * latStep;
+      }
     }
     const t = THREE.MathUtils.clamp(ped.t, 0, 1);
     ped.curve.getPointAt(t, this.tmpP);
     ped.curve.getTangentAt(t, this.tmpT);
     if (ped.dir === -1) this.tmpT.negate();
-    // Sidewalk offset glides smoothly when the side flips at intersections —
-    // no teleporting across the road (user feedback 2026-09-27).
-    // During the crosswalk, glide at walking speed (not 3 m/s) for consistent
-    // visual speed (user feedback 2026-09-30). Use baseSpeed (not speed)
-    // so the switch completes even when stopped for a ped ahead.
-    const targetOff = ped.side * 4;
-    const dOff = targetOff - ped.sideOff;
-    const offRate = Math.abs(dOff) > 0.1 ? ped.baseSpeed : 3;
-    ped.sideOff += THREE.MathUtils.clamp(dOff, -offRate * dt, offRate * dt);
-    // Ease the 2D offset vector too: when the road turns at a node, the
-    // tangent normal snaps, so glide the vector at a bounded rate instead of
-    // popping laterally (user feedback 2026-09-27).
-    const wantX = (-this.tmpT.z) * ped.sideOff;
-    const wantZ = (this.tmpT.x) * ped.sideOff;
-    // During a sharp corner turn, glide at walking speed so the ped doesn't
-    // visibly speed up (user feedback 2026-09-30: same speed along the turn
-    // route). Detect the turn by the angle between current and target offset.
-    const curAng = Math.atan2(ped.offZ, ped.offX);
-    const wantAng = Math.atan2(wantZ, wantX);
-    let angDiff = Math.abs(wantAng - curAng);
-    if (angDiff > Math.PI) angDiff = 2 * Math.PI - angDiff;
-    const glideRate = angDiff > 0.5 ? ped.speed : 8; // 0.5 rad ≈ 29°
-    ped.offX += THREE.MathUtils.clamp(wantX - ped.offX, -glideRate * dt, glideRate * dt);
-    ped.offZ += THREE.MathUtils.clamp(wantZ - ped.offZ, -glideRate * dt, glideRate * dt);
+    // (Offset already applied via the budgeted direction vector above.)
     const px = this.tmpP.x + ped.offX;
     const pz = this.tmpP.z + ped.offZ;
     // Peds stand ON the widened deck (sidewalk band), not on the terrain
@@ -866,12 +985,18 @@ export class Life {
     // random edge (no teleporting out of a trip). A ped stuck mid-edge with a
     // valid t stays put — its motion is deterministic along the curve, so it
     // will reach the node and follow the route; only a degenerate (NaN or
-    // out-of-range) t is forced to the arrival node.
+    // strictly out-of-range) t is forced to the arrival node.
+    // (2026-09-30: fixed root cause of 10m teleport — the old <=0/>=1 check
+    // fired for peds validly waiting at t=0/1, and the nodeId used dir instead
+    // of t, teleporting a ped at node b to node a's edge.)
     if (ped.pos.distanceToSquared(ped.lastPos) < 0.01) {
       ped.stuckT += dt;
       if (ped.stuckT > 5) {
-        const nodeId = ped.dir === 1 ? ped.edge.b : ped.edge.a;
-        if (!Number.isFinite(ped.t) || ped.t <= 0 || ped.t >= 1) {
+        if (!Number.isFinite(ped.t) || ped.t < 0 || ped.t > 1) {
+          // Nearest node by t, not by dir: t<0 → a, t>1 → b, NaN → use dir.
+          const nodeId = !Number.isFinite(ped.t)
+            ? (ped.dir === 1 ? ped.edge.b : ped.edge.a)
+            : (ped.t < 0.5 ? ped.edge.a : ped.edge.b);
           this.arriveNode(ped, nodeId);
         }
         ped.stuckT = 0;
@@ -887,13 +1012,13 @@ export class Life {
     this.tmpV.y = 0;
     const dist = this.tmpV.length();
     if (dist < 1.0) {
-      this.pickParkTarget(ped, Math.random);
+      this.pickParkTarget(ped, this.rng);
     } else {
       this.tmpV.normalize();
       const nx = ped.pos.x + this.tmpV.x * ped.speed * dt;
       const nz = ped.pos.z + this.tmpV.z * ped.speed * dt;
       if (!pedClear(nx, nz)) {
-        this.pickParkTarget(ped, Math.random);
+        this.pickParkTarget(ped, this.rng);
       } else {
         ped.pos.set(nx, heightAt(nx, nz), nz);
       }

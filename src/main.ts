@@ -110,7 +110,7 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
     input?.clear();accumulator=0;draw(0);
     return;
   }
-  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
+  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);if(result.kind==='ready'&&result.seedMigrated&&store.canSave)store.save(state);bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
 
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);
