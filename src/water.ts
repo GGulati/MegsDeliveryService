@@ -40,10 +40,10 @@ export function makeTileableNoise(size: number): HTMLCanvasElement {
 // a custom shader: depth-gradient color, generous noise-gated foam, whitecaps.
 // ---------------------------------------------------------------------------
 
-/** Water surface Y: 2cm below sea level to avoid z-fighting with terrain
- *  at the shoreline (where terrain height ≈ 0). The 2cm offset is visually
- *  negligible but ensures the water plane is never coplanar with the land. */
-export const WATER_Y = -0.02;
+/** Water surface Y: below MIN_LAND_Y (-0.4) so lots/roads on the waterfront
+ *  pad are never flooded. The bay (carved to -3.5) still has 3m of water.
+ *  The 2cm anti-z-fighting offset is included in this value. */
+export const WATER_Y = -0.5;
 /** Max water depth for normalization: bay carved to -3.5, so ~3.7m max. */
 export const MAX_DEPTH = 4.0;
 /** Water plane size: matches the 440x440 terrain. */
