@@ -40,10 +40,10 @@ export function makeTileableNoise(size: number): HTMLCanvasElement {
 // a custom shader: depth-gradient color, generous noise-gated foam, whitecaps.
 // ---------------------------------------------------------------------------
 
-/** Water surface Y: sea level (terrain.ts SEA_LEVEL). The +0.18 inlay offset
- *  is for the bay mesh only; the main water plane sits at sea level to avoid
- *  flooding the y=0 waterfront pad. */
-export const WATER_Y = 0;
+/** Water surface Y: 2cm below sea level to avoid z-fighting with terrain
+ *  at the shoreline (where terrain height ≈ 0). The 2cm offset is visually
+ *  negligible but ensures the water plane is never coplanar with the land. */
+export const WATER_Y = -0.02;
 /** Max water depth for normalization: bay carved to -3.5, so ~3.7m max. */
 export const MAX_DEPTH = 4.0;
 /** Water plane size: matches the 440x440 terrain. */
@@ -162,7 +162,8 @@ export function createWater(): THREE.Mesh {
   const mat = createWaterMaterial(noiseTex);
   // Plane matching the terrain extent; per-vertex depth baked from heightAt.
   // Depth in meters (not normalized); shader normalizes by MAX_DEPTH.
-  const geo = new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, 100, 100);
+  // 200 segments matches the terrain mesh resolution for a clean shoreline.
+  const geo = new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, 200, 200);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const depths = new Float32Array(pos.count);
