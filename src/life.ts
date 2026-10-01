@@ -271,8 +271,13 @@ function pedClear(x: number, z: number): boolean {
 
 export class Life {
   // Intersection yield geometry, shared by car/car and car/ped yielding.
-  private static readonly YIELD_ZONE = 9; // meters: intersection zone radius
-  private static readonly YIELD_STOP = 2.5; // meters: stop line distance from node center
+  private static readonly YIELD_ZONE = 9; // meters: intersection zone radius (detection)
+  // Stop line: car CENTER stops this far from the node center. Town roads
+  // are 8.8m wide (4.4m half-width) and cars are 4.8m long (2.4m half), so
+  // 7m keeps the front bumper (at 4.6m) just outside the asphalt — the car
+  // waits BEFORE the intersection, not inside it (user feedback 2026-10-01).
+  private static readonly YIELD_STOP = 7;
+  private static readonly YIELD_SLOW = 16; // meters: start slowing this far out
   private cars: Car[] = [];
   private peds: Ped[] = [];
   private graph = roadGraph();
@@ -594,11 +599,12 @@ export class Life {
    * in the intersection, then to the closer car, with a deterministic
    * tiebreaker to avoid deadlock. (User feedback 2026-09-27.) */
   private carIntersectionSpeed(car: Car): number {
-    const ZONE = Life.YIELD_ZONE; // meters: intersection zone radius
-    const STOP = Life.YIELD_STOP; // meters: stop line distance from node center
+    const ZONE = Life.YIELD_ZONE; // meters: intersection zone radius (detection)
+    const STOP = Life.YIELD_STOP; // meters: stop line, before the intersection
+    const SLOW = Life.YIELD_SLOW; // meters: start slowing this far out
     const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
     const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
-    if (myDist > ZONE) return car.baseSpeed;
+    if (myDist > SLOW) return car.baseSpeed;
 
     const myIdx = this.cars.indexOf(car);
     for (const other of this.cars) {
@@ -621,7 +627,7 @@ export class Life {
       if (yieldToOther) {
         if (myDist <= STOP) return 0; // hold at the stop line
         // Slow down on approach to the stop line.
-        return car.baseSpeed * Math.max(0, (myDist - STOP) / (ZONE - STOP));
+        return car.baseSpeed * Math.max(0, (myDist - STOP) / (SLOW - STOP));
       }
     }
     return car.baseSpeed;
@@ -635,7 +641,7 @@ export class Life {
    * them. (User feedback 2026-09-30.) Dwelling peds (paused at a
    * destination building) don't hold traffic. */
   private carPedYieldSpeed(car: Car): number {
-    const ZONE = Life.YIELD_ZONE, STOP = Life.YIELD_STOP;
+    const ZONE = Life.YIELD_ZONE, STOP = Life.YIELD_STOP, SLOW = Life.YIELD_SLOW;
     const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
     const originNode = car.dir === 1 ? car.edge.a : car.edge.b;
     const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
@@ -644,11 +650,11 @@ export class Life {
     // (2026-10-01: review found departing cars ignored the origin node).
     const originDist = (car.dir === 1 ? car.t : 1 - car.t) * car.edgeLen;
     if (originDist <= ZONE && this.pedInNodeZone(originNode, ZONE)) return 0;
-    if (myDist > ZONE) return car.baseSpeed;
+    if (myDist > SLOW) return car.baseSpeed;
     if (!this.pedInNodeZone(targetNode, ZONE)) return car.baseSpeed;
-    if (myDist <= STOP) return 0; // hold at the stop line
+    if (myDist <= STOP) return 0; // hold at the stop line, before the intersection
     // Slow down on approach to the stop line.
-    return car.baseSpeed * Math.max(0, (myDist - STOP) / (ZONE - STOP));
+    return car.baseSpeed * Math.max(0, (myDist - STOP) / (SLOW - STOP));
   }
 
   /** True when a non-park, non-dwelling ped is inside the node's zone. */

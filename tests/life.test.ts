@@ -427,9 +427,9 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     const ped = exposed.peds.find(p => !p.inPark)!;
     ped.dwellT = 0;
 
-    // Unit: 5m out (inside the 9m zone, outside the 2.5m stop line) with a
-    // ped at the node → slowed; ped far away → full speed.
-    car.t = 1 - 5 / car.edgeLen;
+    // Unit: 10m out (inside the 16m slowdown, outside the 7m stop line)
+    // with a ped at the node → slowed; ped far away → full speed.
+    car.t = 1 - 10 / car.edgeLen;
     ped.pos.set(node.x, 0, node.z);
     const slowed = exposed.carPedYieldSpeed(car);
     assert.ok(slowed < car.baseSpeed,
@@ -438,7 +438,11 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed);
 
     // Unit: at the stop line with a ped in the zone → full stop.
-    car.t = 1 - 2 / car.edgeLen;
+    // The stop line (7m) keeps the car BEFORE the intersection: town roads
+    // are 8.8m wide and cars 4.8m long, so the front bumper (at 4.6m from
+    // the node) stays outside the asphalt (user feedback 2026-10-01: cars
+    // were waiting literally inside the intersection).
+    car.t = 1 - 5 / car.edgeLen;
     ped.pos.set(node.x, 0, node.z);
     assert.equal(exposed.carPedYieldSpeed(car), 0);
 
@@ -459,12 +463,13 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     // the subject — the only active constraint is the ped yield, so the
     // post-update speed must equal the unit-computed value exactly
     // (2026-10-01 review: the old `< baseSpeed` assertion could pass
-    // vacuously via car-following).
+    // vacuously via car-following). At 5m the car is at the stop line:
+    // it must hold BEFORE the intersection (user feedback 2026-10-01).
     for (const other of exposed.cars) if (other !== car) other.dwellT = 999;
     car.t = 1 - 5 / car.edgeLen;
     ped.pos.set(node.x, 0, node.z);
     const expected = exposed.carPedYieldSpeed(car);
-    assert.ok(expected < car.baseSpeed, 'test setup: ped must trigger a slowdown');
+    assert.equal(expected, 0, 'test setup: 5m is inside the 7m stop line');
     exposed.update(dt, playerPos, 0, 0, dt);
     assert.ok(Math.abs(car.speed - expected) < 1e-9,
       `update() did not apply the ped yield: speed ${car.speed.toFixed(4)} vs expected ${expected.toFixed(4)}`);
