@@ -51,7 +51,7 @@ export const WATER_SIZE = 440;
 
 export const WATER_VERT = /* glsl */`
 attribute float aDepth;
-varying float vDepth;
+varying float vDepth; // depth in meters
 varying vec3 vWorldPos;
 varying vec2 vNoiseUv1;
 varying vec2 vNoiseUv2;
@@ -70,7 +70,7 @@ void main() {
 
 export const WATER_FRAG = /* glsl */`
 precision highp float;
-varying float vDepth;
+varying float vDepth; // depth in meters
 varying vec3 vWorldPos;
 varying vec2 vNoiseUv1;
 varying vec2 vNoiseUv2;
@@ -83,7 +83,10 @@ uniform sampler2D uNoise;
 uniform vec3 uCamPos;
 
 void main() {
-  float d = vDepth;
+  // Hard discard where terrain is above water (matches pre-PR#36 behavior).
+  // This avoids z-fighting/coplanar alpha-blend artifacts at the shoreline.
+  if (vDepth < 0.02) discard;
+  float d = clamp(vDepth / ${MAX_DEPTH}.0, 0.0, 1.0);
   // Depth gradient: turquoise -> blue -> navy, all smoothstep.
   vec3 col = mix(uShallow, uMid, smoothstep(0.0, 0.45, d));
   col = mix(col, uDeep, smoothstep(0.35, 1.0, d));
@@ -125,9 +128,7 @@ void main() {
   vec3 finalCol = mix(col, foamCol, clamp(foam + cap2, 0.0, 1.0));
   finalCol += vec3(1.0, 0.98, 0.9) * glint;
 
-  // Depth fade at shoreline: erase the hard polygon edge.
-  float alpha = smoothstep(0.0, 0.02, d);
-  gl_FragColor = vec4(finalCol, alpha);
+  gl_FragColor = vec4(finalCol, 1.0);
 }
 `;
 
@@ -144,8 +145,8 @@ export function createWaterMaterial(noiseTex: THREE.Texture): THREE.ShaderMateri
       uNoise: { value: noiseTex },
       uCamPos: { value: new THREE.Vector3() },
     },
-    transparent: true,
-    depthWrite: false,
+    // Opaque with hard discard at shoreline (no alpha blending).
+    // This matches the pre-PR#36 water behavior and avoids z-fighting.
   });
   // Note: fwidth() is core in WebGL2 (three r163+ dropped WebGL1), so no
   // GL_OES_standard_derivatives extension directive is needed.
@@ -160,15 +161,16 @@ export function createWater(): THREE.Mesh {
   noiseTex.minFilter = THREE.LinearMipmapLinearFilter;
   const mat = createWaterMaterial(noiseTex);
   // Plane matching the terrain extent; per-vertex depth baked from heightAt.
+  // Depth in meters (not normalized); shader normalizes by MAX_DEPTH.
   const geo = new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, 100, 100);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const depths = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
-    // Depth = water Y minus terrain height; 0 where terrain is above water.
-    const depth = Math.max(0, WATER_Y - heightAt(x, z));
-    depths[i] = Math.min(1, depth / MAX_DEPTH);
+    // Depth = water Y minus terrain height; negative where terrain is above
+    // water (shader discards depth < 0.02m).
+    depths[i] = WATER_Y - heightAt(x, z);
   }
   geo.setAttribute('aDepth', new THREE.BufferAttribute(depths, 1));
   const mesh = new THREE.Mesh(geo, mat);
