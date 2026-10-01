@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, MANSION_GROUNDS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
-import { buildWater, WaterMesh } from './water';
+import { createWater, updateWater } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
@@ -68,7 +68,7 @@ export class GameRenderer {
   private lastPixelRatio = -1;
   private followYaw = 0;
   private world!: THREE.Group;
-  private water: WaterMesh | null = null;
+  private water: THREE.Mesh | null = null;
   private room = new RoomView();
   private outdoorFog = new THREE.FogExp2(0xb9dce0,.0035);
 
@@ -113,7 +113,7 @@ export class GameRenderer {
   render(state: GameState, dt: number, settings: RenderSettings): void {
     if (this.disposed) return;
     const step = state.paused ? 0 : Math.min(.05, Math.max(0, dt)); this.clock += step;
-    if (this.water && !settings.reducedMotion) this.water.update(this.clock);
+    if (this.water && !settings.reducedMotion) updateWater(this.water, this.clock, this.camera.position);
     const visual = flightVisuals(state, this.clock, settings.reducedMotion);
     this.effects.update(visual.speed, settings.lowQuality);
     const canvas = this.renderer.domElement;
@@ -202,11 +202,11 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    // One water plane for the whole world. The shader discovers depth from the
-    // baked heightfield, so foam and color follow the true coastline — no polygons.
-    const water = buildWater();
+    // One water plane for the whole world. Wind Waker-style shader water:
+    // depth-gradient color + generous noise foam + whitecaps (2026-10-01).
+    const water = createWater();
     this.water = water;
-    g.add(water.mesh);
+    g.add(water);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
     // Surface color is baked into a 1024² texture (0.43m/texel) by
