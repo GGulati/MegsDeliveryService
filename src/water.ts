@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { WORLD_LIMIT } from './world';
+import { heightAt } from './terrain';
 
 /**
  * Generates a tileable value-noise texture on a canvas.
@@ -40,12 +40,16 @@ export function makeTileableNoise(size: number): HTMLCanvasElement {
 // a custom shader: depth-gradient color, generous noise-gated foam, whitecaps.
 // ---------------------------------------------------------------------------
 
-/** Island coastline radius (design spec); depth is computed radially in-shader. */
-export const ISLAND_RADIUS = 190;
-/** Water disc radius: WORLD_LIMIT * 1.18 (175 * 1.18 = 206.5). */
-export const WATER_RADIUS = WORLD_LIMIT * 1.18;
+/** Water surface Y: the bay inlay sits at +0.18 (terrain.ts). */
+export const WATER_Y = 0.18;
+/** Max water depth for normalization: bay carved to -3.5, so ~3.7m max. */
+export const MAX_DEPTH = 4.0;
+/** Water plane size: matches the 440x440 terrain. */
+export const WATER_SIZE = 440;
 
 export const WATER_VERT = /* glsl */`
+attribute float aDepth;
+varying float vDepth;
 varying vec3 vWorldPos;
 varying vec2 vNoiseUv1;
 varying vec2 vNoiseUv2;
@@ -53,6 +57,7 @@ uniform float uTime;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWorldPos = wp.xyz;
+  vDepth = aDepth;
   // Roystan mobile trick: pan noise UVs in the vertex shader (free).
   vec2 baseUv = wp.xz * 0.02;
   vNoiseUv1 = baseUv + vec2(uTime * 0.008, uTime * 0.005);
@@ -63,6 +68,7 @@ void main() {
 
 export const WATER_FRAG = /* glsl */`
 precision highp float;
+varying float vDepth;
 varying vec3 vWorldPos;
 varying vec2 vNoiseUv1;
 varying vec2 vNoiseUv2;
@@ -74,13 +80,8 @@ uniform vec3 uFoamColor; // near-white
 uniform sampler2D uNoise;
 uniform vec3 uCamPos;
 
-float depth01() {
-  float r = length(vWorldPos.xz);
-  return clamp((r - ${ISLAND_RADIUS}.0) / (${WATER_RADIUS} - ${ISLAND_RADIUS}.0), 0.0, 1.0);
-}
-
 void main() {
-  float d = depth01();
+  float d = vDepth;
   // Depth gradient: turquoise -> blue -> navy, all smoothstep.
   vec3 col = mix(uShallow, uMid, smoothstep(0.0, 0.45, d));
   col = mix(col, uDeep, smoothstep(0.35, 1.0, d));
@@ -156,9 +157,20 @@ export function createWater(): THREE.Mesh {
   noiseTex.generateMipmaps = true;
   noiseTex.minFilter = THREE.LinearMipmapLinearFilter;
   const mat = createWaterMaterial(noiseTex);
-  const mesh = new THREE.Mesh(new THREE.CircleGeometry(WATER_RADIUS, 72), mat);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.y = -1.4;
+  // Plane matching the terrain extent; per-vertex depth baked from heightAt.
+  const geo = new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, 100, 100);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  const depths = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    // Depth = water Y minus terrain height; 0 where terrain is above water.
+    const depth = Math.max(0, WATER_Y - heightAt(x, z));
+    depths[i] = Math.min(1, depth / MAX_DEPTH);
+  }
+  geo.setAttribute('aDepth', new THREE.BufferAttribute(depths, 1));
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.y = WATER_Y;
   mesh.renderOrder = 1;
   // Store material ref for per-frame uTime/uCamPos updates (done by caller).
   mesh.userData.material = mat;
