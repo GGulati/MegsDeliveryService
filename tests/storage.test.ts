@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createState, startRun } from '../src/simulation';
-import { SAVE_KEY, SaveStore, decodeSave, encodeSave } from '../src/storage';
+import { SAVE_KEY, SaveStore, decodeSave, encodeSave, seedMigrated } from '../src/storage';
+
+test('legacy saves without a seed get one minted, and the migration is detectable', () => {
+  const raw = JSON.parse(encodeSave(createState()));
+  delete raw.state.seed; // a save written before the general-purpose seed existed
+  const legacy = JSON.stringify(raw);
+  assert.equal(seedMigrated(legacy), true, 'seed-less save must be flagged for prompt persistence');
+  const loaded = decodeSave(legacy);
+  assert.ok(loaded);
+  assert.ok(Number.isInteger(loaded.seed) && loaded.seed >= 0 && loaded.seed <= 0x7fffffff,
+    'minted seed must be a valid uint31');
+  // A save that already carries a seed is not a migration.
+  const modern = encodeSave(createState());
+  assert.equal(seedMigrated(modern), false);
+  assert.equal(decodeSave(modern)?.seed, JSON.parse(modern).state.seed);
+});
 
 test('save codec round trips and pauses an active shift on return', () => {
   const state = createState(); startRun(state, 9);

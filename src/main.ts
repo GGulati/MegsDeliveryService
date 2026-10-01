@@ -103,13 +103,14 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
     // game with saving on. A brief banner says what happened; no decisions.
     store.discardUnreadable();
     state=createState();state.coarsePointer=coarsePointer;
+    renderer.setSeed(state.seed);
     bootReady=true;saveKind='ready';saveMessage='';
     persist();
     flashSaveFyi('Your saved game could not be read, so it was discarded and a new game was started.');
     input?.clear();accumulator=0;draw(0);
     return;
   }
-  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
+  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);if(result.kind==='ready'&&result.seedMigrated&&store.canSave)store.save(state);bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
 
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);

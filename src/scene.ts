@@ -51,7 +51,7 @@ export class GameRenderer {
   private ray = new THREE.Raycaster();
   private blockers: THREE.Object3D[] = [];
   private outlines: THREE.Mesh[] = [];
-  private life!: Life;
+  private life: Life | null = null;
   private beamGroup: THREE.Group | null = null;
   private beamLight: THREE.PointLight | null = null;
   private lighthouseLit = true;
@@ -91,7 +91,6 @@ export class GameRenderer {
     this.skyDome = new SkyDome();
     this.scene.add(this.skyDome.mesh);
     this.world=this.makeWorld();
-    this.life = new Life(this.world);
     this.scene.add(this.world, this.hero, this.dropParcel, this.glowColumn, this.targetRing, this.clouds, this.birds, this.room.group);
     this.makeHero(); this.makeDropParcel(); this.makeGlowColumn(); this.makeSkyLife(); this.resize();
   }
@@ -99,6 +98,16 @@ export class GameRenderer {
   resize(): void {
     // The next render owns the quality-dependent backing-store dimensions.
     this.lastWidth = -1;
+  }
+
+  /** Adopt the save game's general-purpose seed (2026-09-30). The renderer
+   * is built before the save finishes loading, so Life is constructed here
+   * once the seed is known. boot() may run again via the banner Retry (the
+   * save was open in another tab); rebuilding keeps traffic matched to the
+   * current save's seed. */
+  setSeed(seed: number): void {
+    this.life?.dispose();
+    this.life = new Life(this.world, seed);
   }
 
   render(state: GameState, dt: number, settings: RenderSettings): void {
@@ -143,7 +152,7 @@ export class GameRenderer {
     this.animateSky(settings.reducedMotion, step);
     // Ambient life: cars and pedestrians (Phase 2). Hidden at home with the world.
     if (!atHome && step > 0) {
-      this.life.update(step, player, state.player.speed, state.player.velocity.y, this.clock);
+      this.life?.update(step, player, state.player.speed, state.player.velocity.y, this.clock);
     }
     this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
     this.updateGlowColumn(state, settings.reducedMotion);

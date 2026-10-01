@@ -25,10 +25,21 @@ import { SOLIDS, MANSION_GROUNDS, isInBay } from '../src/world.js';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from '../src/roads.js';
 import { deckHeightAt, roadWidth, roadGroundHeight } from '../src/road-deck.js';
 
+/** Deterministic snapshot of the initial traffic layout (spawn state only). */
+function snapshotLife(life: Life): { cars: unknown[][]; peds: unknown[][] } {
+  const cars = (life as unknown as { cars: { variant: string; edge: RoadEdge; t: number; dir: number; speed: number; group: THREE.Group }[] }).cars;
+  const peds = (life as unknown as { peds: { edge: RoadEdge | null; t: number; dir: number; side: number; speed: number; inPark: boolean; pos: THREE.Vector3 }[] }).peds;
+  const r = (n: number) => n.toFixed(4);
+  return {
+    cars: cars.map(c => [c.variant, c.edge.a, c.edge.b, r(c.t), c.dir, r(c.speed), r(c.group.position.x), r(c.group.position.z)]),
+    peds: peds.map(p => [p.inPark, p.edge ? p.edge.a : '', p.edge ? p.edge.b : '', r(p.t), p.dir, p.side, r(p.speed), r(p.pos.x), r(p.pos.y), r(p.pos.z)]),
+  };
+}
+
 describe('ambient life', () => {
   it('spawns exactly 16 cars and 44 pedestrians', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     // Access via scene children: each car is a Group, each ped is a Group + Sprite.
     // We verify counts through the Life instance's group children.
     const cars = (life as unknown as { cars: unknown[] }).cars;
@@ -42,7 +53,7 @@ describe('ambient life', () => {
 
   it('car lineup has exactly one beetle and one sportscar', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const cars = (life as unknown as { cars: { variant: string }[] }).cars;
     const beetles = cars.filter(c => c.variant === 'beetle');
     const sports = cars.filter(c => c.variant === 'sports');
@@ -53,7 +64,7 @@ describe('ambient life', () => {
 
   it('cars stay on the road graph after simulated driving', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // Simulate 10 seconds of driving (600 frames at 60fps).
     for (let i = 0; i < 600; i++) {
@@ -72,7 +83,7 @@ describe('ambient life', () => {
 
   it('pedestrians stay out of buildings and water after wandering', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // Simulate 10 seconds of wandering.
     for (let i = 0; i < 600; i++) {
@@ -96,7 +107,7 @@ describe('ambient life', () => {
 
   it('greeting triggers when player flies by slowly nearby', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number; greetCd: number;
     }[] }).peds;
@@ -111,7 +122,7 @@ describe('ambient life', () => {
 
   it('greeting does not trigger when player is too fast', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number;
     }[] }).peds;
@@ -124,7 +135,7 @@ describe('ambient life', () => {
 
   it('startle triggers when player buzzes fast and close', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number; startleCd: number; hopT: number;
     }[] }).peds;
@@ -139,7 +150,7 @@ describe('ambient life', () => {
 
   it('cars ride at the road deck height (not buried, not floating)', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // Simulate 5 seconds.
     for (let i = 0; i < 300; i++) {
@@ -161,7 +172,7 @@ describe('ambient life', () => {
 
   it('sidewalk peds stand on the deck, not under it', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     for (let i = 0; i < 300; i++) {
       life.update(1 / 60, playerPos, 0, 0, i / 60);
@@ -206,7 +217,7 @@ describe('ambient life', () => {
 
   it('cooldowns prevent bubble spam', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const peds = (life as unknown as { peds: {
       pos: THREE.Vector3; bubbleT: number;
     }[] }).peds;
@@ -221,12 +232,41 @@ describe('ambient life', () => {
     assert.equal(ped.bubbleT, 0, 'second greeting suppressed by cooldown');
     life.dispose();
   });
+
+  it('same save seed produces the same initial traffic layout', () => {
+    const a = new Life(new THREE.Group(), 777);
+    const b = new Life(new THREE.Group(), 777);
+    assert.deepEqual(snapshotLife(a), snapshotLife(b));
+    a.dispose(); b.dispose();
+  });
+
+  it('different save seeds produce different traffic layouts', () => {
+    const a = new Life(new THREE.Group(), 777);
+    const b = new Life(new THREE.Group(), 778);
+    assert.notDeepEqual(snapshotLife(a), snapshotLife(b));
+    a.dispose(); b.dispose();
+  });
+
+  it('dispose + reconstruct with a new seed matches a fresh build (boot retry path)', () => {
+    // GameRenderer.setSeed() disposes and rebuilds Life when boot() re-runs
+    // (banner Retry). The rebuilt traffic must equal a fresh Life with the
+    // new seed, and the old meshes must leave the scene.
+    const scene = new THREE.Group();
+    const a = new Life(scene, 999);
+    assert.equal(scene.children.length, 1, 'spawned traffic group is in the scene');
+    a.dispose();
+    assert.equal(scene.children.length, 0, 'disposed Life group removed from the scene');
+    const rebuilt = new Life(scene, 777);
+    const fresh = new Life(new THREE.Group(), 777);
+    assert.deepEqual(snapshotLife(rebuilt), snapshotLife(fresh));
+    rebuilt.dispose(); fresh.dispose();
+  });
 });
 
 describe('trip-based traffic (user feedback 2026-09-27)', () => {
   it('cars follow their route edge-by-edge with no random turns', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const anyLife = life as unknown as {
       cars: { edge: RoadEdge; dir: 1 | -1; destNode: string | null; route: RoadEdge[]; dwellT: number }[];
       assignTrip(e: unknown, from: string): void;
@@ -261,7 +301,7 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
 
   it('sidewalk peds follow trips and chain them like cars', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const anyLife = life as unknown as {
       peds: { edge: RoadEdge; dir: 1 | -1; inPark: boolean; destNode: string | null; route: RoadEdge[]; dwellT: number }[];
       assignTrip(e: unknown, from: string): void;
@@ -289,7 +329,7 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
 
   it('cars and peds never teleport between frames', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     const cars = (life as unknown as { cars: { group: THREE.Group; speed: number }[] }).cars;
     const peds = (life as unknown as { peds: { group: THREE.Group; speed: number }[] }).peds;
@@ -316,9 +356,186 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     life.dispose();
   });
 
+  it('cars and peds never exceed their speed budget between frames', () => {
+    // User feedback 2026-09-30: consistent world-space speeds — the exact
+    // |a*T + b*ehat| = speed*dt budget split must hold every frame, including
+    // node arrivals, curve endpoints, and edge transitions.
+    // Two seeds widen the geometry sample (the bug lived in rare waterfront
+    // turns and curve endpoints — 2026-10-01 review).
+    for (const seed of [12345, 67890]) {
+    const scene = new THREE.Group();
+    const life = new Life(scene, seed);
+    const playerPos = new THREE.Vector3(0, 50, 0);
+    const cars = (life as unknown as { cars: {
+      group: THREE.Group; speed: number; baseSpeed: number;
+    }[] }).cars;
+    const peds = (life as unknown as { peds: {
+      pos: THREE.Vector3; speed: number;
+    }[] }).peds;
+    const dt = 1 / 60;
+    // The speed used for a car's motion never exceeds its pre-frame baseSpeed
+    // (carFollowSpeed starts at baseSpeed; arrival only raises speed after
+    // the frame's motion). A ped's post-frame speed IS its motion speed.
+    // Ped logical pos (not the group) is measured: the group carries a
+    // cosmetic walk-bob that is not travel. XZ only: the budget governs
+    // ground-plane travel; Y follows the deck via a separate vertical glide.
+    life.update(dt, playerPos, 0, 0, 0); // warm-up: place entities from the origin
+    for (let i = 1; i <= 3600; i++) {
+      const preBase = cars.map(c => c.baseSpeed);
+      const prevC = cars.map(c => ({ x: c.group.position.x, z: c.group.position.z }));
+      const prevP = peds.map(p => ({ x: p.pos.x, z: p.pos.z }));
+      life.update(dt, playerPos, 0, 0, i * dt);
+      for (let ci = 0; ci < cars.length; ci++) {
+        const dx = cars[ci].group.position.x - prevC[ci].x;
+        const dz = cars[ci].group.position.z - prevC[ci].z;
+        const d = Math.hypot(dx, dz);
+        assert.ok(d <= preBase[ci] * dt + 1e-6,
+          `seed ${seed} car ${ci} frame ${i}: moved ${d.toFixed(4)}m, budget ${(preBase[ci] * dt).toFixed(4)}m`);
+      }
+      for (let pi = 0; pi < peds.length; pi++) {
+        const dx = peds[pi].pos.x - prevP[pi].x;
+        const dz = peds[pi].pos.z - prevP[pi].z;
+        const d = Math.hypot(dx, dz);
+        assert.ok(d <= peds[pi].speed * dt + 1e-6,
+          `seed ${seed} ped ${pi} frame ${i}: moved ${d.toFixed(4)}m, budget ${(peds[pi].speed * dt).toFixed(4)}m`);
+      }
+    }
+    life.dispose();
+    }
+  });
+
+  it('cars yield to pedestrians crossing at intersections', () => {
+    // User feedback 2026-09-30: peds have right of way — cars wait if any
+    // ped is inside the intersection zone.
+    const scene = new THREE.Group();
+    const life = new Life(scene, 4242);
+    const playerPos = new THREE.Vector3(0, 50, 0);
+    const dt = 1 / 60;
+    const exposed = (life as unknown as {
+      cars: { edge: RoadEdge; t: number; dir: 1 | -1; edgeLen: number;
+        speed: number; baseSpeed: number; turnSlowT: number; dwellT: number;
+        curve: THREE.CatmullRomCurve3; offX: number; offZ: number }[];
+      peds: { pos: THREE.Vector3; vel: THREE.Vector3; inPark: boolean; dwellT: number }[];
+      carPedYieldSpeed(car: unknown): number;
+      update(dt: number, playerPos: THREE.Vector3, playerSpeed: number, playerVelY: number, time: number): void;
+    });
+    exposed.update(dt, playerPos, 0, 0, 0);
+    const car = exposed.cars[0];
+    car.dir = 1; car.turnSlowT = 0; car.dwellT = 0;
+    const node = nodeById(car.edge.b);
+    // Clear the zone: other simulated peds may genuinely be inside it.
+    for (const p of exposed.peds) p.pos.set(9999, 0, 9999);
+    const ped = exposed.peds.find(p => !p.inPark)!;
+    ped.dwellT = 0;
+
+    // Unit: 10m out (inside the 16m slowdown, outside the 7m stop line)
+    // with a ped at the node → slowed; ped far away → full speed.
+    car.t = 1 - 10 / car.edgeLen;
+    ped.pos.set(node.x, 0, node.z);
+    const slowed = exposed.carPedYieldSpeed(car);
+    assert.ok(slowed < car.baseSpeed,
+      `expected yield slowdown, got ${slowed.toFixed(2)} vs base ${car.baseSpeed.toFixed(2)}`);
+    ped.pos.set(node.x + 50, 0, node.z + 50);
+    assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed);
+
+    // Unit (2026-10-01): a ped on the sidewalk near the node — outside the
+    // car's forward route corridor, e.g. heading away from a crosswalk —
+    // does NOT affect traffic (user feedback: peds only affect traffic
+    // when they're on the car's route).
+    {
+      const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+      const tan = car.curve.getTangentAt(tC, new THREE.Vector3());
+      const pt = car.curve.getPointAt(tC, new THREE.Vector3());
+      const bx = pt.x + car.offX + tan.x * 2.4; // front bumper
+      const bz = pt.z + car.offZ + tan.z * 2.4;
+      const nx = -tan.z, nz = tan.x;
+      // 10m ahead of the bumper (at the node), 5m to the side: on the
+      // sidewalk, outside the 2m route corridor.
+      ped.pos.set(bx + tan.x * 10 + nx * 5, 0, bz + tan.z * 10 + nz * 5);
+      assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
+        'car must not yield for a ped on the sidewalk outside its route');
+    }
+
+    // Unit (2026-10-01, proactive): a ped just outside the corridor but
+    // moving toward the lane (slow crosser) triggers a yield — the car
+    // slows smoothly instead of braking late. A ped moving away does not.
+    {
+      const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+      const tan = car.curve.getTangentAt(tC, new THREE.Vector3());
+      const pt = car.curve.getPointAt(tC, new THREE.Vector3());
+      const bx = pt.x + car.offX + tan.x * 2.4; // front bumper
+      const bz = pt.z + car.offZ + tan.z * 2.4;
+      const nx = -tan.z, nz = tan.x;
+      car.speed = 10;
+      // 10m ahead, 3m to the side: outside the 2m corridor, inside 4.5m.
+      ped.pos.set(bx + tan.x * 10 + nx * 3, 0, bz + tan.z * 10 + nz * 3);
+      // Moving toward the lane at 1 m/s: enters (3-1*1=2 < 2.2) before the
+      // car arrives (10m at 10 m/s = 1s) → yield.
+      ped.vel.set(-nx * 1.0, 0, -nz * 1.0);
+      const proactive = exposed.carPedYieldSpeed(car);
+      assert.ok(proactive < car.baseSpeed,
+        `expected proactive yield for a ped entering the route, got ${proactive.toFixed(2)}`);
+      // Same ped moving away from the lane → no yield.
+      ped.vel.set(nx * 1.0, 0, nz * 1.0);
+      assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
+        'car must not yield for a ped moving away from its route');
+      ped.vel.set(0, 0, 0);
+    }
+
+    // Unit: at the stop line with a ped in the zone → full stop.
+    // The stop line (7m) keeps the car BEFORE the intersection: town roads
+    // are 8.8m wide and cars 4.8m long, so the front bumper (at 4.6m from
+    // the node) stays outside the asphalt (user feedback 2026-10-01: cars
+    // were waiting literally inside the intersection).
+    car.t = 1 - 5 / car.edgeLen;
+    ped.pos.set(node.x, 0, node.z);
+    assert.equal(exposed.carPedYieldSpeed(car), 0);
+
+    // Unit (2026-10-01): a departing car clears the intersection — it stops
+    // only for a ped literally in its forward path, not merely near the
+    // node (user feedback: cars must wait before the intersection in their
+    // lane, not drive to its center and wait there).
+    car.t = 0.02;
+    {
+      const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+      const tan = car.curve.getTangentAt(tC, new THREE.Vector3());
+      if ((car.dir as 1 | -1) === -1) tan.negate();
+      const pt = car.curve.getPointAt(tC, new THREE.Vector3());
+      const bx = pt.x + car.offX + tan.x * 2.4; // front bumper
+      const bz = pt.z + car.offZ + tan.z * 2.4;
+      // Ped 4m ahead of the bumper, centered in the lane → in the path.
+      ped.pos.set(bx + tan.x * 4, 0, bz + tan.z * 4);
+      assert.equal(exposed.carPedYieldSpeed(car), 0,
+        'departing car must stop for a ped in its forward path');
+      // Ped 4m ahead but 5m to the side (on the sidewalk) → not in the path:
+      // the car clears the intersection instead of waiting at its center.
+      const nx = -tan.z, nz = tan.x;
+      ped.pos.set(bx + tan.x * 4 + nx * 5, 0, bz + tan.z * 4 + nz * 5);
+      assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
+        'departing car must clear the intersection for a ped not in its path');
+    }
+
+    // End-to-end: update() applies the yield. All other cars are parked in
+    // dwell so car-following and car/car intersection yielding can't slow
+    // the subject — the only active constraint is the ped yield, so the
+    // post-update speed must equal the unit-computed value exactly
+    // (2026-10-01 review: the old `< baseSpeed` assertion could pass
+    // vacuously via car-following). At 5m the car is at the stop line:
+    // it must hold BEFORE the intersection (user feedback 2026-10-01).
+    for (const other of exposed.cars) if (other !== car) other.dwellT = 999;
+    car.t = 1 - 5 / car.edgeLen;
+    ped.pos.set(node.x, 0, node.z);
+    const expected = exposed.carPedYieldSpeed(car);
+    assert.equal(expected, 0, 'test setup: 5m is inside the 7m stop line');
+    exposed.update(dt, playerPos, 0, 0, dt);
+    assert.ok(Math.abs(car.speed - expected) < 1e-9,
+      `update() did not apply the ped yield: speed ${car.speed.toFixed(4)} vs expected ${expected.toFixed(4)}`);
+    life.dispose();
+  });
+
   it('simulated traffic acquires trips and reaches destinations', () => {
     const scene = new THREE.Group();
-    const life = new Life(scene);
+    const life = new Life(scene, 12345);
     const playerPos = new THREE.Vector3(0, 50, 0);
     // 60 seconds of traffic.
     for (let i = 0; i < 3600; i++) {

@@ -120,6 +120,9 @@ export function createState(): GameState {
     profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
     run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, descent: null, haloFade: 0,
     homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
+    // General-purpose save seed (2026-09-30): deterministic RNG for ambient
+    // life and any future seeded systems. Generated once per save file.
+    seed: Math.floor(Math.random() * 0x7fffffff),
     // Set once at boot by main.ts from matchMedia('(pointer: coarse)').
     // Lives on state (not read from window inside the simulation) so the
     // simulation stays pure and unit tests need no DOM stubs. Used for

@@ -8,7 +8,7 @@ const SAVE_LOCK_KEY = 'megs-delivery-save-lock-v1';
 const LOCK_STALE_MS = 30000;
 
 type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
-type SaveResult = { kind: SaveResultKind; state?: GameState; message: string };
+type SaveResult = { kind: SaveResultKind; state?: GameState; message: string; seedMigrated?: boolean };
 type UnknownRecord = Record<string, unknown>;
 
 const MODES: readonly Mode[] = ['title', 'tutorial', 'flight', 'offers', 'home', 'summary'];
@@ -74,7 +74,10 @@ export function decodeSave(raw: string): GameState | null {
   // A drop-freeze hover pin must never survive a reload: it held the drone
   // still during the 0.9 s landing animation, and a save taken with it set
   // would otherwise restore a drone pinned at speed 0 with no way to move.
-  const state = { mode, player, profile, run, paused: value.paused, pauseReason: value.pauseReason as string, message: value.message as string, tutorialStage: value.tutorialStage as number, homePosition: { x: value.homePosition.x as number, z: value.homePosition.z as number }, homeFacing: homeFacing as number, homePanel, summary, revision: value.revision as number } as GameState;
+  const state = { mode, player, profile, run, paused: value.paused, pauseReason: value.pauseReason as string, message: value.message as string, tutorialStage: value.tutorialStage as number, homePosition: { x: value.homePosition.x as number, z: value.homePosition.z as number }, homeFacing: homeFacing as number, homePanel, summary, revision: value.revision as number,
+    // General-purpose save seed (2026-09-30). Old saves predate it: mint one
+    // on load so every save file has a deterministic RNG stream.
+    seed: integer(value.seed, 0, 0x7fffffff) ? value.seed as number : Math.floor(Math.random() * 0x7fffffff) } as GameState;
   // A wall-clock gap must never advance a shift.  Resume interactive work explicitly.
   // A mid-drop save never resumes mid-animation: the drop was committed before
   // the save, so it simply restarts unfired on load.
@@ -88,6 +91,19 @@ export function decodeSave(raw: string): GameState | null {
 
 export function encodeSave(state: GameState): string {
   return JSON.stringify({ version: 1, state });
+}
+
+/** True when the stored save predates the general-purpose seed: decodeSave
+ * will mint one on load, so the caller should persist promptly to keep the
+ * seed (and the traffic layout it determines) stable across loads. */
+export function seedMigrated(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { state?: { seed?: unknown } };
+    const seed = parsed?.state?.seed;
+    return !(typeof seed === 'number' && Number.isInteger(seed) && seed >= 0 && seed <= 0x7fffffff);
+  } catch {
+    return false;
+  }
 }
 
 /** A cooperative, non-blocking single-writer store. Browser APIs are read only when used. */
@@ -148,7 +164,7 @@ export class SaveStore {
       return { kind: 'invalid', message: this.status };
     }
     this.writable = true; this.memory = decoded; this.status = 'Saved game ready.';
-    return { kind: 'ready', state: decoded, message: this.status };
+    return { kind: 'ready', state: decoded, message: this.status, seedMigrated: raw !== null && seedMigrated(raw) };
   }
 
   save(state: GameState): boolean {
