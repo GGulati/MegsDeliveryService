@@ -40,8 +40,10 @@ export function makeTileableNoise(size: number): HTMLCanvasElement {
 // a custom shader: depth-gradient color, generous noise-gated foam, whitecaps.
 // ---------------------------------------------------------------------------
 
-/** Water surface Y: the bay inlay sits at +0.18 (terrain.ts). */
-export const WATER_Y = 0.18;
+/** Water surface Y: sea level (terrain.ts SEA_LEVEL). The +0.18 inlay offset
+ *  is for the bay mesh only; the main water plane sits at sea level to avoid
+ *  flooding the y=0 waterfront pad. */
+export const WATER_Y = 0;
 /** Max water depth for normalization: bay carved to -3.5, so ~3.7m max. */
 export const MAX_DEPTH = 4.0;
 /** Water plane size: matches the 440x440 terrain. */
