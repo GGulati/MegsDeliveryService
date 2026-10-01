@@ -643,18 +643,44 @@ export class Life {
   private carPedYieldSpeed(car: Car): number {
     const ZONE = Life.YIELD_ZONE, STOP = Life.YIELD_STOP, SLOW = Life.YIELD_SLOW;
     const targetNode = car.dir === 1 ? car.edge.b : car.edge.a;
-    const originNode = car.dir === 1 ? car.edge.a : car.edge.b;
     const myDist = (car.dir === 1 ? 1 - car.t : car.t) * car.edgeLen;
-    // Departing: still inside the origin intersection zone — wait for any
-    // crossing ped to clear instead of pulling away through them
-    // (2026-10-01: review found departing cars ignored the origin node).
+    // Departing: the car is already committed to the intersection — it
+    // clears it, stopping only for a ped literally in its forward path.
+    // (User feedback 2026-10-01: cars must wait before the intersection in
+    // their lane, not drive to its center and wait there. The old 9m-radius
+    // check parked departing cars at the node for peds on the sidewalk.)
     const originDist = (car.dir === 1 ? car.t : 1 - car.t) * car.edgeLen;
-    if (originDist <= ZONE && this.pedInNodeZone(originNode, ZONE)) return 0;
+    if (originDist <= ZONE && this.pedInCarPath(car)) return 0;
     if (myDist > SLOW) return car.baseSpeed;
     if (!this.pedInNodeZone(targetNode, ZONE)) return car.baseSpeed;
     if (myDist <= STOP) return 0; // hold at the stop line, before the intersection
     // Slow down on approach to the stop line.
     return car.baseSpeed * Math.max(0, (myDist - STOP) / (SLOW - STOP));
+  }
+
+  /** True when a non-park, non-dwelling ped is inside the car's forward
+   * path corridor (ahead of the front bumper, within lane width, inside
+   * stopping distance). Departing cars use this instead of the node radius:
+   * once committed they clear the intersection, stopping only for a ped
+   * literally in the way. */
+  private pedInCarPath(car: Car): boolean {
+    const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+    car.curve.getPointAt(tC, this.tmpP);
+    car.curve.getTangentAt(tC, this.tmpT);
+    if (car.dir === -1) this.tmpT.negate();
+    const dx = this.tmpT.x, dz = this.tmpT.z;
+    // Front bumper position (car half-length 2.4m).
+    const px = this.tmpP.x + car.offX + dx * 2.4;
+    const pz = this.tmpP.z + car.offZ + dz * 2.4;
+    for (const ped of this.peds) {
+      if (ped.inPark || ped.dwellT > 0) continue;
+      const rx = ped.pos.x - px, rz = ped.pos.z - pz;
+      const ahead = rx * dx + rz * dz;
+      if (ahead < 0 || ahead > 8) continue; // behind or beyond stopping distance
+      const lateral = Math.abs(rx * dz - rz * dx);
+      if (lateral < 2.0) return true;
+    }
+    return false;
   }
 
   /** True when a non-park, non-dwelling ped is inside the node's zone. */

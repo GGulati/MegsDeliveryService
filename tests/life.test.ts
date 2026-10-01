@@ -413,7 +413,8 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     const dt = 1 / 60;
     const exposed = (life as unknown as {
       cars: { edge: RoadEdge; t: number; dir: 1 | -1; edgeLen: number;
-        speed: number; baseSpeed: number; turnSlowT: number; dwellT: number }[];
+        speed: number; baseSpeed: number; turnSlowT: number; dwellT: number;
+        curve: THREE.CatmullRomCurve3; offX: number; offZ: number }[];
       peds: { pos: THREE.Vector3; inPark: boolean; dwellT: number }[];
       carPedYieldSpeed(car: unknown): number;
       update(dt: number, playerPos: THREE.Vector3, playerSpeed: number, playerVelY: number, time: number): void;
@@ -446,17 +447,29 @@ describe('trip-based traffic (user feedback 2026-09-27)', () => {
     ped.pos.set(node.x, 0, node.z);
     assert.equal(exposed.carPedYieldSpeed(car), 0);
 
-    // Unit (2026-10-01 review): a car departing the origin node waits for a
-    // ped crossing there instead of pulling away through them.
-    const origin = nodeById(car.edge.a);
+    // Unit (2026-10-01): a departing car clears the intersection — it stops
+    // only for a ped literally in its forward path, not merely near the
+    // node (user feedback: cars must wait before the intersection in their
+    // lane, not drive to its center and wait there).
     car.t = 0.02;
-    ped.pos.set(origin.x, 0, origin.z);
-    assert.equal(exposed.carPedYieldSpeed(car), 0,
-      'departing car must wait for a ped at its origin node');
-    ped.pos.set(origin.x + 50, 0, origin.z + 50);
-    car.t = 1 - 5 / car.edgeLen;
-    ped.pos.set(node.x + 50, 0, node.z + 50);
-    assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed);
+    {
+      const tC = THREE.MathUtils.clamp(car.t, 0, 1);
+      const tan = car.curve.getTangentAt(tC, new THREE.Vector3());
+      if ((car.dir as 1 | -1) === -1) tan.negate();
+      const pt = car.curve.getPointAt(tC, new THREE.Vector3());
+      const bx = pt.x + car.offX + tan.x * 2.4; // front bumper
+      const bz = pt.z + car.offZ + tan.z * 2.4;
+      // Ped 4m ahead of the bumper, centered in the lane → in the path.
+      ped.pos.set(bx + tan.x * 4, 0, bz + tan.z * 4);
+      assert.equal(exposed.carPedYieldSpeed(car), 0,
+        'departing car must stop for a ped in its forward path');
+      // Ped 4m ahead but 5m to the side (on the sidewalk) → not in the path:
+      // the car clears the intersection instead of waiting at its center.
+      const nx = -tan.z, nz = tan.x;
+      ped.pos.set(bx + tan.x * 4 + nx * 5, 0, bz + tan.z * 4 + nz * 5);
+      assert.equal(exposed.carPedYieldSpeed(car), car.baseSpeed,
+        'departing car must clear the intersection for a ped not in its path');
+    }
 
     // End-to-end: update() applies the yield. All other cars are parked in
     // dwell so car-following and car/car intersection yielding can't slow
