@@ -35,22 +35,23 @@ test('the viewing angle is identical for every Meg position', () => {
 });
 
 test('look target snaps on entering home', () => {
-  assert.deepEqual(homeLookStep([0, 0], [5, -3], true, 1 / 60, false), [5, -3]);
+  assert.deepEqual(homeLookStep([0, 0], [5, -3], true, 1 / 60), [5, -3]);
 });
 
-test('look target snaps under reduced motion instead of easing', () => {
-  assert.deepEqual(homeLookStep([0, 0], [5, -3], false, 1 / 60, true), [5, -3]);
+test('look target eases (no snap) when not entering home', () => {
+  const got = homeLookStep([0, 0], [5, -3], false, 1 / 60);
+  assert.ok(got[0] > 0 && got[0] < 5, 'eases toward target instead of snapping');
 });
 
 test('look target freezes while paused', () => {
-  assert.deepEqual(homeLookStep([1, 2], [5, -3], false, 0, false), [1, 2]);
+  assert.deepEqual(homeLookStep([1, 2], [5, -3], false, 0), [1, 2]);
 });
 
 test('look target eases toward Meg without overshooting, then converges', () => {
   let cur: [number, number] = [0, 0];
-  const step = homeLookStep(cur, [5, -3], false, 1 / 60, false);
+  const step = homeLookStep(cur, [5, -3], false, 1 / 60);
   assert.ok(step[0] > 0 && step[0] < 5 && step[1] < 0 && step[1] > -3, `eased partway: ${step}`);
   cur = step;
-  for (let i = 0; i < 300; i++) cur = homeLookStep(cur, [5, -3], false, 1 / 60, false);
+  for (let i = 0; i < 300; i++) cur = homeLookStep(cur, [5, -3], false, 1 / 60);
   assert.ok(Math.abs(cur[0] - 5) < 1e-6 && Math.abs(cur[1] + 3) < 1e-6, `converged: ${cur}`);
 });

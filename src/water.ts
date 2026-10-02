@@ -316,7 +316,7 @@ export function createWater(): THREE.Mesh {
 
 /** Per-frame uniform update for the shader water. Call from the render loop
  *  with the accumulated (non-paused) clock and the current camera position.
- *  Skipped under reducedMotion, which freezes uTime. */
+ *  The water always animates (no reduced-motion freeze). */
 export function updateWater(
   mesh: THREE.Mesh,
   time: number,

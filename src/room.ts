@@ -27,7 +27,7 @@ export class RoomView {
     this.group.visible = false;
   }
 
-  update(state: GameState, dt: number, reducedMotion: boolean): void {
+  update(state: GameState, dt: number): void {
     if (this.disposed) return;
     const s = state as HomeState, isHome = s.mode === 'home'; this.group.visible = isHome;
     if (!isHome) { this.lastHome = false; return; }
@@ -41,14 +41,14 @@ export class RoomView {
     else if (target.distanceToSquared(this.meg.position) > .001) this.facing = Math.atan2(target.x - this.meg.position.x, target.z - this.meg.position.z);
     this.meg.rotation.y = this.facing;
     const moving = target.distanceTo(this.meg.position) > .035;
-    this.meg.children.filter(x => x.name === 'limb').forEach((limb, i) => limb.rotation.x = reducedMotion ? 0 : Math.sin(this.clock * 11 + i * Math.PI) * (moving ? .55 : .08));
-    this.meg.position.y = reducedMotion ? 0 : (moving ? Math.abs(Math.sin(this.clock * 11)) * .045 : Math.sin(this.clock * 2) * .018);
+    this.meg.children.filter(x => x.name === 'limb').forEach((limb, i) => limb.rotation.x = Math.sin(this.clock * 11 + i * Math.PI) * (moving ? .55 : .08));
+    this.meg.position.y = moving ? Math.abs(Math.sin(this.clock * 11)) * .045 : Math.sin(this.clock * 2) * .018;
     const desired = this.meg.position.clone().add(new THREE.Vector3(-Math.sin(this.facing) * 1.25, 0, -Math.cos(this.facing) * 1.25));
     desired.x = THREE.MathUtils.clamp(desired.x, -7.3, 7.3); desired.z = THREE.MathUtils.clamp(desired.z, -5.3, 5.3);
     this.pip.position.lerp(desired, 1 - Math.exp(-step * 4)); this.pip.lookAt(this.meg.position.x, 0, this.meg.position.z);
     const nearCat = this.meg.position.distanceToSquared(new THREE.Vector3(4, 0, 3)) < 2.7;
-    this.pip.position.y = !reducedMotion && nearCat ? Math.sin(this.clock * 6) * .075 : 0;
-    this.tail.rotation.z = !reducedMotion ? Math.sin(this.clock * (nearCat ? 5 : 2)) * .34 : .12;
+    this.pip.position.y = nearCat ? Math.sin(this.clock * 6) * .075 : 0;
+    this.tail.rotation.z = Math.sin(this.clock * (nearCat ? 5 : 2)) * .34;
     this.furniture.forEach((object, id) => object.visible = s.profile.furniture.includes(id));
   }
 

@@ -1,10 +1,10 @@
 import type { GameState } from './types';
 
 /** Cosmetic offsets are absolute, never fed back into the player position. */
-export function flightVisuals(state: GameState, clock: number, reducedMotion: boolean) {
+export function flightVisuals(state: GameState, clock: number) {
   const flying = state.mode === 'flight' || state.mode === 'tutorial';
   const velocity = Math.hypot(state.player.velocity.x, state.player.velocity.y, state.player.velocity.z);
-  const active = flying && !state.paused && !reducedMotion;
+  const active = flying && !state.paused;
   return {
     bob: active && state.player.hover && velocity < .3 ? Math.sin(clock * 1.5) * .035 : 0,
     speed: active ? Math.min(1, Math.max(0, (velocity - 5) / 16.6)) : 0,
@@ -28,10 +28,9 @@ export class FlightEffects {
     }
     canvas.insertAdjacentElement('afterend', this.element);
   }
-  update(speed: number, lowQuality: boolean) {
+  update(speed: number) {
     this.element.hidden = speed <= 0;
     this.element.style.setProperty('--speed', speed.toFixed(3));
-    this.element.classList.toggle('low-quality', lowQuality);
   }
   dispose() { this.element.remove(); }
 }
