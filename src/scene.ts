@@ -1,13 +1,18 @@
 import * as THREE from 'three';
 import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, MANSION_GROUNDS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
-import { createWater, updateWater } from './water';
+import { createWater, updateWater, createSparkles, applyCausticsToGround } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
 import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, clipT, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections, intersectionHeightAt } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
+
+// Scratch values for the per-frame water sun update (no per-frame allocs).
+const _wSunDir = new THREE.Vector3();
+const _wSunColor = new THREE.Color();
+const _wSkyColor = new THREE.Color();
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
@@ -69,6 +74,7 @@ export class GameRenderer {
   private followYaw = 0;
   private world!: THREE.Group;
   private water: THREE.Mesh | null = null;
+  private groundMat: THREE.Material | null = null;
   private room = new RoomView();
   private outdoorFog = new THREE.FogExp2(0xb9dce0,.0035);
 
@@ -113,7 +119,6 @@ export class GameRenderer {
   render(state: GameState, dt: number, settings: RenderSettings): void {
     if (this.disposed) return;
     const step = state.paused ? 0 : Math.min(.05, Math.max(0, dt)); this.clock += step;
-    if (this.water && !settings.reducedMotion) updateWater(this.water, this.clock, this.camera.position);
     const visual = flightVisuals(state, this.clock, settings.reducedMotion);
     this.effects.update(visual.speed, settings.lowQuality);
     const canvas = this.renderer.domElement;
@@ -174,6 +179,24 @@ export class GameRenderer {
     const [sx, sy, sz] = sunDirection(sky.sunElevation, sky.sunAzimuth);
     this.sun.position.set(sx * 160, Math.max(8, sy * 160), sz * 160);
     this.sun.color.setRGB(...sky.sun);
+    // Water follows the day-cycle sun: direction, color, intensity, sky tint.
+    if (this.water && !settings.reducedMotion) {
+      _wSunDir.set(sx, sy, sz).normalize();
+      _wSunColor.setRGB(sky.sun[0], sky.sun[1], sky.sun[2]);
+      _wSkyColor.setRGB(sky.horizon[0], sky.horizon[1], sky.horizon[2]);
+      updateWater(this.water, this.clock, this.camera.position, {
+        sunDir: _wSunDir, sunColor: _wSunColor,
+        sunIntensity: sky.sunIntensity, skyColor: _wSkyColor,
+      });
+    }
+    // Caustics ride the same clock and sun.
+    const causticShader = (this.groundMat?.userData as
+      { causticShader?: { uniforms: Record<string, { value: number }> } } | undefined)
+      ?.causticShader;
+    if (causticShader) {
+      causticShader.uniforms.uCausticTime.value = this.clock;
+      causticShader.uniforms.uCausticSun.value = sky.sunIntensity;
+    }
     this.sun.intensity = sky.sunIntensity;
     this.hemi.color.setRGB(...sky.hemiSky);
     this.hemi.groundColor.setRGB(...sky.hemiGround);
@@ -202,10 +225,14 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    // One water plane for the whole world. Wind Waker-style shader water:
-    // depth-gradient color + generous noise foam + whitecaps (2026-10-01).
+    // One water plane for the whole world. Idyllic Ghibli bay water (2026-10-02):
+    // dreamy shore-pinned swell, lighting-driven color, marching foam bands,
+    // voronoi foam net, ebbing contact ring, sparkles, fresnel sky tint.
     const water = createWater();
     this.water = water;
+    const sparkles = createSparkles();
+    water.add(sparkles);
+    water.userData.sparkles = sparkles;
     g.add(water);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
@@ -233,6 +260,9 @@ export class GameRenderer {
     colorTex.anisotropy = 4;
     const groundMat = toon(0xffffff);
     groundMat.map = colorTex;
+    // Animated caustic light webs on submerged sand (Ghibli shallows).
+    applyCausticsToGround(groundMat);
+    this.groundMat = groundMat;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
     // Roads ride the hand-authored graph; bridge edges are drawn by the bridge module.
     // Roads are FLAT ribbons (not tubes) so they don't swallow nearby houses
