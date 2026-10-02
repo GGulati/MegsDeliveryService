@@ -14,6 +14,32 @@ const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const root = document.querySelector<HTMLElement>('#app')!;
 const params = new URLSearchParams(location.search);
 const testing = params.get('test') === '1';
+const stutterDebug = params.get('stutter') === '1';
+const stutterFrames: { t: number; dt: number }[] = [];
+let stutterResumeAt = 0;
+let stutterWorst = 0;
+let stutterWorstPhases = '';
+let stutterCurPhases = '';
+let stutterTapPhases = '';
+let stutterEl: HTMLElement | null = null;
+if (stutterDebug) {
+  stutterEl = document.createElement('div');
+  stutterEl.style.cssText = 'position:fixed;top:8px;left:8px;z-index:9999;background:rgba(0,40,0,.85);color:#0f0;font:11px monospace;padding:8px;max-width:92vw;white-space:pre-wrap;pointer-events:none';
+  stutterEl.textContent = 'stutter debug on';
+  document.body.appendChild(stutterEl);
+}
+function stutterReport() {
+  if (!stutterDebug || !stutterEl) return;
+  const since = stutterFrames.filter(f => f.t >= stutterResumeAt).map(f => f.dt);
+  const worst = [...since].sort((a, b) => b - a).slice(0, 6).map(x => x.toFixed(0));
+  const maxAll = stutterFrames.length ? Math.max(...stutterFrames.map(f => f.dt)).toFixed(0) : '0';
+  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms\nworst since resume: ${worst.join(', ')}ms\nworst frame ${stutterWorst.toFixed(0)}ms: ${stutterTapPhases}${stutterWorstPhases}`;
+}
+function stutterPhase(name: string, ms: number, tap = false) {
+  if (!stutterDebug) return;
+  const entry = `${name}:${ms.toFixed(0)}ms `;
+  if (tap) stutterTapPhases += entry; else stutterCurPhases += entry;
+}
 let state = createState();
 let muted = true;
 // The stick visual lives inside the coarse-pointer-gated touch layer, so the
@@ -42,7 +68,7 @@ function flashSaveFyi(message: string, ms = 8000): void {
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function resume() { if (!bootReady || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();
+function resume() { if (!bootReady || document.hidden || contextLost) return; const __t0 = stutterDebug ? performance.now() : 0; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; stutterWorst = 0; stutterWorstPhases = ''; stutterTapPhases = ''; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist(); if (stutterDebug) stutterPhase('resumeTap', performance.now() - __t0, true);
   // No synchronous draw(0) here: the rAF loop draws on the next frame anyway.
   // A full WebGL render inside the tap handler blocks the main thread on
   // mobile (30-80ms) before the browser can paint the dismissed modal,
@@ -112,7 +138,9 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);
   if (!renderer || contextLost) return;
+  const __d0 = stutterDebug ? performance.now() : 0;
   renderer.render(state, dt);
+  if (stutterDebug) stutterPhase('gl', performance.now() - __d0);
   const target = getTarget(state) ?? STOPS[0];
   ui.render(state, { muted, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
@@ -131,13 +159,17 @@ function draw(dt: number) {
 }
 function advance(ms: number) {
   if (!bootReady||state.paused || document.hidden || contextLost) { accumulator = 0; draw(0); return; }
+  const __a0 = stutterDebug ? performance.now() : 0;
   const oldMode=state.mode;
   accumulator += Math.max(0, ms) / 1000;
   while (accumulator + 1e-10 >= 1 / 60) { step(state, input.sample(), 1 / 60); accumulator -= 1 / 60; }
+  if (stutterDebug) stutterPhase('sim', performance.now() - __a0);
   savePeriod+=ms;if(savePeriod>=5000||oldMode!==state.mode){persist();savePeriod=0;}
+  const __a1 = stutterDebug ? performance.now() : 0;
   draw(Math.min(ms / 1000, .1));
+  if (stutterDebug) stutterPhase('draw', performance.now() - __a1);
 }
-function frame(now: number) { const dt = lastFrame ? Math.min(now - lastFrame, 100) : 0; lastFrame = now; if (!testing) advance(dt); requestAnimationFrame(frame); }
+function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) stutterCurPhases = ''; if (!testing) advance(dt); if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (rawDt > stutterWorst) { stutterWorst = rawDt; stutterWorstPhases = stutterCurPhases; } if (stutterFrames.length % 15 === 0) stutterReport(); } requestAnimationFrame(frame); }
 window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
