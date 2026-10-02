@@ -99,6 +99,9 @@ export class GameRenderer {
     this.world=this.makeWorld();
     this.scene.add(this.world, this.hero, this.dropParcel, this.glowColumn, this.targetRing, this.clouds, this.birds, this.room.group);
     this.makeHero(); this.makeDropParcel(); this.makeGlowColumn(); this.makeSkyLife(); this.resize();
+    // Pre-compile shaders now (page load) instead of on first render:
+    // synchronous compile on mobile can block the main thread ~1s.
+    try { this.renderer.compile(this.scene, this.camera); } catch { /* non-fatal */ }
   }
 
   resize(): void {
