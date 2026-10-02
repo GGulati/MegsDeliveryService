@@ -14,6 +14,24 @@ const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const root = document.querySelector<HTMLElement>('#app')!;
 const params = new URLSearchParams(location.search);
 const testing = params.get('test') === '1';
+// TEMPORARY stutter debug: ?stutter=1 shows an on-screen frame-time readout.
+const stutterDebug = params.get('stutter') === '1';
+const stutterFrames: { t: number; dt: number }[] = [];
+let stutterResumeAt = 0;
+let stutterEl: HTMLElement | null = null;
+if (stutterDebug) {
+  stutterEl = document.createElement('div');
+  stutterEl.style.cssText = 'position:fixed;top:8px;left:8px;z-index:9999;background:rgba(0,40,0,.85);color:#0f0;font:11px monospace;padding:8px;max-width:92vw;white-space:pre-wrap;pointer-events:none';
+  stutterEl.textContent = 'stutter debug on';
+  document.body.appendChild(stutterEl);
+}
+function stutterReport() {
+  if (!stutterDebug || !stutterEl) return;
+  const since = stutterFrames.filter(f => f.t >= stutterResumeAt).map(f => f.dt);
+  const worst = [...since].sort((a, b) => b - a).slice(0, 6).map(x => x.toFixed(0));
+  const maxAll = stutterFrames.length ? Math.max(...stutterFrames.map(f => f.dt)).toFixed(0) : '0';
+  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms\nworst since resume: ${worst.join(', ')}ms`;
+}
 let state = createState();
 let muted = true;
 // The stick visual lives inside the coarse-pointer-gated touch layer, so the
@@ -42,7 +60,7 @@ function flashSaveFyi(message: string, ms = 8000): void {
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function resume() { if (!bootReady || document.hidden || contextLost) return; setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();
+function resume() { if (!bootReady || document.hidden || contextLost) return; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();
   // No synchronous draw(0) here: the rAF loop draws on the next frame anyway.
   // A full WebGL render inside the tap handler blocks the main thread on
   // mobile (30-80ms) before the browser can paint the dismissed modal,
@@ -137,7 +155,7 @@ function advance(ms: number) {
   savePeriod+=ms;if(savePeriod>=5000||oldMode!==state.mode){persist();savePeriod=0;}
   draw(Math.min(ms / 1000, .1));
 }
-function frame(now: number) { const dt = lastFrame ? Math.min(now - lastFrame, 100) : 0; lastFrame = now; if (!testing) advance(dt); requestAnimationFrame(frame); }
+function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (stutterFrames.length % 15 === 0) stutterReport(); } if (!testing) advance(dt); requestAnimationFrame(frame); }
 window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
