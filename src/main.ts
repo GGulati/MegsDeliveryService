@@ -156,7 +156,7 @@ function advance(ms: number) {
   savePeriod+=ms;if(savePeriod>=5000||oldMode!==state.mode){persist();savePeriod=0;}
   draw(Math.min(ms / 1000, .1));
 }
-function frame(now: number) { const dt = lastFrame ? Math.min(now - lastFrame, 100) : 0; lastFrame = now; if (stutterDebug) { stutterFrames.push({ t: now, dt }); if (stutterFrames.length > 600) stutterFrames.shift(); if (stutterFrames.length % 30 === 0) stutterReport(); } if (!testing) advance(dt); requestAnimationFrame(frame); }
+function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 600) stutterFrames.shift(); if (stutterFrames.length % 15 === 0) stutterReport(); } if (!testing) advance(dt); requestAnimationFrame(frame); }
 window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
