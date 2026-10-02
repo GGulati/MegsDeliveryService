@@ -25,18 +25,21 @@ if (stutterDebug) {
   stutterEl.textContent = 'stutter debug on';
   document.body.appendChild(stutterEl);
 }
-let stutterPhases: string = '';
+let stutterWorst = 0;
+let stutterWorstPhases = '';
+let stutterCurPhases = '';
+let stutterTapPhases = '';
 function stutterReport() {
   if (!stutterDebug || !stutterEl) return;
   const since = stutterFrames.filter(f => f.t >= stutterResumeAt).map(f => f.dt);
   const worst = [...since].sort((a, b) => b - a).slice(0, 6).map(x => x.toFixed(0));
   const maxAll = stutterFrames.length ? Math.max(...stutterFrames.map(f => f.dt)).toFixed(0) : '0';
-  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms\nworst since resume: ${worst.join(', ')}ms\n${stutterPhases}`;
+  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms\nworst since resume: ${worst.join(', ')}ms\nworst frame ${stutterWorst.toFixed(0)}ms: ${stutterTapPhases}${stutterWorstPhases}`;
 }
-function stutterPhase(name: string, ms: number) {
+function stutterPhase(name: string, ms: number, tap = false) {
   if (!stutterDebug) return;
-  if (ms > 8) stutterPhases += `${name}:${ms.toFixed(0)}ms `;
-  if (stutterPhases.length > 200) stutterPhases = stutterPhases.slice(-200);
+  const entry = `${name}:${ms.toFixed(0)}ms `;
+  if (tap) stutterTapPhases += entry; else stutterCurPhases += entry;
 }
 let state = createState();
 let muted = true;
@@ -66,7 +69,7 @@ function flashSaveFyi(message: string, ms = 8000): void {
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function resume() { if (!bootReady || document.hidden || contextLost) return; const __t0 = stutterDebug ? performance.now() : 0; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; stutterPhases = ''; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist(); if (stutterDebug) stutterPhase('resumeTap', performance.now() - __t0);
+function resume() { if (!bootReady || document.hidden || contextLost) return; const __t0 = stutterDebug ? performance.now() : 0; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; stutterWorst = 0; stutterWorstPhases = ''; stutterTapPhases = ''; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist(); if (stutterDebug) stutterPhase('resumeTap', performance.now() - __t0, true);
   // No synchronous draw(0) here: the rAF loop draws on the next frame anyway.
   // A full WebGL render inside the tap handler blocks the main thread on
   // mobile (30-80ms) before the browser can paint the dismissed modal,
@@ -167,7 +170,7 @@ function advance(ms: number) {
   draw(Math.min(ms / 1000, .1));
   if (stutterDebug) stutterPhase('draw', performance.now() - __a1);
 }
-function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (stutterFrames.length % 15 === 0) stutterReport(); } if (!testing) advance(dt); requestAnimationFrame(frame); }
+function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) stutterCurPhases = ''; if (!testing) advance(dt); if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (rawDt > stutterWorst) { stutterWorst = rawDt; stutterWorstPhases = stutterCurPhases; } if (stutterFrames.length % 15 === 0) stutterReport(); } requestAnimationFrame(frame); }
 window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
