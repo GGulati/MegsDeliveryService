@@ -67,6 +67,11 @@ let contextLost = false;
 const store = new SaveStore();
 const audio = new GameAudio();
 let bootReady=false;
+function waitForFirstPaint(): Promise<void> {
+  return new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
 let saveKind='loading';
 let saveMessage='Opening your little world…';
 let saveFyi: string | null = null;
@@ -139,13 +144,17 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
     store.discardUnreadable();
     state=createState();state.coarsePointer=coarsePointer;
     renderer.setSeed(state.seed);
-    bootReady=true;saveKind='ready';saveMessage='';
+    saveKind='ready';saveMessage='';
     persist();
+    await waitForFirstPaint();
+    bootReady=true;
     flashSaveFyi('Your saved game could not be read, so it was discarded and a new game was started.');
     input?.clear();accumulator=0;draw(0);
     return;
   }
-  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);if(result.kind==='ready'&&result.seedMigrated&&store.canSave)store.save(state);bootReady=result.kind==='ready'||result.kind==='session';input?.clear();accumulator=0;draw(0);}
+  saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);if(result.kind==='ready'&&result.seedMigrated&&store.canSave)store.save(state);input?.clear();accumulator=0;draw(0);
+  await waitForFirstPaint();
+  bootReady=result.kind==='ready'||result.kind==='session';}
 
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);
