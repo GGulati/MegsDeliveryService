@@ -102,6 +102,10 @@ export class GameRenderer {
     // Pre-compile shaders now (page load) instead of on first render:
     // synchronous compile on mobile can block the main thread ~1s.
     try { this.renderer.compile(this.scene, this.camera); } catch { /* non-fatal */ }
+    // Force a full render now to upload all geometry/textures to the GPU.
+    // Without this, the first render happens at first resume, causing a ~1s hitch
+    // when the user taps "Continue flying" immediately after page load.
+    try { this.renderer.render(this.scene, this.camera); } catch { /* non-fatal */ }
   }
 
   resize(): void {
