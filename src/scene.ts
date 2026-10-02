@@ -1,13 +1,18 @@
 import * as THREE from 'three';
-import type { GameState, RenderSettings, Solid, Stop, Vec3 } from './types';
+import type { GameState, Solid, Stop, Vec3 } from './types';
 import { STOPS, SOLIDS, WORLD_LIMIT, isInBay, PARK_RECT, DOCKS, DOCK_W, DOCK_D, DOCK_BOATS, MANSION_GROUNDS, LIGHTHOUSE_TOWER_SOLID_INDEX, CLOCK_TOWER_SOLID_INDEX, OBSERVATORY_DOME_SOLID_INDEX, DISTRICT_PALETTES } from './world';
-import { buildWater, WaterMesh } from './water';
+import { createWater, updateWater, createSparkles, applyCausticsToGround } from './water';
 import { heightAt, bakeTerrainTexture, canGrow } from './terrain';
 import { mulberry32 } from './grain';
 import { ROAD_EDGES, nodeById, nodePos, type RoadEdge } from './roads';
 import { roadCurve, roadWidth, ribbonHeightAt, edgeClips, clipT, intersectionMarkings, CAR_HALF, BIKE_HALF, WALK_HALF, intersections, intersectionHeightAt } from './road-deck';
 import { buildBridge } from './bridge';
 import { generateLots, lotsToSolids, lotTerrain } from './town-gen';
+
+// Scratch values for the per-frame water sun update (no per-frame allocs).
+const _wSunDir = new THREE.Vector3();
+const _wSunColor = new THREE.Color();
+const _wSkyColor = new THREE.Color();
 import { PARK_TREES, PARK_PATHS, PARK_CONSERVATORY } from './park';
 import { collectFacades, emptyFacades, mergeFacades, LOT_SEED_BASE, type FacadeSet, type FacadeInstance } from './facades';
 import { DROP_ANIM_SECONDS, HALO_FADE_SECONDS, ARRIVAL_RADIUS, glowColumnTarget } from './simulation';
@@ -68,7 +73,8 @@ export class GameRenderer {
   private lastPixelRatio = -1;
   private followYaw = 0;
   private world!: THREE.Group;
-  private water: WaterMesh | null = null;
+  private water: THREE.Mesh | null = null;
+  private groundMat: THREE.Material | null = null;
   private room = new RoomView();
   private outdoorFog = new THREE.FogExp2(0xb9dce0,.0035);
 
@@ -110,15 +116,14 @@ export class GameRenderer {
     this.life = new Life(this.world, seed);
   }
 
-  render(state: GameState, dt: number, settings: RenderSettings): void {
+  render(state: GameState, dt: number): void {
     if (this.disposed) return;
     const step = state.paused ? 0 : Math.min(.05, Math.max(0, dt)); this.clock += step;
-    if (this.water && !settings.reducedMotion) this.water.update(this.clock);
-    const visual = flightVisuals(state, this.clock, settings.reducedMotion);
-    this.effects.update(visual.speed, settings.lowQuality);
+    const visual = flightVisuals(state, this.clock);
+    this.effects.update(visual.speed);
     const canvas = this.renderer.domElement;
     const w = Math.max(1, canvas.clientWidth || canvas.width), h = Math.max(1, canvas.clientHeight || canvas.height);
-    const maxPixels = settings.lowQuality ? 1_000_000 : 2_000_000;
+    const maxPixels = 2_000_000;
     const pixelRatio = Math.min(devicePixelRatio || 1, Math.sqrt(maxPixels / (w * h)));
     if (w !== this.lastWidth || h !== this.lastHeight || pixelRatio !== this.lastPixelRatio) {
       this.renderer.setPixelRatio(pixelRatio);
@@ -127,13 +132,13 @@ export class GameRenderer {
       this.camera.updateProjectionMatrix();
       this.lastWidth = w; this.lastHeight = h; this.lastPixelRatio = pixelRatio;
     }
-    this.renderer.shadowMap.enabled = !settings.lowQuality;
-    this.outlines.forEach(outline => { outline.visible = !settings.lowQuality; });
+    this.renderer.shadowMap.enabled = true;
+    this.outlines.forEach(outline => { outline.visible = true; });
 
     const atHome=state.mode==='home';
     [this.world,this.hero,this.dropParcel,this.glowColumn,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
-    this.room.update(state,step,settings.reducedMotion);
-    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();const hp=state.homePosition||{x:0,z:0};const frame=homeCameraFrame(hp.x,hp.z);const nl=homeLookStep([this.homeLook.x,this.homeLook.z],[frame.look[0],frame.look[2]],this.lastMode!=='home',step,settings.reducedMotion);this.homeLook.set(nl[0],HOME_LOOK_Y,nl[1]);this.camera.position.set(this.homeLook.x+HOME_CAM_OFFSET.x,this.homeLook.y+HOME_CAM_OFFSET.y,this.homeLook.z+HOME_CAM_OFFSET.z);this.camera.up.set(0,1,0);this.camera.lookAt(this.homeLook);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
+    this.room.update(state,step);
+    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();const hp=state.homePosition||{x:0,z:0};const frame=homeCameraFrame(hp.x,hp.z);const nl=homeLookStep([this.homeLook.x,this.homeLook.z],[frame.look[0],frame.look[2]],this.lastMode!=='home',step);this.homeLook.set(nl[0],HOME_LOOK_Y,nl[1]);this.camera.position.set(this.homeLook.x+HOME_CAM_OFFSET.x,this.homeLook.y+HOME_CAM_OFFSET.y,this.homeLook.z+HOME_CAM_OFFSET.z);this.camera.up.set(0,1,0);this.camera.lookAt(this.homeLook);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
     if(this.camera.fov!==62){this.camera.fov=62;this.camera.updateProjectionMatrix();}
     this.scene.fog=this.outdoorFog;this.renderer.setClearColor(0xaed9e8);
 
@@ -149,15 +154,15 @@ export class GameRenderer {
     // ~3m long (user feedback 2026-09-27 — she was 4x human scale before).
     this.hero.scale.setScalar(state.mode === 'title' || state.mode === 'summary' ? .86 : .28);
     this.hero.position.y += visual.bob;
-    this.animateSky(settings.reducedMotion, step);
+    this.animateSky(step);
     // Ambient life: cars and pedestrians (Phase 2). Hidden at home with the world.
     if (!atHome && step > 0) {
       this.life?.update(step, player, state.player.speed, state.player.velocity.y, this.clock);
     }
-    this.updateBeacon(this.destination(state), settings.reducedMotion || state.paused ? 0 : step);
-    this.updateGlowColumn(state, settings.reducedMotion);
-    this.updateDropParcel(state, settings.reducedMotion ? 0 : step, settings.reducedMotion);
-    this.updateCamera(state, player, step, settings.reducedMotion, snap);
+    this.updateBeacon(this.destination(state), state.paused ? 0 : step);
+    this.updateGlowColumn(state);
+    this.updateDropParcel(state, state.paused ? 0 : step);
+    this.updateCamera(state, player, step, snap);
     this.lastMode = state.mode;
     // Time-of-day: 7am→7pm over the 360s shift. Drives sky shader, sun orbit,
     // hemisphere, fog, and the clock tower hands. Only ticks during a run.
@@ -174,6 +179,24 @@ export class GameRenderer {
     const [sx, sy, sz] = sunDirection(sky.sunElevation, sky.sunAzimuth);
     this.sun.position.set(sx * 160, Math.max(8, sy * 160), sz * 160);
     this.sun.color.setRGB(...sky.sun);
+    // Water follows the day-cycle sun: direction, color, intensity, sky tint.
+    if (this.water) {
+      _wSunDir.set(sx, sy, sz).normalize();
+      _wSunColor.setRGB(sky.sun[0], sky.sun[1], sky.sun[2]);
+      _wSkyColor.setRGB(sky.horizon[0], sky.horizon[1], sky.horizon[2]);
+      updateWater(this.water, this.clock, this.camera.position, {
+        sunDir: _wSunDir, sunColor: _wSunColor,
+        sunIntensity: sky.sunIntensity, skyColor: _wSkyColor,
+      });
+    }
+    // Caustics ride the same clock and sun.
+    const causticShader = (this.groundMat?.userData as
+      { causticShader?: { uniforms: Record<string, { value: number }> } } | undefined)
+      ?.causticShader;
+    if (causticShader) {
+      causticShader.uniforms.uCausticTime.value = this.clock;
+      causticShader.uniforms.uCausticSun.value = sky.sunIntensity;
+    }
     this.sun.intensity = sky.sunIntensity;
     this.hemi.color.setRGB(...sky.hemiSky);
     this.hemi.groundColor.setRGB(...sky.hemiGround);
@@ -202,11 +225,15 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    // One water plane for the whole world. The shader discovers depth from the
-    // baked heightfield, so foam and color follow the true coastline — no polygons.
-    const water = buildWater();
+    // One water plane for the whole world. Idyllic Ghibli bay water (2026-10-02):
+    // dreamy shore-pinned swell, lighting-driven color, marching foam bands,
+    // voronoi foam net, ebbing contact ring, sparkles, fresnel sky tint.
+    const water = createWater();
     this.water = water;
-    g.add(water.mesh);
+    const sparkles = createSparkles();
+    water.add(sparkles);
+    water.userData.sparkles = sparkles;
+    g.add(water);
     // Island terrain: a heightfield displaced by heightAt (domain-warped noise).
     // The town core stays flat; the coastline wobbles and hills rise in the outer ring.
     // Surface color is baked into a 1024² texture (0.43m/texel) by
@@ -233,6 +260,9 @@ export class GameRenderer {
     colorTex.anisotropy = 4;
     const groundMat = toon(0xffffff);
     groundMat.map = colorTex;
+    // Animated caustic light webs on submerged sand (Ghibli shallows).
+    applyCausticsToGround(groundMat);
+    this.groundMat = groundMat;
     const island = new THREE.Mesh(islandGeo, groundMat); g.add(island);
     // Roads ride the hand-authored graph; bridge edges are drawn by the bridge module.
     // Roads are FLAT ribbons (not tubes) so they don't swallow nearby houses
@@ -564,7 +594,7 @@ export class GameRenderer {
     buildBridge(g);
     const dockMat = toon(0x9a6147);
     DOCKS.forEach(([x, z]) => {
-      const dock = new THREE.Mesh(new THREE.BoxGeometry(DOCK_W, .7, DOCK_D), dockMat); dock.position.set(x, .8, z); g.add(dock);
+      const dock = new THREE.Mesh(new THREE.BoxGeometry(DOCK_W, .7, DOCK_D), dockMat); dock.position.set(x, -0.25, z); g.add(dock);
     });
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
     this.makeClockTower(g); this.makeObservatoryDome(g);
@@ -1612,7 +1642,7 @@ export class GameRenderer {
     }
   }
 
-  private animateSky(reduced: boolean, dt: number): void { if(reduced)return; this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.updateBirds(dt); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
+  private animateSky(dt: number): void { this.clouds.children.forEach((c,i)=>{c.position.x+=.012*(1+i%3);if(c.position.x>205)c.position.x=-205;});this.updateBirds(dt); if(this.beamGroup&&this.lighthouseLit)this.beamGroup.rotation.y+=.015; this.boats.forEach((b)=>{const y0=b.userData.baseY??.35;b.position.y=y0+Math.sin(this.clock*1.2+b.userData.phase)*.18;b.rotation.z=Math.sin(this.clock*.9+b.userData.phase)*.03;}); }
   private destination(state: GameState): Stop | undefined {
     if(state.mode==='tutorial') return STOPS.find(s=>s.id==='harbor-cafe') || STOPS[1];
     const id=state.run?.returning ? 'home' : state.run?.job?.to;
@@ -1658,7 +1688,7 @@ export class GameRenderer {
    * near-field marker, so the column is narrow at its base and never
    * obscures it. Before an auto-drop the column fades out first (driven by
    * state.haloFade); once the drop commits it hides immediately. */
-  private updateGlowColumn(state: GameState, reduced: boolean): void {
+  private updateGlowColumn(state: GameState): void {
     const stop = glowColumnTarget(state);
     const show = !!stop;
     this.glowColumn.visible = show;
@@ -1667,10 +1697,10 @@ export class GameRenderer {
       this.lastGlowStopId = stop.id;
       this.glowColumn.position.set(stop.position.x, stop.position.y, stop.position.z);
     }
-    // Reduced motion renders the glow static; otherwise it breathes gently.
+    // The glow breathes gently.
     // The pre-drop fade multiplies the glow to zero before the parcel leaves.
     const fade = state.haloFade > 0 ? Math.max(0, Math.min(1, state.haloFade / HALO_FADE_SECONDS)) : 1;
-    const pulse = (reduced ? 1 : .86 + .14 * Math.sin(this.clock * 2.4)) * fade;
+    const pulse = (.86 + .14 * Math.sin(this.clock * 2.4)) * fade;
     for (const mat of this.glowMats) mat.uniforms.uPulse.value = pulse;
   }
   /** A committed parcel drop: the box detaches from Meg and falls to the pad. */
@@ -1684,7 +1714,7 @@ export class GameRenderer {
     this.dropParcel.add(box, ribbonX, ribbonZ, bow);
     this.dropParcel.visible = false;
   }
-  private updateDropParcel(state: GameState, step: number, reduced: boolean): void {
+  private updateDropParcel(state: GameState, step: number): void {
     const drop = state.drop;
     const stop = drop ? STOPS.find((s) => s.id === drop.stopId) : undefined;
     const show = !!drop && !!stop && drop.parcel;
@@ -1692,7 +1722,7 @@ export class GameRenderer {
     if (!show || !drop || !stop) return;
     // The player is frozen at the drop point, so the parcel falls from Meg's
     // position straight to the pad, accelerating as it goes.
-    const k = reduced ? 1 : Math.min(1, drop.t / DROP_ANIM_SECONDS);
+    const k = Math.min(1, drop.t / DROP_ANIM_SECONDS);
     const ease = k * k;
     const p = state.player.position;
     const toY = stop.position.y + .7;
@@ -1704,11 +1734,11 @@ export class GameRenderer {
       fromY + (toY - fromY) * ease,
       p.z + (stop.position.z - p.z) * ease,
     );
-    if (!reduced) this.dropParcel.rotation.y += step * 4;
+    this.dropParcel.rotation.y += step * 4;
   }
-  private updateCamera(state: GameState, player: THREE.Vector3, step: number, reduced: boolean, snap: boolean): void {
+  private updateCamera(state: GameState, player: THREE.Vector3, step: number, snap: boolean): void {
     let wanted:THREE.Vector3, look:THREE.Vector3;
-    if(state.mode==='title'||state.mode==='summary'){const a=reduced ? 0 : this.clock*.035;wanted=new THREE.Vector3(-92+Math.sin(a)*8,48,146+Math.cos(a)*7);look=new THREE.Vector3(18,13,65);}
+    if(state.mode==='title'||state.mode==='summary'){const a=this.clock*.035;wanted=new THREE.Vector3(-92+Math.sin(a)*8,48,146+Math.cos(a)*7);look=new THREE.Vector3(18,13,65);}
     else {this.followYaw=snap?state.player.yaw:followHeading(this.followYaw,state.player.yaw,step);const yaw=this.followYaw;const behind=new THREE.Vector3(-Math.sin(yaw)*26,12,Math.cos(yaw)*26);wanted=player.clone().add(behind);look=player.clone().add(new THREE.Vector3(Math.sin(yaw)*5,2,-Math.cos(yaw)*5));
       const start=player.clone().add(new THREE.Vector3(0,2,0)); const dir=wanted.clone().sub(start), dist=dir.length();
       this.blockers.forEach(blocker => blocker.updateWorldMatrix(true, false));

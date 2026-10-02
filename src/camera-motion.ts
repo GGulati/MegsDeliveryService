@@ -19,11 +19,10 @@ export function homeCameraFrame(megX: number, megZ: number): { cam: [number, num
   };
 }
 
-/** Advance the home look target (x/z plane): snap on entering home or under
- *  reduced motion (the ease is decorative; framing is functional), freeze
+/** Advance the home look target (x/z plane): snap on entering home, freeze
  *  while paused, otherwise drift toward Meg with a cozy ease. */
-export function homeLookStep(current: [number, number], desired: [number, number], entering: boolean, step: number, reducedMotion: boolean): [number, number] {
-  if (entering || reducedMotion) return desired;
+export function homeLookStep(current: [number, number], desired: [number, number], entering: boolean, step: number): [number, number] {
+  if (entering) return desired;
   if (step <= 0) return current;
   const k = 1 - Math.exp(-step * 5);
   return [current[0] + (desired[0] - current[0]) * k, current[1] + (desired[1] - current[1]) * k];

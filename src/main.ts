@@ -16,13 +16,11 @@ const params = new URLSearchParams(location.search);
 const testing = params.get('test') === '1';
 let state = createState();
 let muted = true;
-let lowQuality = matchMedia('(pointer: coarse)').matches;
 // The stick visual lives inside the coarse-pointer-gated touch layer, so the
 // stick must only spawn on coarse pointers too — otherwise a touch-laptop
 // finger drag would drive an invisible stick with no affordance.
 const coarsePointer = matchMedia('(pointer: coarse)').matches;
 state.coarsePointer = coarsePointer;
-let reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let renderer: GameRenderer;
 let input: Input;
 let accumulator = 0;
@@ -70,8 +68,7 @@ const ui = new UI(root, {
     resume(); input?.clear(); persist(); draw(0);
   },
   mute() { muted = !muted; audio.setMuted(muted); draw(0); },
-  quality() { lowQuality = !lowQuality; draw(0); },
-  motion() { reducedMotion = !reducedMotion; draw(0); }, fullscreen,
+  fullscreen,
   chooseJob(index) { if(!bootReady)return; chooseJob(state, index); input.clear(); persist(); draw(0); },
   returnHome() { if(!bootReady)return; returnHome(state); input.clear(); persist(); draw(0); },
   nextDay() { if(!bootReady)return; enterHome(state); input.clear(); persist(); draw(0); },
@@ -114,11 +111,10 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
 
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);
-  document.body.classList.toggle('reduced-motion', reducedMotion);
   if (!renderer || contextLost) return;
-  renderer.render(state, dt, { reducedMotion, lowQuality });
+  renderer.render(state, dt);
   const target = getTarget(state) ?? STOPS[0];
-  ui.render(state, { muted, lowQuality, reducedMotion, targetName: target.name,
+  ui.render(state, { muted, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
     targetBearing: relativeBearing(state.player.position, target.position, state.player.yaw),
     speed: state.player.speed, status: '', timeRemaining: state.run ? Math.max(0,360-state.run.elapsed) : undefined });
