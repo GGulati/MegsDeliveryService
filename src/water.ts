@@ -171,10 +171,6 @@ void main() {
   if (vDepth < 0.02) discard;
   float d = clamp(vDepth / ${MAX_DEPTH}.0, 0.0, 1.0);
   vec3 V = normalize(uCamPos - vWorldPos);
-  float dist = distance(uCamPos, vWorldPos);
-  // Detail fade is REQUIRED: unfaded sparkle/noise twinkles sub-pixel and no
-  // AA can fix it (documented shipped-engine postmortem).
-  float detailFade = 1.0 - smoothstep(40.0, 120.0, dist);
   // uSunI ranges ~1.6-2.4 over the day cycle; normalize so mix factors and
   // multipliers stay in [0,1] instead of extrapolating past target colors.
   float sunN = clamp(uSunI / 2.4, 0.0, 1.0);
@@ -197,7 +193,7 @@ void main() {
   vec4 nz1 = texture2D(uNoise, vNoiseUv1);
   vec4 nz2 = texture2D(uNoise, vNoiseUv2);
   vec2 flow = texture2D(uNoise, vWorldPos.xz * 0.008).bg * 2.0 - 1.0;
-  vec3 N = normalize(vWaveN + vec3((nz1.r - 0.5) * 0.55, 0.0, (nz2.r - 0.5) * 0.55) * detailFade);
+  vec3 N = normalize(vWaveN + vec3((nz1.r - 0.5) * 0.55, 0.0, (nz2.r - 0.5) * 0.55));
 
   // --- Foam layer 1: marching bands (Alisavakis) — 4 lines flowing shoreward ---
   float foamDiff = clamp(vDepth / 1.6, 0.0, 1.0); // 0 at shoreline
@@ -217,7 +213,7 @@ void main() {
   vec2 f12b = voro12(wuv2);
   float net1 = 1.0 - smoothstep(0.0, 0.16, f12a.y - f12a.x);
   float net2 = 1.0 - smoothstep(0.0, 0.16, f12b.y - f12b.x);
-  float netMask = smoothstep(0.05, 0.30, d) * (1.0 - smoothstep(0.60, 1.0, d)) * detailFade;
+  float netMask = smoothstep(0.05, 0.30, d) * (1.0 - smoothstep(0.60, 1.0, d));
   float foamNet = max(net1, net2 * 0.8) * netMask;
   // Dark blue underlayer gives the net painterly depth.
   float netDark = max(1.0 - smoothstep(0.0, 0.34, f12a.y - f12a.x),
@@ -244,8 +240,8 @@ void main() {
   vec3 Hv = normalize(uSunDir + V);
   float ndh = max(dot(N, Hv), 0.0);
   float sparkleGate = smoothstep(0.90, 0.995, nz2.g);
-  float sparkle = pow(ndh, 700.0) * sparkleGate * detailFade * sunN;
-  float glint = pow(ndh, 120.0) * 0.22 * detailFade * sunN;
+  float sparkle = pow(ndh, 700.0) * sparkleGate * sunN;
+  float glint = pow(ndh, 120.0) * 0.22 * sunN;
   // Foam is matte: no glint under foam. Sparkles dance over everything.
   col += uSunColor * (sparkle * 2.5 + glint * (1.0 - foamAll));
 
@@ -364,7 +360,7 @@ void main() {
   float tw = 0.5 + 0.5 * sin(uTime * (1.2 + fract(aPhase) * 2.0) + aPhase * 7.0);
   vTw = tw;
   float dist = max(1.0, -mv.z);
-  vFade = (1.0 - smoothstep(60.0, 160.0, dist)) * smoothstep(0.4, 0.8, aDepth);
+  vFade = smoothstep(0.4, 0.8, aDepth);
   gl_PointSize = aScale * 130.0 / dist * (0.6 + 0.4 * tw);
   gl_Position = projectionMatrix * mv;
 }

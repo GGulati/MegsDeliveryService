@@ -94,11 +94,11 @@ describe('water shader', () => {
     assert.ok(WATER_FRAG.includes('foamRing'), 'ebbing contact ring');
   });
 
-  it('distance-fades detail (no sub-pixel sparkle shimmer)', () => {
-    assert.ok(WATER_FRAG.includes('detailFade'), 'detail fade required');
+  it('renders full detail at all distances (no LOD fade)', () => {
+    assert.ok(!WATER_FRAG.includes('detailFade'), 'detail fade must be gone');
     const sparkleLine = WATER_FRAG.split('\n').find((l) => l.includes('float sparkle ='));
-    assert.ok(sparkleLine && sparkleLine.includes('detailFade'),
-      'sparkle must be gated by detailFade');
+    assert.ok(sparkleLine && !sparkleLine.includes('detailFade'),
+      'sparkle must not be gated by distance');
   });
 
   it('applies fresnel sky tint at grazing angles', () => {
