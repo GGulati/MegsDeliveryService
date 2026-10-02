@@ -25,12 +25,18 @@ if (stutterDebug) {
   stutterEl.textContent = 'stutter debug on';
   document.body.appendChild(stutterEl);
 }
+let stutterPhases: string = '';
 function stutterReport() {
   if (!stutterDebug || !stutterEl) return;
   const since = stutterFrames.filter(f => f.t >= stutterResumeAt).map(f => f.dt);
   const worst = [...since].sort((a, b) => b - a).slice(0, 6).map(x => x.toFixed(0));
   const maxAll = stutterFrames.length ? Math.max(...stutterFrames.map(f => f.dt)).toFixed(0) : '0';
-  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms\nworst since resume: ${worst.join(', ')}ms`;
+  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms\nworst since resume: ${worst.join(', ')}ms\n${stutterPhases}`;
+}
+function stutterPhase(name: string, ms: number) {
+  if (!stutterDebug) return;
+  if (ms > 8) stutterPhases += `${name}:${ms.toFixed(0)}ms `;
+  if (stutterPhases.length > 200) stutterPhases = stutterPhases.slice(-200);
 }
 let state = createState();
 let muted = true;
@@ -60,7 +66,7 @@ function flashSaveFyi(message: string, ms = 8000): void {
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function resume() { if (!bootReady || document.hidden || contextLost) return; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist();
+function resume() { if (!bootReady || document.hidden || contextLost) return; const __t0 = stutterDebug ? performance.now() : 0; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; stutterPhases = ''; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist(); if (stutterDebug) stutterPhase('resumeTap', performance.now() - __t0);
   // No synchronous draw(0) here: the rAF loop draws on the next frame anyway.
   // A full WebGL render inside the tap handler blocks the main thread on
   // mobile (30-80ms) before the browser can paint the dismissed modal,
@@ -130,7 +136,9 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
 function draw(dt: number) {
   audio.update(state, !bootReady || contextLost);
   if (!renderer || contextLost) return;
+  const __d0 = stutterDebug ? performance.now() : 0;
   renderer.render(state, dt);
+  if (stutterDebug) stutterPhase('gl', performance.now() - __d0);
   const target = getTarget(state) ?? STOPS[0];
   ui.render(state, { muted, targetName: target.name,
     targetDistance: Math.hypot(target.position.x - state.player.position.x, target.position.z - state.player.position.z),
@@ -149,11 +157,15 @@ function draw(dt: number) {
 }
 function advance(ms: number) {
   if (!bootReady||state.paused || document.hidden || contextLost) { accumulator = 0; draw(0); return; }
+  const __a0 = stutterDebug ? performance.now() : 0;
   const oldMode=state.mode;
   accumulator += Math.max(0, ms) / 1000;
   while (accumulator + 1e-10 >= 1 / 60) { step(state, input.sample(), 1 / 60); accumulator -= 1 / 60; }
+  if (stutterDebug) stutterPhase('sim', performance.now() - __a0);
   savePeriod+=ms;if(savePeriod>=5000||oldMode!==state.mode){persist();savePeriod=0;}
+  const __a1 = stutterDebug ? performance.now() : 0;
   draw(Math.min(ms / 1000, .1));
+  if (stutterDebug) stutterPhase('draw', performance.now() - __a1);
 }
 function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (stutterFrames.length % 15 === 0) stutterReport(); } if (!testing) advance(dt); requestAnimationFrame(frame); }
 window.addEventListener('resize', () => { renderer.resize(); draw(0); });
