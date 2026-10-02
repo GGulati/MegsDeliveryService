@@ -564,7 +564,7 @@ export class GameRenderer {
     buildBridge(g);
     const dockMat = toon(0x9a6147);
     DOCKS.forEach(([x, z]) => {
-      const dock = new THREE.Mesh(new THREE.BoxGeometry(DOCK_W, .7, DOCK_D), dockMat); dock.position.set(x, .8, z); g.add(dock);
+      const dock = new THREE.Mesh(new THREE.BoxGeometry(DOCK_W, .7, DOCK_D), dockMat); dock.position.set(x, -0.25, z); g.add(dock);
     });
     this.makeBuildings(g); this.makeGreenery(g); this.makeLighthouse(g);
     this.makeClockTower(g); this.makeObservatoryDome(g);
