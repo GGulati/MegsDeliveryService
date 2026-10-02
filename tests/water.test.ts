@@ -117,8 +117,10 @@ describe('water vertex waves', () => {
       'displacement must be shore-pinned');
   });
 
-  it('keeps total amplitude dreamy (never stormy)', () => {
-    assert.ok(WAVE_AMP_TOTAL <= 0.2, `total amplitude ${WAVE_AMP_TOTAL} exceeds dreamy budget`);
+  it('keeps total amplitude visible but not stormy', () => {
+    assert.ok(WAVE_AMP_TOTAL >= 0.4,
+      `total amplitude ${WAVE_AMP_TOTAL} below perceptibility floor — waves invisible at game camera distance`);
+    assert.ok(WAVE_AMP_TOTAL <= 0.8, `total amplitude ${WAVE_AMP_TOTAL} exceeds stylized budget`);
   });
 
   it('passes a normalized wave height for the SSS peak mask', () => {

@@ -64,7 +64,7 @@ export const WATER_SIZE = 440;
 export const SHORE_PIN_BAND = 2.0;
 /** Total vertex wave amplitude (m) — derived from the component amplitudes
  *  below so vWaveH normalization can never silently drift from the shader. */
-export const WAVE_AMP_TOTAL = 0.10 + 0.05 + 0.022;
+export const WAVE_AMP_TOTAL = 0.35 + 0.18 + 0.08;
 
 export const WATER_VERT = /* glsl */`
 attribute float aDepth;
@@ -82,26 +82,26 @@ void main() {
   // Three dreamy summed sines, vertical only. Slow phases for calm water.
   float h = 0.0;
   vec2 g = vec2(0.0);
-  { // primary swell into the bay: A=0.10, wavelength 16m
+  { // primary swell into the bay: A=0.35, wavelength 16m
     vec2 dir = normalize(vec2(0.15, 1.0));
     float k = 6.28318 / 16.0;
     float ph = dot(dir, p) * k + t * 0.9;
-    h += 0.10 * sin(ph);
-    g += dir * (0.10 * k * cos(ph));
+    h += 0.35 * sin(ph);
+    g += dir * (0.35 * k * cos(ph));
   }
-  { // secondary: A=0.05, wavelength 8m, ~40 degrees off
+  { // secondary: A=0.18, wavelength 8m, ~40 degrees off
     vec2 dir = normalize(vec2(0.83, 0.55));
     float k = 6.28318 / 8.0;
     float ph = dot(dir, p) * k + t * 1.3;
-    h += 0.05 * sin(ph);
-    g += dir * (0.05 * k * cos(ph));
+    h += 0.18 * sin(ph);
+    g += dir * (0.18 * k * cos(ph));
   }
-  { // ripple: A=0.022, wavelength 3.5m, cross direction
+  { // ripple: A=0.08, wavelength 7m, cross direction
     vec2 dir = normalize(vec2(-0.6, 0.8));
-    float k = 6.28318 / 3.5;
+    float k = 6.28318 / 7.0;
     float ph = dot(dir, p) * k + t * 1.9;
-    h += 0.022 * sin(ph);
-    g += dir * (0.022 * k * cos(ph));
+    h += 0.08 * sin(ph);
+    g += dir * (0.08 * k * cos(ph));
   }
   float shorePin = smoothstep(0.0, ${SHORE_PIN_BAND.toFixed(1)}, aDepth);
   vWaveH = clamp(h / ${WAVE_AMP_TOTAL.toFixed(3)}, -1.0, 1.0);
