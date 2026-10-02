@@ -69,7 +69,10 @@ const audio = new GameAudio();
 let bootReady=false;
 function waitForFirstPaint(): Promise<void> {
   return new Promise(resolve => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    setTimeout(finish, 2000);
+    requestAnimationFrame(() => requestAnimationFrame(finish));
   });
 }
 let saveKind='loading';
