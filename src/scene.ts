@@ -135,7 +135,7 @@ export class GameRenderer {
       this.camera.updateProjectionMatrix();
       this.lastWidth = w; this.lastHeight = h; this.lastPixelRatio = pixelRatio;
     }
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = !(typeof location !== 'undefined' && new URLSearchParams(location.search).get('noshadows') === '1');
     this.outlines.forEach(outline => { outline.visible = true; });
 
     const atHome=state.mode==='home';
