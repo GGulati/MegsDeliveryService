@@ -79,12 +79,20 @@ let contextLost = false;
 const store = new SaveStore();
 const audio = new GameAudio();
 let bootReady=false;
+let firstDrawDone=false;
 function waitForFirstPaint(): Promise<void> {
   return new Promise(resolve => {
     let done = false;
     const finish = () => { if (!done) { done = true; resolve(); } };
-    setTimeout(finish, 2000);
-    requestAnimationFrame(() => requestAnimationFrame(finish));
+    setTimeout(finish, 5000);
+    const check = () => {
+      if (firstDrawDone) {
+        requestAnimationFrame(() => requestAnimationFrame(finish));
+      } else {
+        requestAnimationFrame(check);
+      }
+    };
+    requestAnimationFrame(check);
   });
 }
 let saveKind='loading';
