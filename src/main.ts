@@ -15,6 +15,10 @@ const root = document.querySelector<HTMLElement>('#app')!;
 const params = new URLSearchParams(location.search);
 const testing = params.get('test') === '1';
 const stutterDebug = params.get('stutter') === '1';
+const noSaveLock = params.get('nosavelock') === '1';
+let stutterClickAt = 0;
+let stutterResumeStart = 0;
+let stutterRafAt = 0;
 const stutterFrames: { t: number; dt: number }[] = [];
 let stutterResumeAt = 0;
 let stutterWorst = 0;
@@ -34,6 +38,10 @@ if (stutterDebug && typeof PerformanceObserver !== 'undefined') {
   } catch { /* not supported */ }
 }
 if (stutterDebug) {
+  document.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button');
+    if (b && /continue flying/i.test(b.textContent || '')) stutterClickAt = performance.now();
+  }, true);
   stutterEl = document.createElement('div');
   stutterEl.style.cssText = 'position:fixed;top:8px;left:8px;z-index:9999;background:rgba(0,40,0,.85);color:#0f0;font:11px monospace;padding:8px;max-width:92vw;white-space:pre-wrap;pointer-events:none';
   stutterEl.textContent = 'stutter debug on';
@@ -45,7 +53,9 @@ function stutterReport() {
   const worst = [...since].sort((a, b) => b - a).slice(0, 6).map(x => x.toFixed(0));
   const maxAll = stutterFrames.length ? Math.max(...stutterFrames.map(f => f.dt)).toFixed(0) : '0';
   const pauseDur = stutterPauseAt ? ((stutterResumeAt - stutterPauseAt) / 1000).toFixed(0) : '?';
-  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms pauseDur=${pauseDur}s\nworst since resume: ${worst.join(', ')}ms\nworst frame ${stutterWorst.toFixed(0)}ms: ${stutterTapPhases}${stutterWorstPhases}`;
+  const clickToResume = stutterClickAt && stutterResumeStart ? (stutterResumeStart - stutterClickAt).toFixed(0) : '?';
+  const resumeToRaf = stutterResumeStart && stutterRafAt ? (stutterRafAt - stutterResumeStart).toFixed(0) : '?';
+  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms pauseDur=${pauseDur}s\nclick->resume=${clickToResume}ms resume->rAF=${resumeToRaf}ms\nworst since resume: ${worst.join(', ')}ms\nworst frame ${stutterWorst.toFixed(0)}ms: ${stutterTapPhases}${stutterWorstPhases}`;
 }
 function stutterPhase(name: string, ms: number, tap = false) {
   if (!stutterDebug) return;
@@ -88,7 +98,7 @@ function flashSaveFyi(message: string, ms = 8000): void {
 let savePeriod=0;
 
 function pause(reason = 'Take a little breather.') { if (stutterDebug) stutterPauseAt = performance.now(); setPaused(state, true, reason); input?.clear(); accumulator = 0; persist(); draw(0); }
-function resume() { if (!bootReady || document.hidden || contextLost) return; const __t0 = stutterDebug ? performance.now() : 0; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; stutterWorst = 0; stutterWorstPhases = ''; stutterTapPhases = ''; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist(); if (stutterDebug) stutterPhase('resumeTap', performance.now() - __t0, true);
+function resume() { if (!bootReady || document.hidden || contextLost) return; if (stutterDebug) stutterResumeStart = performance.now(); const __t0 = stutterDebug ? performance.now() : 0; if (stutterDebug) { stutterResumeAt = performance.now(); stutterFrames.length = 0; stutterWorst = 0; stutterWorstPhases = ''; stutterTapPhases = ''; stutterRafAt = 0; } setPaused(state, false); input?.clear(); accumulator = 0; lastFrame = performance.now(); persist(); if (stutterDebug) stutterPhase('resumeTap', performance.now() - __t0, true);
   // No synchronous draw(0) here: the rAF loop draws on the next frame anyway.
   // A full WebGL render inside the tap handler blocks the main thread on
   // mobile (30-80ms) before the browser can paint the dismissed modal,
@@ -140,7 +150,10 @@ catch { root.innerHTML = '<main class="compatibility"><h1>A little more sky, ple
 input = new Input(canvas, { hover: () => {if(!bootReady)return; toggleHover(state); persist(); draw(0); }, interact: () => {if(!bootReady||state.mode!=='home')return; interact(state);persist(); draw(0); }, pause: () => {if(!bootReady)return;if(state.mode==='home'&&state.homePanel!=='none'){closeHomePanel(state);persist();draw(0);}else if(state.paused)resume();else pause();}, fullscreen }, () => coarsePointer && !landingCommitted(state) && touchControlsVisible(state.mode, state.paused, state.homePanel));
 
 function persist(){if(!bootReady||!store.canSave)return;if(!store.save(state)){saveKind='session';saveMessage=store.message;}}
-async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);const result=await store.acquire();
+async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening your little world…';draw(0);
+  const result = noSaveLock
+    ? { kind: 'ready' as const, state: null as any, message: '', seedMigrated: false }
+    : await store.acquire();
   if(result.kind==='invalid'){
     // No valid save to load: discard the unreadable bytes and start a new
     // game with saving on. A brief banner says what happened; no decisions.
@@ -193,7 +206,7 @@ function advance(ms: number) {
   draw(Math.min(ms / 1000, .1));
   if (stutterDebug) stutterPhase('draw', performance.now() - __a1);
 }
-function frame(now: number) { const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) stutterCurPhases = ''; if (!testing) advance(dt); if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (rawDt > stutterWorst) { stutterWorst = rawDt; stutterWorstPhases = stutterCurPhases; } if (stutterFrames.length % 15 === 0) stutterReport(); } requestAnimationFrame(frame); }
+function frame(now: number) { if (stutterDebug && stutterResumeStart && !stutterRafAt) stutterRafAt = now; const rawDt = lastFrame ? now - lastFrame : 0; const dt = Math.min(rawDt, 100); lastFrame = now; if (stutterDebug) stutterCurPhases = ''; if (!testing) advance(dt); if (stutterDebug) { stutterFrames.push({ t: now, dt: rawDt }); if (stutterFrames.length > 900) stutterFrames.shift(); if (rawDt > stutterWorst) { stutterWorst = rawDt; stutterWorstPhases = stutterCurPhases; } if (stutterFrames.length % 15 === 0) stutterReport(); } requestAnimationFrame(frame); }
 window.addEventListener('resize', () => { renderer.resize(); draw(0); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause('Welcome back. Ready to fly?'); });
 window.addEventListener('blur', () => { input.clear(); if (state.mode !== 'title') pause(); });
