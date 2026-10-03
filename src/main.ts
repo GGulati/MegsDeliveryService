@@ -15,6 +15,7 @@ const root = document.querySelector<HTMLElement>('#app')!;
 const params = new URLSearchParams(location.search);
 const testing = params.get('test') === '1';
 const stutterDebug = params.get('stutter') === '1';
+const stutterPageLoadAt = performance.now();
 const noSaveLock = params.get('nosavelock') === '1';
 let stutterClickAt = 0;
 let stutterResumeStart = 0;
@@ -54,8 +55,9 @@ function stutterReport() {
   const maxAll = stutterFrames.length ? Math.max(...stutterFrames.map(f => f.dt)).toFixed(0) : '0';
   const pauseDur = stutterPauseAt ? ((stutterResumeAt - stutterPauseAt) / 1000).toFixed(0) : '?';
   const clickToResume = stutterClickAt && stutterResumeStart ? (stutterResumeStart - stutterClickAt).toFixed(0) : '?';
+  const loadToResume = stutterResumeStart ? ((stutterResumeStart - stutterPageLoadAt) / 1000).toFixed(1) : '?';
   const resumeToRaf = stutterResumeStart && stutterRafAt ? (stutterRafAt - stutterResumeStart).toFixed(0) : '?';
-  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms pauseDur=${pauseDur}s\nclick->resume=${clickToResume}ms resume->rAF=${resumeToRaf}ms\nworst since resume: ${worst.join(', ')}ms\nworst frame ${stutterWorst.toFixed(0)}ms: ${stutterTapPhases}${stutterWorstPhases}`;
+  stutterEl.textContent = `frames=${stutterFrames.length} maxEver=${maxAll}ms pauseDur=${pauseDur}s\nclick->resume=${clickToResume}ms resume->rAF=${resumeToRaf}ms load->resume=${loadToResume}s\nworst since resume: ${worst.join(', ')}ms\nworst frame ${stutterWorst.toFixed(0)}ms: ${stutterTapPhases}${stutterWorstPhases}`;
 }
 function stutterPhase(name: string, ms: number, tap = false) {
   if (!stutterDebug) return;
