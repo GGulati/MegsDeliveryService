@@ -10,13 +10,13 @@ export class ScreenManager {
     this.root = root;
   }
 
-  /** Transition to a new screen. Exits the current, enters the new. */
+  /** Transition to a new screen. Enters the new first (so loading stays
+   * visible during heavy work), then exits the old. */
   async show(screen: Screen): Promise<void> {
-    if (this.current) {
-      this.current.exit();
-    }
+    const old = this.current;
     this.current = screen;
     await this.current.enter();
+    if (old) old.exit();
   }
 
   /** Per-frame update for the active screen. */
