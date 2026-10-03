@@ -104,6 +104,26 @@ export class GameRenderer {
     try { this.renderer.compile(this.scene, this.camera); } catch { /* non-fatal */ }
   }
 
+  /** Pre-upload all textures to GPU during loading screen. */
+  preloadTextures(): void {
+    const textures = new Set<THREE.Texture>();
+    this.scene.traverse(o => {
+      const mesh = o as THREE.Mesh;
+      const mat = (mesh as any).material as THREE.Material | THREE.Material[] | undefined;
+      if (!mat) return;
+      const mats = Array.isArray(mat) ? mat : [mat];
+      for (const m of mats) {
+        for (const key of Object.keys(m)) {
+          const v = (m as any)[key];
+          if (v && (v as THREE.Texture).isTexture) textures.add(v as THREE.Texture);
+        }
+      }
+    });
+    for (const t of textures) {
+      try { (this.renderer as any).initTexture(t); } catch { /* non-fatal */ }
+    }
+  }
+
   resize(): void {
     // The next render owns the quality-dependent backing-store dimensions.
     this.lastWidth = -1;

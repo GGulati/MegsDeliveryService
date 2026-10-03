@@ -38,6 +38,7 @@ if (stutterDebug && typeof PerformanceObserver !== 'undefined') {
     __lt.observe({ entryTypes: ['longtask'] });
   } catch { /* not supported */ }
 }
+if (new URLSearchParams(location.search).get('nohud') === '1') document.body.classList.add('nohud');
 if (stutterDebug) {
   document.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest('button');
@@ -179,6 +180,7 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
     return;
   }
   saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);if(result.kind==='ready'&&result.seedMigrated&&store.canSave)store.save(state);input?.clear();accumulator=0;draw(0);
+  try { renderer.preloadTextures(); } catch { /* non-fatal */ }
   await waitForFirstPaint();
   bootReady=result.kind==='ready'||result.kind==='session';}
 
