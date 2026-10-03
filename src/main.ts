@@ -172,7 +172,6 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
     renderer.setSeed(state.seed);
     saveKind='ready';saveMessage='';
     persist();
-    try { renderer.frontload(); } catch { /* non-fatal */ }
     await waitForFirstPaint();
     bootReady=true;
     flashSaveFyi('Your saved game could not be read, so it was discarded and a new game was started.');
@@ -180,7 +179,6 @@ async function boot(){bootReady=false;saveKind='loading';saveMessage='Opening yo
     return;
   }
   saveKind=result.kind;saveMessage=result.message;if(result.state)state=result.state;renderer.setSeed(state.seed);if(result.kind==='ready'&&result.seedMigrated&&store.canSave)store.save(state);input?.clear();accumulator=0;draw(0);
-  try { renderer.frontload(); } catch { /* non-fatal */ }
   await waitForFirstPaint();
   bootReady=result.kind==='ready'||result.kind==='session';}
 

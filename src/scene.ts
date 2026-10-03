@@ -104,26 +104,6 @@ export class GameRenderer {
     try { this.renderer.compile(this.scene, this.camera); } catch { /* non-fatal */ }
   }
 
-  /** Frontload: upload all geometry/textures to GPU during loading screen.
-   * Disables frustum culling for one full render so every object's buffers
-   * are uploaded, then restores. Prevents first-frame hitches from lazy uploads. */
-  frontload(): void {
-    const saved: { o: THREE.Object3D; v: boolean }[] = [];
-    this.scene.traverse(o => {
-      const mesh = o as THREE.Mesh;
-      if ('frustumCulled' in mesh) {
-        saved.push({ o, v: mesh.frustumCulled });
-        mesh.frustumCulled = false;
-      }
-    });
-    try {
-      this.renderer.compile(this.scene, this.camera);
-      this.renderer.render(this.scene, this.camera);
-    } finally {
-      for (const { o, v } of saved) (o as THREE.Mesh).frustumCulled = v;
-    }
-  }
-
   resize(): void {
     // The next render owns the quality-dependent backing-store dimensions.
     this.lastWidth = -1;
