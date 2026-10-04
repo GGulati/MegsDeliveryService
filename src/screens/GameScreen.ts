@@ -267,6 +267,11 @@ export class GameScreen implements Screen {
     this.renderer.setSeed(this.state.seed);
     if (result.kind === 'ready' && result.seedMigrated && this.store.canSave) this.store.save(this.state);
     this.bootReady = result.kind === 'ready' || result.kind === 'session' || result.kind === 'readonly';
+    if (new URLSearchParams(location.search).get('debug') === '1') {
+      (window as any).__bootReady = this.bootReady;
+      (window as any).__bootKind = result.kind;
+      document.title = 'bootReady=' + this.bootReady + ' kind=' + result.kind;
+    }
     // Continue means play, not paused. Clear paused from restored save.
     if (this.bootReady) setPaused(this.state, false);
     this.input?.clear();

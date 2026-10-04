@@ -38,8 +38,11 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
   let saveResult: SaveResult;
   try {
     saveResult = await store.acquire();
-  } catch {
-    saveResult = { kind: 'readonly', message: 'Save unavailable.' };
+  } catch (e) {
+    saveResult = { kind: 'readonly', message: 'Save unavailable: ' + (e instanceof Error ? e.message : String(e)) };
+  }
+  if (new URLSearchParams(location.search).get('debug') === '1') {
+    (window as any).__saveResult = { kind: saveResult.kind, message: saveResult.message, hasState: !!saveResult.state };
   }
   const game = new GameScreen(root, canvas, loading, slotId, isNew, store, saveResult, () => {
     void manager.show(new MenuScreen(root, startGame));
