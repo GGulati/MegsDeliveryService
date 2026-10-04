@@ -33,7 +33,7 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
   await manager.show(loading);
   // Force the browser to paint the loading screen before any heavy work.
   // Double rAF ensures the DOM is actually rendered.
-  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  await new Promise<void>(resolve => setTimeout(resolve, 100));
   // Acquire save during loading (not in GameScreen).
   loading.setStage('Opening save…');
   const store = new SaveStore();
