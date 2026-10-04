@@ -37,3 +37,23 @@ body { min-width:0; min-height:0; }
    tutorial bubble stays suppressed below 650px width (its geometry assumes a
    wider viewport); it remains dismissible and non-blocking wherever shown. */
 @media (orientation:portrait) and (pointer:coarse){.destination-card{top:max(78px,calc(env(safe-area-inset-top) + 58px));bottom:auto;left:max(16px,env(safe-area-inset-left));width:205px;padding:12px 14px}.destination-card strong{font-size:20px;margin:5px 0 1px}}
+
+/* Screen architecture: menu and loading */
+.menu-screen{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#1e3a38 0%,#2a4a45 100%);padding:20px}
+.menu-screen .menu-card{max-width:420px;width:100%;text-align:center;background:#fffaf0;border-radius:20px;padding:36px 32px;box-shadow:0 12px 48px #0006}
+.menu-screen h1{margin:0 0 6px;font:500 32px Georgia,serif;color:#493725;letter-spacing:-.02em}
+.menu-tagline{margin:0 0 24px;color:#806956;font-size:14px;font-style:italic}
+.menu-btn{display:block;width:100%;margin:0 0 12px;padding:16px 18px;border:2px solid #dcc6a6;border-radius:14px;background:#fff;color:#493725;font:600 17px system-ui;cursor:pointer;text-align:left}
+.menu-btn small{display:block;margin-top:4px;font:400 12px system-ui;color:#806956}
+.menu-btn.primary{background:#ecbc64;border-color:#d39354}
+.menu-btn:hover{border-color:#d39354}
+.menu-btn span{float:right}
+.slot-list{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px}
+.slot-btn{padding:14px 8px;border:1px solid #dcc6a6;border-radius:12px;background:#fffaf0;cursor:pointer}
+.slot-btn b{display:block;font:600 14px system-ui;color:#493725}
+.slot-btn small{display:block;margin-top:4px;font:400 11px system-ui;color:#806956;line-height:1.4}
+.slot-btn.empty{opacity:.55;cursor:default}
+.loading-screen{position:fixed;inset:0;z-index:9500;display:flex;align-items:center;justify-content:center;background:#1e3a38}
+.loading-card{text-align:center;color:#f5e6ca}
+.loading-card .bl-spin{width:48px;height:48px;margin:0 auto 18px;border-radius:50%;border:4px solid #f5e6ca33;border-top-color:#ecbc64;animation:blspin 1s linear infinite}
+.loading-label{margin:0;font:400 16px Georgia,serif}

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createState, startRun } from '../src/simulation';
-import { SAVE_KEY, SaveStore, decodeSave, encodeSave, seedMigrated } from '../src/storage';
+import { SAVE_KEY, SAVE_KEY_PREFIX, SaveStore, decodeSave, encodeSave, seedMigrated } from '../src/storage';
+const SLOT1_KEY = `${SAVE_KEY_PREFIX}1`;
 
 test('legacy saves without a seed get one minted, and the migration is detectable', () => {
   const raw = JSON.parse(encodeSave(createState()));
@@ -48,12 +49,12 @@ test('SaveStore makes one atomic write and leaves old storage untouched on failu
   const backing = new Map<string, string>(); let writes = 0; let fail = false;
   const oldStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
-  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => backing.get(key) ?? null, setItem: (key: string, value: string) => { if (fail) throw new Error('quota'); if (key === SAVE_KEY) writes++; backing.set(key, value); } } });
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: { getItem: (key: string) => backing.get(key) ?? null, setItem: (key: string, value: string) => { if (fail) throw new Error('quota'); if (key === SLOT1_KEY) writes++; backing.set(key, value); } } });
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {} });
   try {
     const store = new SaveStore(); assert.equal((await store.acquire()).kind, 'ready');
-    assert.equal(store.save(createState()), true); assert.equal(writes, 1); const before = backing.get(SAVE_KEY);
-    fail = true; assert.equal(store.save(createState()), false); assert.equal(backing.get(SAVE_KEY), before);
+    assert.equal(store.save(createState()), true); assert.equal(writes, 1); const before = backing.get(SLOT1_KEY);
+    fail = true; assert.equal(store.save(createState()), false); assert.equal(backing.get(SLOT1_KEY), before);
     store.release();
   } finally {
     if (oldStorage) Object.defineProperty(globalThis, 'localStorage', oldStorage); else delete (globalThis as { localStorage?: unknown }).localStorage;
@@ -66,22 +67,22 @@ test('an unreadable save can be discarded to start a new game with saving on', a
   const backing=new Map<string,string>(); let writes=0;
   Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{
     getItem:(key:string)=>backing.get(key)??null,
-    setItem:(key:string,value:string)=>{if(key===SAVE_KEY)writes++;backing.set(key,value);},
+    setItem:(key:string,value:string)=>{if(key===SLOT1_KEY)writes++;backing.set(key,value);},
     removeItem:(key:string)=>{backing.delete(key);},
   }});
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
   try {
-    backing.set(SAVE_KEY,'{broken');
+    backing.set(SLOT1_KEY,'{broken');
     const store=new SaveStore();
     assert.equal((await store.acquire()).kind,'invalid');
-    assert.equal(backing.get(SAVE_KEY),'{broken','acquire must leave the corrupt save untouched');
+    assert.equal(backing.get(SLOT1_KEY),'{broken','acquire must leave the corrupt save untouched');
     assert.equal(store.canSave,false);
     store.discardUnreadable();
-    assert.equal(backing.has(SAVE_KEY),false,'discard removes the corrupt save');
+    assert.equal(backing.has(SLOT1_KEY),false,'discard removes the corrupt save');
     writes=0;
     assert.equal(store.save(createState()),true,'saving works again after discard');
     assert.equal(writes,1,'the fresh state is written');
-    const loaded=decodeSave(backing.get(SAVE_KEY)!);
+    const loaded=decodeSave(backing.get(SLOT1_KEY)!);
     assert.ok(loaded,'the new save reads back');
   }
   finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
@@ -99,12 +100,12 @@ test('discardUnreadable never deletes a save that now decodes', async () => {
   try {
     // A valid save lands in the key after the corrupt one was seen (e.g.
     // another tab wrote one): discarding must leave it alone.
-    backing.set(SAVE_KEY,encodeSave(createState()));
-    const before=backing.get(SAVE_KEY);
+    backing.set(SLOT1_KEY,encodeSave(createState()));
+    const before=backing.get(SLOT1_KEY);
     const store=new SaveStore();
     store.discardUnreadable();
-    assert.equal(backing.get(SAVE_KEY),before,'a decodable save must survive discardUnreadable');
-    assert.ok(decodeSave(backing.get(SAVE_KEY)!),'the surviving save still reads back');
+    assert.equal(backing.get(SLOT1_KEY),before,'a decodable save must survive discardUnreadable');
+    assert.ok(decodeSave(backing.get(SLOT1_KEY)!),'the surviving save still reads back');
   }
   finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
 });
@@ -112,7 +113,7 @@ test('discardUnreadable never deletes a save that now decodes', async () => {
 test('malformed saves remain recoverable', async () => {
   const storage=Object.getOwnPropertyDescriptor(globalThis,'localStorage'),nav=Object.getOwnPropertyDescriptor(globalThis,'navigator');
   let writes=0;
-  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(key:string)=>'{broken',setItem:(key:string)=>{if(key===SAVE_KEY)writes++}}});
+  Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:(key:string)=>'{broken',setItem:(key:string)=>{if(key===SLOT1_KEY)writes++}}});
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:{}});
   try {const store=new SaveStore();assert.equal((await store.acquire()).kind,'invalid');assert.equal(store.canSave,false);store.continueSession();assert.equal(store.save(createState()),false);assert.equal(writes,0);}
   finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
