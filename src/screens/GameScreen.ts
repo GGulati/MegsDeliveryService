@@ -292,11 +292,11 @@ export class GameScreen implements Screen {
     });
     this.homeUI.render(this.state);
     this.touchControls.render(this.state);
-    if (!this.bootReady) document.querySelector<HTMLElement>('.home-interface')!.hidden = true;
-    if (this.state.mode === 'home') document.querySelector<HTMLElement>('#flight-hud')!.hidden = true;
-    (document.querySelector('#start-btn') as HTMLButtonElement).disabled = !this.bootReady;
-    if (this.state.profile.tutorialDone) document.querySelector('#start-btn')!.innerHTML = 'Come on in <span>→</span>';
-    document.querySelector('#next-day-btn')!.innerHTML = 'Back to your room <span>→</span>';
+    if (!this.bootReady) { const hi = document.querySelector<HTMLElement>('.home-interface'); if (hi) hi.hidden = true; }
+    if (this.state.mode === 'home') { const fh = document.querySelector<HTMLElement>('#flight-hud'); if (fh) fh.hidden = true; }
+    { const sb = document.querySelector('#start-btn') as HTMLButtonElement | null; if (sb) sb.disabled = !this.bootReady; }
+    if (this.state.profile.tutorialDone) { const sb2 = document.querySelector('#start-btn'); if (sb2) sb2.innerHTML = 'Come on in <span>→</span>'; }
+    { const nb = document.querySelector('#next-day-btn'); if (nb) nb.innerHTML = 'Back to your room <span>→</span>'; }
     this.saveBanner.hidden = this.saveKind === 'ready' && this.saveFyi === null;
     const bannerKey = this.saveKind + this.saveMessage + (this.saveFyi ?? '');
     if (this.saveBanner.dataset.key !== bannerKey) {
@@ -307,7 +307,7 @@ export class GameScreen implements Screen {
   }
 
   private advance(ms: number): void {
-    if (!this.bootReady || this.state.paused || document.hidden || this.contextLost) {
+    if (!this.bootReady || this.state.paused || this.contextLost) {
       this.accumulator = 0;
       this.draw(0);
       return;
