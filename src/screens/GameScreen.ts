@@ -209,6 +209,7 @@ export class GameScreen implements Screen {
     this.accumulator = 0;
     this.lastFrame = performance.now();
     this.persist();
+    this.draw(0);
   }
 
   private fullscreen(): void {
