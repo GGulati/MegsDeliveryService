@@ -48,6 +48,8 @@ export class GameScreen implements Screen {
   private testing = false;
   private disposed = false;
   private bootTime = 0;
+  private frameCount = 0;
+  private diagEl: HTMLElement | null = null;
 
   constructor(
     root: HTMLElement,
@@ -98,10 +100,15 @@ export class GameScreen implements Screen {
 
     // Done: mark slot as last played
     setLastSlot(this.slotId);
+    this.diagEl = document.createElement('div');
+    this.diagEl.style.cssText = 'position:fixed;left:4px;bottom:4px;z-index:99999;font:10px monospace;color:#fff;background:#000a;padding:2px 6px;border-radius:4px;pointer-events:none;';
+    this.root.appendChild(this.diagEl);
   }
 
   exit(): void {
     this.disposed = true;
+    this.diagEl?.remove();
+    this.diagEl = null;
     this.audio.update(this.state, true);
     this.store.release();
     clearTimeout(this.fyiTimer);
@@ -325,9 +332,15 @@ export class GameScreen implements Screen {
 
   /** Called by the ScreenManager's rAF loop. */
   frame(now: number): void {
-    if (this.disposed) return;
+    this.frameCount++;
+    if (this.disposed) { this.updateDiag('disposed'); return; }
     const dt = this.lastFrame ? Math.min(now - this.lastFrame, 100) : 0;
     this.lastFrame = now;
     this.advance(dt);
+    this.updateDiag('');
+  }
+  private updateDiag(note: string): void {
+    if (!this.diagEl) return;
+    this.diagEl.textContent = `f:${this.frameCount} boot:${this.bootReady?1:0} paused:${this.state.paused?1:0} ctxLost:${this.contextLost?1:0} ${note}`;
   }
 }
