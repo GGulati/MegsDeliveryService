@@ -31,6 +31,9 @@ function frame(now: number): void {
 async function startGame(slotId: number, isNew: boolean): Promise<void> {
   const loading = new LoadingScreen(root, () => {});
   await manager.show(loading);
+  // Force the browser to paint the loading screen before any heavy work.
+  // Double rAF ensures the DOM is actually rendered.
+  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   // Acquire save during loading (not in GameScreen).
   loading.setStage('Opening save…');
   const store = new SaveStore();
@@ -38,11 +41,8 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
   let saveResult: SaveResult;
   try {
     saveResult = await store.acquire();
-  } catch (e) {
-    saveResult = { kind: 'readonly', message: 'Save unavailable: ' + (e instanceof Error ? e.message : String(e)) };
-  }
-  if (new URLSearchParams(location.search).get('debug') === '1') {
-    (window as any).__saveResult = { kind: saveResult.kind, message: saveResult.message, hasState: !!saveResult.state };
+  } catch {
+    saveResult = { kind: 'readonly', message: 'Save unavailable.' };
   }
   const game = new GameScreen(root, canvas, loading, slotId, isNew, store, saveResult, () => {
     void manager.show(new MenuScreen(root, startGame));
