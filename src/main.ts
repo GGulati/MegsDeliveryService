@@ -28,7 +28,11 @@ function frame(now: number): void {
 }
 
 /** Transition from menu to game via the loading screen. */
+let starting = false;
 async function startGame(slotId: number, isNew: boolean): Promise<void> {
+  if (starting) return;
+  starting = true;
+  try {
   const loading = new LoadingScreen(root, () => {});
   await manager.show(loading);
   // Force the browser to paint the loading screen before any heavy work.
@@ -48,6 +52,9 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
     void manager.show(new MenuScreen(root, startGame));
   });
   await manager.show(game);
+  } finally {
+    starting = false;
+  }
 }
 
 // Boot: show menu immediately (no heavy work yet).

@@ -203,7 +203,7 @@ export class GameScreen implements Screen {
   }
 
   private resume(): void {
-    if (!this.bootReady || document.hidden || this.contextLost) return;
+    if (!this.bootReady || this.contextLost) return;
     setPaused(this.state, false);
     this.input?.clear();
     this.accumulator = 0;
