@@ -47,6 +47,7 @@ export class GameScreen implements Screen {
   private savePeriod = 0;
   private testing = false;
   private disposed = false;
+  private bootTime = 0;
 
   constructor(
     root: HTMLElement,
@@ -188,8 +189,8 @@ export class GameScreen implements Screen {
   }
 
   private onResize = (): void => { this.renderer.resize(); this.draw(0); };
-  private onVisibility = (): void => { if (document.hidden) this.pause('Welcome back. Ready to fly?'); };
-  private onBlur = (): void => { this.input.clear(); if (this.state.mode !== 'title') this.pause(); };
+  private onVisibility = (): void => { if (document.hidden && performance.now() - this.bootTime > 5000) this.pause('Welcome back. Ready to fly?'); };
+  private onBlur = (): void => { this.input.clear(); if (this.state.mode !== 'title' && performance.now() - this.bootTime > 5000) this.pause(); };
   private onContextLost = (event: Event): void => { event.preventDefault(); this.pause('The sky is taking a moment.'); this.contextLost = true; };
   private onContextRestored = (): void => { this.contextLost = false; this.draw(0); };
   private onPageHide = (): void => { this.persist(); this.bootReady = false; this.audio.update(this.state, true); this.store.release(); };
@@ -238,6 +239,7 @@ export class GameScreen implements Screen {
       this.state.coarsePointer = this.coarsePointer;
       this.renderer.setSeed(this.state.seed);
       this.bootReady = true;
+      this.bootTime = performance.now();
       this.saveKind = 'ready';
       this.saveMessage = '';
       this.persist();
@@ -268,6 +270,7 @@ export class GameScreen implements Screen {
     this.renderer.setSeed(this.state.seed);
     if (result.kind === 'ready' && result.seedMigrated && this.store.canSave) this.store.save(this.state);
     this.bootReady = result.kind === 'ready' || result.kind === 'session' || result.kind === 'readonly';
+    this.bootTime = performance.now();
     // Continue means play, not paused. Clear paused from restored save.
     if (this.bootReady) setPaused(this.state, false);
     this.input?.clear();
