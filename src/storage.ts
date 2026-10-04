@@ -68,8 +68,8 @@ export function migrateLegacySave(): void {
   } catch { /* ignore */ }
 }
 
-type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
-type SaveResult = { kind: SaveResultKind; state?: GameState; message: string; seedMigrated?: boolean };
+export type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
+export type SaveResult = { kind: SaveResultKind; state?: GameState; message: string; seedMigrated?: boolean };
 type UnknownRecord = Record<string, unknown>;
 
 const MODES: readonly Mode[] = ['title', 'tutorial', 'flight', 'offers', 'home', 'summary'];

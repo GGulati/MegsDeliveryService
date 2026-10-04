@@ -9,6 +9,7 @@ import { HomeUI } from '../home-ui';
 import { TouchControls, landingCommitted, touchControlsVisible } from '../touch-controls';
 import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from '../home';
 import { SaveStore, setLastSlot } from '../storage';
+import type { SaveResult } from '../storage';
 import { GameAudio } from '../audio';
 import type { GameState } from '../types';
 
@@ -28,7 +29,8 @@ export class GameScreen implements Screen {
   private ui!: UI;
   private homeUI!: HomeUI;
   private touchControls!: TouchControls;
-  private store = new SaveStore();
+  private store: SaveStore;
+  private preacquired: SaveResult;
   private audio = new GameAudio();
   private saveBanner!: HTMLElement;
 
@@ -52,6 +54,8 @@ export class GameScreen implements Screen {
     loading: LoadingScreen,
     slotId: number,
     isNew: boolean,
+    store: SaveStore,
+    saveResult: SaveResult,
     onExitToMenu: () => void,
   ) {
     this.root = root;
@@ -59,12 +63,13 @@ export class GameScreen implements Screen {
     this.loading = loading;
     this.slotId = slotId;
     this.isNew = isNew;
+    this.store = store;
+    this.preacquired = saveResult;
     this.onExitToMenu = onExitToMenu;
     this.state = createState();
     this.coarsePointer = matchMedia('(pointer: coarse)').matches;
     this.state.coarsePointer = this.coarsePointer;
     this.testing = new URLSearchParams(location.search).get('test') === '1';
-    this.store.setSlot(slotId);
   }
 
   async enter(): Promise<void> {
@@ -88,7 +93,7 @@ export class GameScreen implements Screen {
     // Stage 4: Load save
     L.setStage(this.isNew ? 'Starting new game…' : 'Loading save…');
     await this.yieldToUI();
-    await this.boot();
+    this.boot();
 
     // Done: mark slot as last played
     setLastSlot(this.slotId);
@@ -222,7 +227,7 @@ export class GameScreen implements Screen {
     if (!this.store.save(this.state)) { this.saveKind = 'session'; this.saveMessage = this.store.message; }
   }
 
-  private async boot(): Promise<void> {
+  private boot(): void {
     this.bootReady = false;
     this.saveKind = 'loading';
     this.saveMessage = 'Opening your little world…';
@@ -240,7 +245,7 @@ export class GameScreen implements Screen {
       this.draw(0);
       return;
     }
-    const result = await this.store.acquire();
+    const result = this.preacquired;
     if (result.kind === 'invalid') {
       this.store.discardUnreadable();
       this.state = createState();

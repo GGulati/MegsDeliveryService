@@ -2,6 +2,8 @@ import './style.css';
 import { ScreenManager } from './screens/ScreenManager';
 import { MenuScreen } from './screens/MenuScreen';
 import { LoadingScreen } from './screens/LoadingScreen';
+import { SaveStore } from './storage';
+import type { SaveResult } from './storage';
 import { GameScreen } from './screens/GameScreen';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -29,13 +31,20 @@ function frame(now: number): void {
 async function startGame(slotId: number, isNew: boolean): Promise<void> {
   const loading = new LoadingScreen(root, () => {});
   await manager.show(loading);
-  const game = new GameScreen(root, canvas, loading, slotId, isNew, () => {
-    // Exit to menu (e.g., from pause menu "quit to title")
+  // Acquire save during loading (not in GameScreen).
+  loading.setStage('Opening save…');
+  const store = new SaveStore();
+  store.setSlot(slotId);
+  let saveResult: SaveResult;
+  try {
+    saveResult = await store.acquire();
+  } catch {
+    saveResult = { kind: 'readonly', message: 'Save unavailable.' };
+  }
+  const game = new GameScreen(root, canvas, loading, slotId, isNew, store, saveResult, () => {
     void manager.show(new MenuScreen(root, startGame));
   });
-  // GameScreen.enter() does the heavy loading work with progress updates.
   await manager.show(game);
-  // Loading screen is replaced by game screen; nothing else to do.
 }
 
 // Boot: show menu immediately (no heavy work yet).
