@@ -10,18 +10,6 @@ import { test, expect, collectErrors, mockEnvironment, seedRandom, expectUnhidde
 async function startFlightMobile(page: import('@playwright/test').Page) {
   await mockEnvironment(page);
   await seedRandom(page, 42);
-  // Force coarse pointer for mobile joystick enablement
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'matchMedia', {
-      value: (query: string) => ({
-        matches: query === '(pointer: coarse)',
-        media: query,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      }),
-      configurable: true,
-    });
-  });
   await page.goto('/');
   await expect(page.locator('.menu-screen')).toBeVisible({ timeout: 10_000 });
   await page.locator('button:has-text("New Game")').first().click();
