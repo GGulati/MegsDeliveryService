@@ -108,6 +108,9 @@ export class GameScreen implements Screen {
   }
 
   private setupInput(): void {
+    // TouchControls must be constructed before Input: Input's constructor
+    // queries for #joystick, which TouchControls creates.
+    this.touchControls = new TouchControls(this.root);
     this.input = new Input(this.canvas, {
       hover: () => { if (!this.bootReady) return; toggleHover(this.state); this.persist(); this.draw(0); },
       interact: () => { if (!this.bootReady || this.state.mode !== 'home') return; interact(this.state); this.persist(); this.draw(0); },
@@ -155,7 +158,6 @@ export class GameScreen implements Screen {
       upgrade(track) { if (!self.bootReady) return; buyUpgrade(self.state, track); self.persist(); self.draw(0); },
       furnish(id) { if (!self.bootReady) return; buyFurniture(self.state, id); self.persist(); self.draw(0); },
     });
-    this.touchControls = new TouchControls(root);
     this.saveBanner = document.createElement('aside');
     this.saveBanner.className = 'save-status';
     this.saveBanner.setAttribute('aria-live', 'polite');

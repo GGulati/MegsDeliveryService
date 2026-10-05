@@ -18,6 +18,14 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
     {
+      name: 'mobile-chromium',
+      use: {
+        ...devices['Pixel 7'],
+        // Real touch events for joystick testing
+        hasTouch: true,
+      },
+    },
+    {
       // Headed: headless Firefox blocks WebGL2, which this game requires.
       // On headless Linux, run via xvfb-run.
       name: 'mobile-firefox',
