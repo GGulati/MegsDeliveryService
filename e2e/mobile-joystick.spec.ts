@@ -61,14 +61,20 @@ test('joystick drag steers the player', async ({ page }) => {
   const box = await page.locator('canvas').boundingBox();
   const cx = box!.x + box!.width / 2, cy = box!.y + box!.height / 2;
 
-  // Touch down and drag right
+  // Record speed before
+  const speedBefore = await page.evaluate(() =>
+    parseFloat(document.querySelector('#speed-value')?.textContent ?? '0')
+  );
+
+  // Touch down and drag right (steer)
   await page.evaluate(([x, y]) => {
     const canvas = document.querySelector('canvas')!;
     const opts = { pointerId: 7, pointerType: 'touch', bubbles: true };
     canvas.dispatchEvent(new PointerEvent('pointerdown', { ...opts, clientX: x, clientY: y }));
     canvas.dispatchEvent(new PointerEvent('pointermove', { ...opts, clientX: x + 80, clientY: y }));
   }, [cx, cy]);
-  await page.waitForTimeout(1000);
+  // Hold the drag to build speed
+  await page.waitForTimeout(2000);
 
   // The stick input should be non-zero (steering right)
   const stickX = await page.evaluate(() => {
@@ -76,7 +82,24 @@ test('joystick drag steers the player', async ({ page }) => {
     return joy.style.getPropertyValue('--stick-x');
   });
   expect(stickX, 'joystick should show rightward deflection').toBeTruthy();
-  expect(parseFloat(stickX), 'stick X should be positive (right)').toBeGreaterThan(0);
+
+  // The player should be moving (speed increased from drag)
+  const speedAfter = await page.evaluate(() =>
+    parseFloat(document.querySelector('#speed-value')?.textContent ?? '0')
+  );
+  expect(speedAfter, `player should be moving (was ${speedBefore}, now ${speedAfter})`)
+    .toBeGreaterThan(speedBefore);
+
+  // Release and verify joystick hides
+  await page.evaluate(() => {
+    const canvas = document.querySelector('canvas')!;
+    canvas.dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, pointerType: 'touch', bubbles: true }));
+  });
+  await page.waitForTimeout(500);
+  const joyHidden = await page.evaluate(
+    () => (document.querySelector('#joystick') as HTMLElement)?.hidden
+  );
+  expect(joyHidden, 'joystick should hide on release').toBe(true);
 
   expect(errors, `expected zero errors, got:\n${errors.join('\n')}`).toEqual([]);
 });

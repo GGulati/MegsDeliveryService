@@ -20,9 +20,12 @@ export default defineConfig({
     {
       name: 'mobile-chromium',
       use: {
-        ...devices['Pixel 7'],
-        // Real touch events for joystick testing
+        browserName: 'chromium',
+        viewport: { width: 412, height: 915 },
         hasTouch: true,
+        isMobile: true,
+        userAgent:
+          'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
       },
     },
     {
