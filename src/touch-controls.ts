@@ -43,6 +43,11 @@ export class TouchControls {
     // carries the stick visual.
     parent.append(this.root);
   }
+  /** Remove the DOM element (called on screen exit to avoid duplicate IDs
+   *  when the screen is re-entered). */
+  dispose(): void {
+    this.root.remove();
+  }
   render(state: GameState): void {
     this.root.hidden = landingCommitted(state) || !touchControlsVisible(state.mode, state.paused, state.homePanel);
     // The joystick floats: Input shows it at the touch point while the stick

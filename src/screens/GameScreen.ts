@@ -88,6 +88,7 @@ export class GameScreen implements Screen {
     this.store.release();
     clearTimeout(this.fyiTimer);
     this.input?.dispose?.();
+    this.touchControls?.dispose?.();
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost);
     this.canvas.removeEventListener('webglcontextrestored', this.onContextRestored);
     window.removeEventListener('resize', this.onResize);
