@@ -1,14 +1,75 @@
 import type { GameState, Job, Mode, Player, Profile, Run, Vec3 } from './types';
 import { STOPS } from './world';
 
-/** The single, versioned localStorage record used by the game. */
+/** Versioned localStorage records, one per save slot. */
+export const SAVE_KEY_PREFIX = 'megs-delivery-save-v1-slot';
+/** Legacy single-save key (migrates to slot 1). */
 export const SAVE_KEY = 'megs-delivery-save-v1';
+/** Last-played slot pointer. */
+export const LAST_SLOT_KEY = 'megs-delivery-last-slot-v1';
 /** Cooperative cross-tab lock: { tabId, timestamp }. Stale after LOCK_STALE_MS. */
 const SAVE_LOCK_KEY = 'megs-delivery-save-lock-v1';
 const LOCK_STALE_MS = 30000;
 
-type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
-type SaveResult = { kind: SaveResultKind; state?: GameState; message: string; seedMigrated?: boolean };
+/** Metadata for a save slot, for menu display. */
+export interface SlotInfo {
+  slotId: number;
+  exists: boolean;
+  timestamp?: number;
+  deliveries?: number;
+  coins?: number;
+}
+
+/** Peek at a slot's metadata without loading the full state. */
+export function peekSlot(slotId: number): SlotInfo {
+  const key = `${SAVE_KEY_PREFIX}${slotId}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      if (slotId === 1) {
+        const legacy = localStorage.getItem(SAVE_KEY);
+        if (legacy) {
+          const decoded = decodeSave(legacy);
+          if (decoded) {
+            return { slotId, exists: true,
+              timestamp: Date.now(),
+              deliveries: decoded.profile?.deliveries ?? 0,
+              coins: decoded.profile?.coins ?? 0 };
+          }
+        }
+      }
+      return { slotId, exists: false };
+    }
+    const decoded = decodeSave(raw);
+    if (!decoded) return { slotId, exists: false };
+    return { slotId, exists: true,
+      timestamp: Date.now(),
+      deliveries: decoded.profile?.deliveries ?? 0,
+      coins: decoded.profile?.coins ?? 0 };
+  } catch {
+    return { slotId, exists: false };
+  }
+}
+
+export function getLastSlot(): number {
+  try {
+    const v = parseInt(localStorage.getItem(LAST_SLOT_KEY) ?? '1', 10);
+    return v >= 1 && v <= 3 ? v : 1;
+  } catch { return 1; }
+}
+export function setLastSlot(slotId: number): void {
+  try { localStorage.setItem(LAST_SLOT_KEY, String(slotId)); } catch { /* ignore */ }
+}
+export function migrateLegacySave(): void {
+  try {
+    const legacy = localStorage.getItem(SAVE_KEY);
+    const slot1 = localStorage.getItem(`${SAVE_KEY_PREFIX}1`);
+    if (legacy && !slot1) localStorage.setItem(`${SAVE_KEY_PREFIX}1`, legacy);
+  } catch { /* ignore */ }
+}
+
+export type SaveResultKind = 'ready' | 'readonly' | 'session' | 'invalid';
+export type SaveResult = { kind: SaveResultKind; state?: GameState; message: string; seedMigrated?: boolean };
 type UnknownRecord = Record<string, unknown>;
 
 const MODES: readonly Mode[] = ['title', 'tutorial', 'flight', 'offers', 'home', 'summary'];
@@ -114,6 +175,16 @@ export class SaveStore {
   private status = '';
   private memory?: GameState;
   private tabId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  private slotId = 1;
+
+  /** Set which save slot this store uses (1-3). */
+  setSlot(slotId: number): void {
+    this.slotId = Math.min(3, Math.max(1, slotId));
+  }
+
+  private saveKey(): string {
+    return `${SAVE_KEY_PREFIX}${this.slotId}`;
+  }
 
   get message(): string { return this.status; }
   get canSave(): boolean { return this.writable; }
@@ -156,7 +227,7 @@ export class SaveStore {
       return this.session('Saved games are unavailable in this browser.');
     }
     let raw: string | null;
-    try { raw = storage.getItem(SAVE_KEY); }
+    try { raw = storage.getItem(this.saveKey()); }
     catch { this.releaseLock?.(); return this.session('Saved games are unavailable in this browser.'); }
     const decoded = raw === null ? undefined : decodeSave(raw) ?? undefined;
     if (raw !== null && !decoded) {
@@ -170,7 +241,7 @@ export class SaveStore {
   save(state: GameState): boolean {
     if (!this.writable) return false;
     const storage = this.storage(); if (!storage) { this.writable = false; this.status = 'Saving is unavailable in this browser.'; return false; }
-    try { storage.setItem(SAVE_KEY, encodeSave(state)); this.writeLock(storage); this.memory = state; this.status = 'Saved.'; return true; }
+    try { storage.setItem(this.saveKey(), encodeSave(state)); this.writeLock(storage); this.memory = state; this.status = 'Saved.'; return true; }
     catch { this.memory = state; this.writable = false; this.status = 'Could not save; progress remains in this tab.'; return false; }
   }
 
@@ -182,8 +253,8 @@ export class SaveStore {
   discardUnreadable(): void {
     try {
       const storage = this.storage();
-      const raw = storage?.getItem(SAVE_KEY);
-      if (raw !== null && raw !== undefined && !decodeSave(raw)) storage?.removeItem(SAVE_KEY);
+      const raw = storage?.getItem(this.saveKey());
+      if (raw !== null && raw !== undefined && !decodeSave(raw)) storage?.removeItem(this.saveKey());
     } catch { /* a stale key is harmless; the next save overwrites it */ }
     this.writable = true; this.memory = undefined;
     this.status = 'Discarded the unreadable save.';
@@ -191,4 +262,12 @@ export class SaveStore {
 
   private storage(): Storage | undefined { try { return typeof localStorage === 'undefined' ? undefined : localStorage; } catch { return undefined; } }
   private session(message: string, state?: GameState): SaveResult { this.writable = false; this.memory = state; this.status = message; return { kind: 'session', state, message }; }
+}
+
+const MUTE_KEY = 'megs-delivery-service:muted';
+export function getMuted(): boolean {
+  try { return localStorage.getItem(MUTE_KEY) === '1'; } catch { return true; }
+}
+export function setMuted(muted: boolean): void {
+  try { localStorage.setItem(MUTE_KEY, muted ? '1' : '0'); } catch { /* ignore */ }
 }
