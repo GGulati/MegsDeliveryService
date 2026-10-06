@@ -37,6 +37,24 @@ export async function seedRandom(page: import('@playwright/test').Page, seed = 4
   }, seed);
 }
 
+/** Mock (pointer: coarse) as true via matchMedia override.
+ * Needed for touch-control tests on desktop Chromium, where the media
+ * query is false but the test dispatches synthetic touch events. */
+export async function mockCoarsePointer(page: import('@playwright/test').Page) {
+  await page.addInitScript(() => {
+    const orig = window.matchMedia.bind(window);
+    window.matchMedia = (query: string) => {
+      if (query === '(pointer: coarse)') {
+        return { matches: true, media: query, onchange: null,
+          addListener: () => {}, removeListener: () => {},
+          addEventListener: () => {}, removeEventListener: () => {},
+          dispatchEvent: () => false } as unknown as MediaQueryList;
+      }
+      return orig(query);
+    };
+  });
+}
+
 /** Collect console errors and pageerrors during a test. */
 export async function collectErrors(page: import('@playwright/test').Page) {
   const errors: string[] = [];

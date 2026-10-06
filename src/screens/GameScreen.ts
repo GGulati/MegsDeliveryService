@@ -73,10 +73,14 @@ export class GameScreen implements Screen {
   }
 
   /** Synchronous: all heavy work already happened in buildGameContext().
-   * Only wires input, builds UI DOM, and draws the first frame. */
+   * Only wires input, builds UI DOM, and draws the first frame.
+   * setupUI() must run before setupInput(): UI's constructor sets
+   * root.innerHTML, which would delete the TouchControls DOM if it
+   * were created first. TouchControls appends after, so Input can
+   * query the attached #joystick. */
   enter(): void {
-    this.setupInput();
     this.setupUI();
+    this.setupInput();
     if (this.saveFyi) this.flashSaveFyi(this.saveFyi);
     setLastSlot(this.slotId);
     this.draw(0);

@@ -1,4 +1,4 @@
-import { test, expect, collectErrors, mockEnvironment, seedRandom, expectUnhidden, domClick } from './fixtures';
+import { test, expect, collectErrors, mockEnvironment, mockCoarsePointer, seedRandom, expectUnhidden, domClick } from './fixtures';
 
 /** Tier 2 — mobile joystick.
  * On touch devices, a floating joystick must appear where the finger lands
@@ -9,6 +9,7 @@ import { test, expect, collectErrors, mockEnvironment, seedRandom, expectUnhidde
 
 async function startFlightMobile(page: import('@playwright/test').Page) {
   await mockEnvironment(page);
+  await mockCoarsePointer(page);
   await seedRandom(page, 42);
   await page.goto('/');
   await expect(page.locator('.menu-screen')).toBeVisible({ timeout: 10_000 });
