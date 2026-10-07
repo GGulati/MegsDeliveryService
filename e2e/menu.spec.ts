@@ -18,8 +18,8 @@ test('menu loads instantly with all options', async ({ page }) => {
   // All menu options present (Continue only appears with an existing save)
   await expect(menu.locator('button:has-text("New Game")').first()).toBeVisible();
 
-  // Mute control on the main menu (moved from gameplay HUD)
-  await expect(menu.locator('button:has-text("Mute audio"), button:has-text("Unmute audio")').first()).toBeVisible();
+  // Mute control on the main menu (speaker icon button)
+  await expect(menu.locator('button[aria-label="Mute audio"], button[aria-label="Unmute audio"]').first()).toBeVisible();
 
   expect(errors, `expected zero errors, got:\n${errors.join('\n')}`).toEqual([]);
 });
