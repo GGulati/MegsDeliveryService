@@ -23,8 +23,8 @@ export class MenuScreen implements Screen {
     this.el = document.createElement('main');
     this.el.className = 'menu-screen';
     this.el.innerHTML = `
-      <div class="menu-card" style="position:relative">
-        <button class="icon-button icon-button-sm" data-action="mute" aria-label="${getMuted() ? 'Unmute audio' : 'Mute audio'}" style="position:absolute;top:16px;right:16px">${icon(getMuted() ? 'sound-off' : 'sound')}</button>
+      <div class="menu-card menu-card-has-mute">
+        <button class="icon-button icon-button-sm menu-mute-btn" data-action="mute" aria-label="${getMuted() ? 'Unmute audio' : 'Mute audio'}">${icon(getMuted() ? 'sound-off' : 'sound')}</button>
         <h1>Meg's Delivery Service</h1>
         <p class="menu-tagline">A little witch. A big sky.</p>
         ${lastInfo?.exists ? `
