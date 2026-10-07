@@ -39,8 +39,8 @@ body { min-width:0; min-height:0; }
 @media (orientation:portrait) and (pointer:coarse){.destination-card{top:max(78px,calc(env(safe-area-inset-top) + 58px));bottom:auto;left:max(16px,env(safe-area-inset-left));width:205px;padding:12px 14px}.destination-card strong{font-size:20px;margin:5px 0 1px}}
 
 /* Screen architecture: menu and loading */
-.menu-screen{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#1e3a38 0%,#2a4a45 100%);padding:20px;min-height:100dvh;box-sizing:border-box}
-.menu-screen .menu-card{max-width:420px;width:100%;text-align:center;background:#fffaf0;border-radius:20px;padding:36px 32px;box-shadow:0 12px 48px #0006}
+.menu-screen{position:fixed;inset:0;z-index:9000;background:linear-gradient(180deg,#1e3a38 0%,#2a4a45 100%);padding:20px;box-sizing:border-box}
+.menu-screen .menu-card{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:420px;width:calc(100% - 40px);text-align:center;background:#fffaf0;border-radius:20px;padding:36px 32px;box-shadow:0 12px 48px #0006}
 .menu-card-has-mute{position:relative}
 .menu-mute-btn{position:absolute;top:16px;right:16px}
 .menu-screen h1{margin:0 0 6px;font:500 32px Georgia,serif;color:#493725;letter-spacing:-.02em}
