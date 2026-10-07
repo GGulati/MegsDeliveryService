@@ -57,7 +57,7 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
   if (starting) return;
   starting = true;
   try {
-    const loading = new LoadingScreen(root);
+    const loading = new LoadingScreen(root, audio);
     manager.show(loading);
     await paint();
 
