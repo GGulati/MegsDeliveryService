@@ -1,5 +1,6 @@
 import type { Screen } from './Screen';
 import { peekSlot, getLastSlot, migrateLegacySave, getMuted, setMuted, type SlotInfo } from '../storage';
+import { icon } from '../ui';
 
 /** Menu screen: New Game / Continue / Load from slots.
  * Shown immediately on page load. No heavy initialization. */
@@ -35,9 +36,6 @@ export class MenuScreen implements Screen {
           New Game <span>→</span>
           <small>Start fresh in an empty slot</small>
         </button>
-        <button class="menu-btn" data-action="mute">
-          ${getMuted() ? 'Unmute audio' : 'Mute audio'}
-        </button>
         <div class="slot-list">
           ${slots.map(s => `
             <button class="slot-btn ${s.exists ? '' : 'empty'}" data-action="slot" data-slot="${s.slotId}" ${!s.exists ? 'disabled' : ''}>
@@ -47,6 +45,9 @@ export class MenuScreen implements Screen {
                 : `<small>Empty</small>`}
             </button>
           `).join('')}
+        </div>
+        <div style="display:flex;justify-content:center;margin-top:18px">
+          <button class="icon-button icon-button-sm" data-action="mute" aria-label="${getMuted() ? 'Unmute audio' : 'Mute audio'}">${icon(getMuted() ? 'sound-off' : 'sound')}</button>
         </div>
       </div>
     `;
@@ -59,7 +60,8 @@ export class MenuScreen implements Screen {
       if (action === 'mute') {
         const m = !getMuted();
         setMuted(m);
-        (btn as HTMLElement).textContent = m ? 'Unmute audio' : 'Mute audio';
+        btn.setAttribute('aria-label', m ? 'Unmute audio' : 'Mute audio');
+        btn.innerHTML = icon(m ? 'sound-off' : 'sound');
         return;
       }
       if (action === 'continue') this.onSelect(slot, false);
