@@ -175,7 +175,7 @@ export class GameAudio {
   private startAmbience(): void {
     const context = this.context, master = this.master;
     if (!context || !master || context.state !== 'running' || !this.canPlay()) return;
-    const now = context.currentTime; master.gain.cancelScheduledValues(now); master.gain.setTargetAtTime(.14, now, .08);
+    const now = context.currentTime; master.gain.cancelScheduledValues(now); master.gain.setTargetAtTime(.6, now, .08);
     if (this.ambience) return;
     const ambience = context.createGain(), wind = context.createOscillator(), drift = context.createOscillator(), driftGain = context.createGain();
     ambience.gain.value = .035; ambience.connect(master); wind.type = 'sine'; wind.frequency.value = 82; drift.type = 'sine'; drift.frequency.value = .09; driftGain.gain.value = 11;
