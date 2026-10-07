@@ -41,8 +41,6 @@ body { min-width:0; min-height:0; }
 /* Screen architecture: menu and loading */
 .menu-screen{position:fixed;inset:0;z-index:9000;background:linear-gradient(180deg,#1e3a38 0%,#2a4a45 100%);padding:20px;box-sizing:border-box}
 .menu-screen .menu-card{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:420px;width:calc(100% - 40px);text-align:center;background:#fffaf0;border-radius:20px;padding:36px 32px;box-shadow:0 12px 48px #0006}
-.menu-card-has-mute{position:relative}
-.menu-mute-btn{position:absolute;top:16px;right:16px}
 .menu-screen h1{margin:0 0 6px;font:500 32px Georgia,serif;color:#493725;letter-spacing:-.02em}
 .menu-tagline{margin:0 0 24px;color:#806956;font-size:14px;font-style:italic}
 .menu-btn{display:block;width:100%;margin:0 0 12px;padding:16px 18px;border:2px solid #dcc6a6;border-radius:14px;background:#fff;color:#493725;font:600 17px system-ui;cursor:pointer;text-align:left}
