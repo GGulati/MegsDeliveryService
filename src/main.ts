@@ -6,11 +6,20 @@ import { SaveStore } from './storage';
 import type { SaveResult } from './storage';
 import { GameScreen } from './screens/GameScreen';
 import { buildGameContext } from './game-context';
+import { GameAudio } from './audio';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 const root = document.querySelector<HTMLElement>('#app')!;
 
 const manager = new ScreenManager();
+
+// Shared audio instance: created once, survives screen transitions.
+// Disposed only on pagehide, never on screen exit.
+const audio = new GameAudio();
+
+// Expose for e2e testing (harmless in production).
+(window as unknown as { __audio?: GameAudio }).__audio = audio;
+window.addEventListener('pagehide', () => audio.dispose());
 
 // Global rAF loop drives the active screen.
 let lastFrame = 0;
@@ -73,8 +82,8 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
       return;
     }
 
-    const game = new GameScreen(root, canvas, slotId, store, context, () =>
-      manager.show(new MenuScreen(root, startGame)));
+    const game = new GameScreen(root, canvas, slotId, store, context, audio, () =>
+      manager.show(new MenuScreen(root, startGame, audio)));
     manager.show(game);
   } finally {
     starting = false;
@@ -82,5 +91,5 @@ async function startGame(slotId: number, isNew: boolean): Promise<void> {
 }
 
 // Boot: show menu immediately (no heavy work yet).
-manager.show(new MenuScreen(root, startGame));
+manager.show(new MenuScreen(root, startGame, audio));
 requestAnimationFrame(frame);

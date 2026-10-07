@@ -1,5 +1,5 @@
 import type { Screen } from './Screen';
-import { startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget, relativeBearing } from '../simulation';
+import { startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget, relativeBearing, RUN_SECONDS } from '../simulation';
 import { initGameState, type GameContext } from '../game-context';
 import { STOPS } from '../world';
 import { GameRenderer } from '../scene';
@@ -30,7 +30,7 @@ export class GameScreen implements Screen {
   private homeUI!: HomeUI;
   private touchControls!: TouchControls;
   private store: SaveStore;
-  private audio = new GameAudio();
+  private audio: GameAudio;
   private saveBanner!: HTMLElement;
 
   private muted = getMuted();
@@ -54,12 +54,14 @@ export class GameScreen implements Screen {
     slotId: number,
     store: SaveStore,
     context: GameContext,
+    audio: GameAudio,
     onExitToMenu: () => void,
   ) {
     this.root = root;
     this.canvas = canvas;
     this.slotId = slotId;
     this.store = store;
+    this.audio = audio;
     this.onExitToMenu = onExitToMenu;
     this.state = context.state;
     this.renderer = context.renderer;
@@ -81,6 +83,9 @@ export class GameScreen implements Screen {
   enter(): void {
     this.setupUI();
     this.setupInput();
+    // Reset audio snapshot so game SFX don't trigger from diffing
+    // against the menu's state.
+    this.audio.resetSnapshot();
     if (this.saveFyi) this.flashSaveFyi(this.saveFyi);
     setLastSlot(this.slotId);
     this.draw(0);
@@ -88,7 +93,11 @@ export class GameScreen implements Screen {
 
   exit(): void {
     this.disposed = true;
-    this.audio.update(this.state, true);
+    // Silence without touching the SFX snapshot: the entering screen already
+    // reset it (ScreenManager enters new before exiting old), and an
+    // update() here would repopulate it with this screen's state, causing
+    // spurious SFX on the new screen's first frame.
+    this.audio.silence();
     this.store.release();
     clearTimeout(this.fyiTimer);
     this.input?.dispose?.();
@@ -133,9 +142,9 @@ export class GameScreen implements Screen {
     const root = this.root;
     const self = this;
     this.ui = new UI(root, {
-      start() { if (!self.bootReady) return; if (self.state.profile.tutorialDone) enterHome(self.state); else startTutorial(self.state); self.input?.clear(); (document.activeElement as HTMLElement)?.blur(); self.persist(); self.draw(0); },
-      pause: () => this.pause(),
-      resume: () => this.resume(),
+      start() { if (!self.bootReady) return; self.audio.sfx('ui_click'); if (self.state.profile.tutorialDone) enterHome(self.state); else startTutorial(self.state); self.input?.clear(); (document.activeElement as HTMLElement)?.blur(); self.persist(); self.draw(0); },
+      pause: () => { this.audio.sfx('ui_click'); this.pause(); },
+      resume: () => { this.audio.sfx('ui_click'); this.resume(); },
       unstuck() {
         if (!self.bootReady) return;
         const p = self.state.player.position;
@@ -150,18 +159,18 @@ export class GameScreen implements Screen {
         self.state.player.throttle = 0;
         self.resume(); self.input?.clear(); self.persist(); self.draw(0);
       },
-      mute() { self.muted = !self.muted; setGlobalMuted(self.muted); self.audio.setMuted(self.muted); self.draw(0); },
-      fullscreen: () => this.fullscreen(),
-      chooseJob(index) { if (!self.bootReady) return; chooseJob(self.state, index); self.input.clear(); self.persist(); self.draw(0); },
-      returnHome() { if (!self.bootReady) return; returnHome(self.state); self.input.clear(); self.persist(); self.draw(0); },
-      nextDay() { if (!self.bootReady) return; enterHome(self.state); self.input.clear(); self.persist(); self.draw(0); },
+      mute() { self.audio.sfx('ui_click'); self.muted = !self.muted; setGlobalMuted(self.muted); self.audio.setMuted(self.muted); self.draw(0); },
+      fullscreen: () => { this.audio.sfx('ui_click'); this.fullscreen(); },
+      chooseJob(index) { if (!self.bootReady) return; self.audio.sfx('ui_click'); chooseJob(self.state, index); self.input.clear(); self.persist(); self.draw(0); },
+      returnHome() { if (!self.bootReady) return; self.audio.sfx('ui_click'); returnHome(self.state); self.input.clear(); self.persist(); self.draw(0); },
+      nextDay() { if (!self.bootReady) return; self.audio.sfx('ui_click'); enterHome(self.state); self.input.clear(); self.persist(); self.draw(0); },
     });
     this.homeUI = new HomeUI(root, {
-      interact() { if (!self.bootReady) return; interact(self.state); self.input.clear(); self.persist(); self.draw(0); },
-      close() { if (!self.bootReady) return; closeHomePanel(self.state); self.input.clear(); self.persist(); self.draw(0); },
-      start() { if (!self.bootReady) return; startRun(self.state, self.testing ? 42 : undefined); self.input.clear(); self.persist(); self.draw(0); },
-      upgrade(track) { if (!self.bootReady) return; buyUpgrade(self.state, track); self.persist(); self.draw(0); },
-      furnish(id) { if (!self.bootReady) return; buyFurniture(self.state, id); self.persist(); self.draw(0); },
+      interact() { if (!self.bootReady) return; self.audio.sfx('ui_click'); interact(self.state); self.input.clear(); self.persist(); self.draw(0); },
+      close() { if (!self.bootReady) return; self.audio.sfx('ui_click'); closeHomePanel(self.state); self.input.clear(); self.persist(); self.draw(0); },
+      start() { if (!self.bootReady) return; self.audio.sfx('ui_click'); startRun(self.state, self.testing ? 42 : undefined); self.input.clear(); self.persist(); self.draw(0); },
+      upgrade(track) { if (!self.bootReady) return; self.audio.sfx('ui_click'); buyUpgrade(self.state, track); self.persist(); self.draw(0); },
+      furnish(id) { if (!self.bootReady) return; self.audio.sfx('ui_click'); buyFurniture(self.state, id); self.persist(); self.draw(0); },
     });
     this.saveBanner = document.createElement('aside');
     this.saveBanner.className = 'save-status';
@@ -246,6 +255,11 @@ export class GameScreen implements Screen {
   }
 
   private draw(dt: number): void {
+    if (this.state.run) {
+      this.audio.setDuskAmount(this.state.run.elapsed / RUN_SECONDS);
+    } else {
+      this.audio.setDuskAmount(0); // menu/home = day
+    }
     this.audio.update(this.state, !this.bootReady || this.contextLost);
     if (!this.renderer || this.contextLost) return;
     this.renderer.render(this.state, dt);
@@ -255,7 +269,7 @@ export class GameScreen implements Screen {
       targetDistance: Math.hypot(target.position.x - this.state.player.position.x, target.position.z - this.state.player.position.z),
       targetBearing: relativeBearing(this.state.player.position, target.position, this.state.player.yaw),
       speed: this.state.player.speed, status: '',
-      timeRemaining: this.state.run ? Math.max(0, 360 - this.state.run.elapsed) : undefined,
+      timeRemaining: this.state.run ? Math.max(0, RUN_SECONDS - this.state.run.elapsed) : undefined,
     });
     this.homeUI.render(this.state);
     this.touchControls.render(this.state);
