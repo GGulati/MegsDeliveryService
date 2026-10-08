@@ -1,4 +1,6 @@
 import type { Screen } from './Screen';
+import type { GameAudio } from '../audio';
+import { createState } from '../simulation';
 
 /** Loading screen: shown after menu selection, while heavy work runs.
  * Displays progress through stages. Dismissed when GameScreen is ready. */
@@ -6,8 +8,16 @@ export class LoadingScreen implements Screen {
   private root: HTMLElement;
   private el: HTMLElement | null = null;
   private label: HTMLElement | null = null;
-  constructor(root: HTMLElement) {
+  private audio: GameAudio;
+  private menuState = createState();
+  constructor(root: HTMLElement, audio: GameAudio) {
     this.root = root;
+    this.audio = audio;
+  }
+
+  update(_dt: number): void {
+    // Keep music playing during loading (no SFX — state is static)
+    this.audio.update(this.menuState, false);
   }
 
   enter(): void {

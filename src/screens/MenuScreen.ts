@@ -1,6 +1,9 @@
 import type { Screen } from './Screen';
 import { peekSlot, getLastSlot, migrateLegacySave, getMuted, setMuted, type SlotInfo } from '../storage';
 import { icon } from '../ui';
+import { GameAudio } from '../audio';
+import { createState } from '../simulation';
+import type { GameState } from '../types';
 
 /** Menu screen: New Game / Continue / Load from slots.
  * Shown immediately on page load. No heavy initialization. */
@@ -8,14 +11,26 @@ export class MenuScreen implements Screen {
   private root: HTMLElement;
   private el: HTMLElement | null = null;
   private onSelect: (slotId: number, isNew: boolean) => void;
+  private audio: GameAudio;
+  private menuState: GameState;
 
-  constructor(root: HTMLElement, onSelect: (slotId: number, isNew: boolean) => void) {
+  constructor(root: HTMLElement, onSelect: (slotId: number, isNew: boolean) => void, audio: GameAudio) {
     this.root = root;
     this.onSelect = onSelect;
+    this.audio = audio;
+    this.menuState = createState();
+  }
+
+  /** Called by ScreenManager's rAF loop. Drives menu music. */
+  update(_dt: number): void {
+    this.audio.update(this.menuState, false);
   }
 
   enter(): void {
     migrateLegacySave();
+    // Reset audio snapshot so menu music starts clean (no SFX from diffing
+    // against a previous screen's state).
+    this.audio.resetSnapshot();
     const lastSlot = getLastSlot();
     const slots: SlotInfo[] = [1, 2, 3].map(peekSlot);
     const lastInfo = slots.find(s => s.slotId === lastSlot);
@@ -55,11 +70,16 @@ export class MenuScreen implements Screen {
     this.el.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest('button[data-action]');
       if (!btn) return;
+      // Gesture unlock: sync audio with persisted preference. Creates the
+      // AudioContext on user gesture (if unmuted). Respects mute preference.
+      this.audio.setMuted(getMuted());
+      this.audio.sfx('ui_click');
       const action = btn.getAttribute('data-action');
       const slot = parseInt(btn.getAttribute('data-slot') ?? '1', 10);
       if (action === 'mute') {
         const m = !getMuted();
         setMuted(m);
+        this.audio.setMuted(m);
         btn.setAttribute('aria-label', m ? 'Unmute audio' : 'Mute audio');
         btn.innerHTML = icon(m ? 'sound-off' : 'sound');
         return;
@@ -81,5 +101,6 @@ export class MenuScreen implements Screen {
   exit(): void {
     this.el?.remove();
     this.el = null;
+    // DO NOT dispose audio — it's a shared instance.
   }
 }

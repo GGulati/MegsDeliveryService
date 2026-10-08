@@ -1,15 +1,111 @@
 import type { GameState } from './types';
+import { RUN_SECONDS } from './simulation';
 
 type AudioContextConstructor = new () => AudioContext;
-type Snapshot = { deliveries: number; coins: number; upgrades: string; furniture: string; homePanel: GameState['homePanel'] };
+type Snapshot = { deliveries: number; coins: number; upgrades: string; furniture: string; homePanel: GameState['homePanel']; hasJob: boolean; speed: number; returning: boolean; hover: boolean; elapsed: number; dropActive: boolean };
+
+export type SfxName =
+  | 'ui_click' | 'takeoff' | 'landing' | 'parcel_pickup'
+  | 'delivery_complete' | 'purchase' | 'hover_toggle'
+  | 'nightfall_warning' | 'bump' | 'purr';
+
+/** Shared tuning for the OoT-inspired themes. Single source of truth for
+ * volumes, tempos, and transition timing — tune here, not in the sequencers. */
+export const OOT_TUNING = {
+  master: 0.6,
+  lullaby: { tempo: 80, melodyVol: 0.05, padVol: 0.03, bassVol: 0.02 },
+  field: { tempo: 126, melodyVol: 0.06, padVol: 0.025, bassVol: 0.035, drumVol: 0.04 },
+  signalVol: 0.05, // transition motif volume
+} as const;
+
+/** Last N seconds of the day use the field theme (hourglass shaking). */
+export const FIELD_THEME_SECONDS = 60;
+
+/** Shared tuning for the OoT-inspired sound effects. Single source of truth —
+ * tune here, not in sfx(). */
+export const OOT_SFX_TUNING = {
+  master: 0.7, // SFX bus gain (separate from music, slightly louder so SFX cut through)
+  ui_click: { freq: 1200, dur: 0.04, vol: 0.05 }, // OoT menu cursor tick
+  takeoff: { fromFreq: 300, toFreq: 900, dur: 0.5, vol: 0.08 }, // Epona-style rising whoosh
+  landing: { freq: 150, dur: 0.2, vol: 0.1 }, // soft landing thud
+  parcel_pickup: { notes: [523.25, 659.25, 783.99], dur: 0.1, vol: 0.07 }, // item-get chime C–E–G
+  delivery_complete: { notes: [523.25, 659.25, 783.99, 1046.5], dur: 0.12, vol: 0.08 }, // item fanfare C–E–G–C′
+  purchase: { freq: 1318.5, dur: 0.15, vol: 0.06 }, // rupee "ding"
+  hover_toggle: { freq: 1568, dur: 0.08, vol: 0.04 }, // fairy sparkle
+  nightfall_warning: { notes: [440, 523.25, 659.25], dur: 0.3, vol: 0.06 }, // ocarina-like phrase A–C–E
+  bump: { freq: 90, dur: 0.15, vol: 0.1 }, // wall bump thud
+  purr: { freq: 110, dur: 0.4, vol: 0.05 }, // cat purr (kept as-is, not OoT)
+} as const;
+
+/** Lullaby progression: 8 bars of I–V–vi–IV in C major with added 9ths.
+ * Pad voicings are close-position triads + 9th; bass roots sit an octave below. */
+const LULLABY_CHORDS: { bass: number; pad: number[] }[] = [
+  { bass: 36, pad: [60, 64, 67, 74] }, // Cmaj9
+  { bass: 43, pad: [55, 59, 62, 69] }, // Gadd9
+  { bass: 45, pad: [57, 60, 64, 71] }, // Am9
+  { bass: 41, pad: [53, 57, 60, 67] }, // Fmaj9
+  { bass: 36, pad: [60, 64, 67, 74] },
+  { bass: 43, pad: [55, 59, 62, 69] },
+  { bass: 45, pad: [57, 60, 64, 71] },
+  { bass: 41, pad: [53, 57, 60, 67] },
+];
+
+/** C major, one octave C4–C5: the lullaby melody never leaves this range. */
+const LULLABY_SCALE = [60, 62, 64, 65, 67, 69, 71, 72];
+
+/** Field progression: 8 bars of I–V–vi–IV in C major, tighter voicings
+ * (no 9ths) for rhythmic drive. Bass roots sit an octave below the pad. */
+const FIELD_CHORDS: { bass: number; pad: number[] }[] = [
+  { bass: 36, pad: [48, 52, 55] }, // C
+  { bass: 43, pad: [55, 59, 62] }, // G
+  { bass: 45, pad: [57, 60, 64] }, // Am
+  { bass: 41, pad: [53, 57, 60] }, // F
+  { bass: 36, pad: [48, 52, 55] }, // C
+  { bass: 43, pad: [55, 59, 62] }, // G
+  { bass: 41, pad: [53, 57, 60] }, // F
+  { bass: 43, pad: [55, 59, 62] }, // G
+];
+
+/** C major, C4–C5. The field melody uses this plus the Dorian F# (66) for color. */
+const FIELD_SCALE = [60, 62, 64, 65, 67, 69, 71, 72];
+/** F#4: Dorian raised 6th color, used sparingly over vi (Am) bars. */
+const DORIAN_FSHARP = 66;
+
+/** Signal phrase notes (MIDI). Lullaby→field rises C4–E4–G4–C5;
+ * field→lullaby falls G4–E4–C4–G3. One bar in the outgoing theme's meter. */
+const SIGNAL_RISING = [60, 64, 67, 72];
+const SIGNAL_FALLING = [67, 64, 60, 55];
 
 /** Procedural, gesture-unlocked Web Audio with an intentionally small graph. */
 export class GameAudio {
   private context?: AudioContext; private master?: GainNode; private ambience?: GainNode;
+  private sfxBus?: GainNode; // SFX bus: all sfx() output routes here, then to master
   private ambienceSources: OscillatorNode[] = []; private tones = new Set<OscillatorNode>();
-  private muted = true; private disposed = false; private snapshot?: Snapshot; private nextNote = 0;
+  private noiseSources = new Set<AudioBufferSourceNode>();
+  private muted = true; private disposed = false; private snapshot?: Snapshot;
+  private musicFilter?: BiquadFilterNode;
+  // OoT theme state. Per-theme scheduling + PRNG so the themes never interfere.
+  currentTheme: 'lullaby' | 'field' = 'lullaby';
+  private lullabyNextNote = 0; private lullabyBar = 0;
+  private fieldNextNote = 0; private fieldBar = 0;
+  private lullabySeed = 12345; private fieldSeed = 67890;
+  // Melody position within LULLABY_SCALE (index). Persists across bars for
+  // a continuous stepwise line; reset by enterLullaby().
+  private lullabyDegree = 2;
+  // Melody position within FIELD_SCALE (index). Persists across bars for
+  // call-and-response phrasing; reset by enterField().
+  private fieldDegree = 4;
+  // Theme target from timeRemaining (Task 3). Task 6 consumes this for the transition.
+  // Updated even while muted, like lastActive, so unmute mid-game uses fresh state.
+  private targetTheme: 'lullaby' | 'field' = 'lullaby';
+  // Task 6: signal-phrase transition state. While transitioning, neither
+  // theme sequencer plays — only the 1-bar signal (never layer 3/4 over 6/8).
+  private transitioning = false;
+  private transitionEndTime = 0;
   // Updated even while muted, preventing unmute while paused from using stale state.
   private lastActive = false; private operationPending = false;
+  // SFX trigger state (snapshot-diff).
+  private lastBumpTime = -10; private nightfallWarned = false;
 
   setMuted(muted: boolean): void {
     if (this.disposed) return;
@@ -18,17 +114,83 @@ export class GameAudio {
     this.reconcile();
   }
 
+  /** Select the music theme from the time remaining in the day.
+   * The field theme takes over for the last FIELD_THEME_SECONDS (hourglass shaking). */
+  selectTheme(timeRemaining: number | undefined): 'lullaby' | 'field' {
+    return timeRemaining !== undefined && timeRemaining <= FIELD_THEME_SECONDS ? 'field' : 'lullaby';
+  }
+
+  /** Clear the snapshot so the next update() establishes a new baseline
+   * without triggering SFX from diffing against a different screen's state.
+   * Call on screen transitions when using a shared GameAudio instance. */
+  resetSnapshot(): void {
+    this.snapshot = undefined;
+  }
+
+  /** Silence output without touching the SFX-diff snapshot.
+   * Use when a screen exits: ScreenManager enters the new screen (which
+   * resets the snapshot) before exiting the old, so an exit-time update()
+   * would repopulate the snapshot with the old screen's state and cause
+   * spurious SFX on the new screen's first frame. */
+  silence(): void {
+    this.lastActive = false;
+    if (this.muted || this.disposed || !this.context) return;
+    this.reconcile();
+  }
+
   update(state: GameState, inactive: boolean): void {
     const previous = this.snapshot, next = this.takeSnapshot(state); this.snapshot = next;
     this.lastActive = !(inactive || state.paused || (typeof document !== 'undefined' && document.hidden));
+    // Wire timeRemaining → theme target (Task 3). Menu/loading pass run: null → lullaby.
+    const elapsed = state.run?.elapsed;
+    this.targetTheme = this.selectTheme(elapsed !== undefined ? RUN_SECONDS - elapsed : undefined);
     if (this.muted || this.disposed || !this.context) return;
     this.reconcile();
     if (!this.canPlay() || this.context.state !== 'running') return;
-    this.playMelody();
+    const context = this.context;
+    // Task 6: signal-phrase transition. When the target theme changes, play a
+    // 1-bar signal in the outgoing theme's meter, then hard-cut on the downbeat.
+    // The sequencers stay silent during the signal — never layer 3/4 over 6/8.
+    if (!this.transitioning && this.targetTheme !== this.currentTheme) {
+      this.transitioning = true;
+      this.playSignal(this.currentTheme);
+      this.transitionEndTime = context.currentTime + this.barDuration(this.currentTheme);
+    }
+    if (this.transitioning && context.currentTime >= this.transitionEndTime) {
+      this.currentTheme = this.targetTheme;
+      if (this.currentTheme === 'lullaby') this.enterLullaby();
+      else this.enterField();
+      this.transitioning = false;
+    }
+    if (!this.transitioning) {
+      if (this.currentTheme === 'lullaby') this.playLullaby();
+      if (this.currentTheme === 'field') this.playField();
+    }
     if (!previous) return;
-    if (next.deliveries > previous.deliveries) this.deliveryCue();
-    if (next.coins < previous.coins && (next.upgrades !== previous.upgrades || next.furniture !== previous.furniture)) this.purchaseCue();
-    if (previous.homePanel !== 'cat' && next.homePanel === 'cat') this.purrCue();
+    if (next.deliveries > previous.deliveries) this.sfx('delivery_complete');
+    if (next.coins < previous.coins && (next.upgrades !== previous.upgrades || next.furniture !== previous.furniture)) this.sfx('purchase');
+    if (previous.homePanel !== 'cat' && next.homePanel === 'cat') this.sfx('purr');
+    // Snapshot-diff SFX triggers.
+    if (!previous.hasJob && next.hasJob) this.sfx('parcel_pickup');
+    if (next.hasJob && next.speed > 5 && previous.speed <= 5) this.sfx('takeoff');
+    if (!previous.returning && next.returning) this.sfx('landing');
+    if (previous.hover !== next.hover && !previous.dropActive && !next.dropActive) this.sfx('hover_toggle');
+    // Bump: sudden speed drop (>50%) while carrying a job, 1s cooldown.
+    if (next.hasJob && previous.speed > 0 && next.speed < previous.speed * 0.5) {
+      const now = this.context.currentTime;
+      if (now - this.lastBumpTime > 1) {
+        this.sfx('bump');
+        this.lastBumpTime = now;
+      }
+    }
+    // Nightfall warning: elapsed crosses RUN_SECONDS - FIELD_THEME_SECONDS (60s remaining), once per run.
+    // Reset when a new run starts (elapsed goes high -> low).
+    if (next.elapsed < previous.elapsed) this.nightfallWarned = false;
+    const warnAt = RUN_SECONDS - FIELD_THEME_SECONDS;
+    if (!this.nightfallWarned && previous.elapsed < warnAt && next.elapsed >= warnAt) {
+      this.sfx('nightfall_warning');
+      this.nightfallWarned = true;
+    }
   }
 
   dispose(): void {
@@ -36,17 +198,230 @@ export class GameAudio {
     this.disposed = true; this.lastActive = false; this.clearAmbience();
     for (const tone of this.tones) { try { tone.stop(); } catch { /* stopped */ } tone.disconnect(); }
     this.tones.clear();
+    for (const source of this.noiseSources) { try { source.stop(); } catch { /* stopped */ } source.disconnect(); }
+    this.noiseSources.clear();
+    this.musicFilter?.disconnect(); this.musicFilter = undefined;
+    this.sfxBus?.disconnect(); this.sfxBus = undefined;
     if (this.context && this.context.state !== 'closed') void this.context.close().catch(() => undefined);
     this.context = undefined; this.master = undefined;
   }
 
-  debugState(): { context: string; muted: boolean } { return { context: this.context?.state ?? 'unavailable', muted: this.muted }; }
+  sfx(name: SfxName): void {
+    if (this.muted || this.disposed || !this.context) return;
+    if (this.context.state !== 'running') return;
+    // All SFX route through the sfxBus (falls back to master if the bus is gone).
+    const bus = this.sfxBus ?? this.master;
+    const t = OOT_SFX_TUNING;
+    switch (name) {
+      case 'ui_click': // OoT menu cursor: crisp warm tick (sine, not square)
+        this.tone(t.ui_click.freq, t.ui_click.dur, t.ui_click.vol, 'sine', 0, bus); break;
+      case 'takeoff': // Epona-style rising whoosh
+        this.noiseSweep(t.takeoff.fromFreq, t.takeoff.toFreq, t.takeoff.dur, t.takeoff.vol, 0, bus); break;
+      case 'landing': // soft landing thud
+        this.tone(t.landing.freq, t.landing.dur, t.landing.vol, 'sine', 0, bus);
+        this.noiseSweep(200, 100, 0.2, t.landing.vol, 0, bus); // soft noise thud
+        break;
+      case 'parcel_pickup': // item-get chime: rising C–E–G arpeggio
+        t.parcel_pickup.notes.forEach((freq, i) =>
+          this.tone(freq, t.parcel_pickup.dur, t.parcel_pickup.vol, 'triangle', i * 0.06, bus));
+        break;
+      case 'delivery_complete': // item fanfare: C–E–G–C′
+        t.delivery_complete.notes.forEach((freq, i) =>
+          this.tone(freq, t.delivery_complete.dur, t.delivery_complete.vol, 'triangle', i * 0.1, bus));
+        break;
+      case 'purchase': // rupee "ding": single bright sine
+        this.tone(t.purchase.freq, t.purchase.dur, t.purchase.vol, 'sine', 0, bus);
+        break;
+      case 'hover_toggle': // fairy sparkle: very short high shimmer
+        this.tone(t.hover_toggle.freq, t.hover_toggle.dur, t.hover_toggle.vol, 'sine', 0, bus);
+        break;
+      case 'nightfall_warning': // ocarina-like phrase: lyrical A–C–E, soft sine
+        t.nightfall_warning.notes.forEach((freq, i) =>
+          this.tone(freq, t.nightfall_warning.dur, t.nightfall_warning.vol, 'sine', i * 0.15, bus));
+        break;
+      case 'bump': // wall bump thud (unchanged character)
+        this.tone(t.bump.freq, t.bump.dur, t.bump.vol, 'sine', 0, bus);
+        break;
+      case 'purr': // cat purr (unchanged — not OoT, but it's a cat)
+        this.tone(110, 0.48, 0.055, 'sine', 0, bus);
+        this.tone(164.81, 0.42, 0.035, 'sine', 0.08, bus);
+        break;
+      default: break;
+    }
+  }
+
+  debugState(): { context: string; muted: boolean; activeTones: number } {
+    return {
+      context: this.context?.state ?? 'unavailable',
+      muted: this.muted,
+      activeTones: this.tones.size + this.noiseSources.size,
+    };
+  }
+
+  /** Reset the lullaby sequencer for a fresh theme entry: bar 0, melody
+   * home, scheduled from now. Task 6 calls this on the transition downbeat. */
+  enterLullaby(): void {
+    this.lullabyBar = 0;
+    this.lullabyDegree = 2;
+    if (this.context) this.lullabyNextNote = this.context.currentTime;
+  }
+
+  /** Reset the field sequencer for a fresh theme entry: bar 0, melody home,
+   * PRNG reseeded for a deterministic opening phrase, scheduled from now.
+   * Task 6 calls this on the transition downbeat. */
+  enterField(): void {
+    this.fieldBar = 0;
+    this.fieldDegree = 4;
+    this.fieldSeed = 67890;
+    if (this.context) this.fieldNextNote = this.context.currentTime;
+  }
+
+  /** One bar in seconds for a theme: lullaby 3/4 at 80 BPM = 2.25s,
+   * field 6/8 at 126 BPM ≈ 2.857s. */
+  private barDuration(theme: 'lullaby' | 'field'): number {
+    return theme === 'lullaby'
+      ? (60 / OOT_TUNING.lullaby.tempo) * 3
+      : (60 / OOT_TUNING.field.tempo) * 6;
+  }
+
+  /** Signal phrase: 4-note motif over one bar of the outgoing theme's meter.
+   * Rising for lullaby→field, falling for field→lullaby. Scheduled immediately
+   * at OOT_TUNING.signalVol; the sequencers stay silent while it plays. */
+  private playSignal(outgoing: 'lullaby' | 'field'): void {
+    if (!this.context) return;
+    const notes = outgoing === 'lullaby' ? SIGNAL_RISING : SIGNAL_FALLING;
+    const barDur = this.barDuration(outgoing);
+    const spacing = barDur / notes.length;
+    for (let i = 0; i < notes.length; i++) {
+      this.tone(this.freq(notes[i]), spacing * 0.9, OOT_TUNING.signalVol, 'sine', i * spacing);
+    }
+  }
+
+  /** Lullaby theme: 3/4 at OOT_TUNING.lullaby.tempo, I–V–vi–IV with 9ths.
+   * Schedules one bar when due, using the lullaby's own scheduling state
+   * and PRNG stream so it never interferes with the field theme. */
+  private playLullaby(): void {
+    const context = this.context;
+    if (!context || context.currentTime < this.lullabyNextNote) return;
+    const t = OOT_TUNING.lullaby;
+    const beat = 60 / t.tempo; // 0.75s at 80 BPM
+    const barDur = beat * 3;   // 2.25s, 3/4
+    const start = Math.max(this.lullabyNextNote, context.currentTime);
+    const delay = start - context.currentTime;
+    const chord = LULLABY_CHORDS[this.lullabyBar % LULLABY_CHORDS.length];
+    const filter = this.ensureFilter();
+    // Pad: triad + 9th, whole bar, through the music lowpass.
+    for (const midi of chord.pad) this.tone(this.freq(midi), barDur, t.padVol, 'sine', delay, filter);
+    // Bass: root on beat 1.
+    this.tone(this.freq(chord.bass), beat * 2.5, t.bassVol, 'sine', delay);
+    // Melody: stepwise PRNG walk, one note per beat, C4–C5.
+    // Every 4th bar the line returns home, giving a lullaby-like AABA lilt.
+    if (this.lullabyBar % 4 === 0) this.lullabyDegree = 2;
+    for (let b = 0; b < 3; b++) {
+      const r = this.nextLullabyRandom();
+      const step = r < 0.3 ? 0 : r < 0.55 ? 1 : r < 0.75 ? -1 : r < 0.9 ? 2 : -2;
+      this.lullabyDegree = Math.min(LULLABY_SCALE.length - 1, Math.max(0, this.lullabyDegree + step));
+      this.tone(this.freq(LULLABY_SCALE[this.lullabyDegree]), beat * 0.9, t.melodyVol, 'sine', delay + b * beat);
+    }
+    this.lullabyBar++;
+    this.lullabyNextNote = start + barDur;
+  }
+
+  /** Mulberry32 step on the lullaby seed. Own stream, never shared with field. */
+  private nextLullabyRandom(): number {
+    const seed = (this.lullabySeed + 0x6D2B79F5) | 0;
+    this.lullabySeed = seed;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  /** Field theme: 6/8 at OOT_TUNING.field.tempo, I–V–vi–IV with Dorian color.
+   * Hyrule Field-inspired drive — adventurous but still cozy. Schedules one
+   * bar when due, using the field's own scheduling state and PRNG stream so
+   * it never interferes with the lullaby theme. */
+  private playField(): void {
+    const context = this.context;
+    if (!context || context.currentTime < this.fieldNextNote) return;
+    const t = OOT_TUNING.field;
+    const eighth = 60 / t.tempo; // 0.476s at 126 BPM
+    const barDur = eighth * 6;   // ≈2.86s, 6/8
+    const start = Math.max(this.fieldNextNote, context.currentTime);
+    const delay = start - context.currentTime;
+    const chord = FIELD_CHORDS[this.fieldBar % FIELD_CHORDS.length];
+    const filter = this.ensureFilter();
+    // Pad: tight triad, half-bar, through the music lowpass.
+    for (const midi of chord.pad) this.tone(this.freq(midi), barDur / 2, t.padVol, 'sine', delay, filter);
+    // Bass: driving 8ths — root pulse, fifth on the back half.
+    const bassSteps = [1, 1, 1.5, 1, 1, 1.5];
+    for (let i = 0; i < 6; i++) {
+      this.tone(this.freq(chord.bass) * bassSteps[i], eighth * 0.9, t.bassVol, 'triangle', delay + i * eighth);
+    }
+    // Percussion: low tom on beats 1 & 4, soft hats on the off-eighths.
+    this.tone(82, 0.18, t.drumVol, 'sine', delay);
+    this.tone(82, 0.18, t.drumVol, 'sine', delay + 3 * eighth);
+    for (const off of [1, 2, 4, 5]) {
+      this.noiseSweep(7000, 7000, 0.04, t.drumVol, delay + off * eighth);
+    }
+    // Melody: rhythmic PRNG line with 4th/5th leaps, call-and-response.
+    // Bars 0–3 call (ascending energy), bars 4–7 respond (resolve home).
+    // Every 4th bar the line returns home for phrasing.
+    if (this.fieldBar % 4 === 0) this.fieldDegree = 4;
+    const positions = [0, 1, 3, 4]; // syncopated 6/8 lilt
+    for (const pos of positions) {
+      const r = this.nextFieldRandom();
+      // Leap of 4th/5th (35%), step (45%), repeat (20%) — more leapy than lullaby.
+      const step = r < 0.2 ? 0 : r < 0.4 ? 3 : r < 0.55 ? 4 : r < 0.75 ? 1 : r < 0.9 ? -1 : 2;
+      this.fieldDegree = Math.min(FIELD_SCALE.length - 1, Math.max(0, this.fieldDegree + step));
+      let midi = FIELD_SCALE[this.fieldDegree];
+      // Dorian color: on the first Am (vi) bar, the second melody note lifts
+      // to F# — a composed Hyrule-style inflection, not a random event.
+      const bar = this.fieldBar % 8;
+      if (bar === 2 && pos === 1) midi = DORIAN_FSHARP;
+      this.tone(this.freq(midi), eighth * 1.8, t.melodyVol, 'sine', delay + pos * eighth);
+    }
+    this.fieldBar++;
+    this.fieldNextNote = start + barDur;
+  }
+
+  /** Mulberry32 step on the field seed. Own stream, never shared with lullaby. */
+  private nextFieldRandom(): number {
+    const seed = (this.fieldSeed + 0x6D2B79F5) | 0;
+    this.fieldSeed = seed;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  private freq(midi: number): number { return 440 * Math.pow(2, (midi - 69) / 12); }
+
+  /** Lazily create the shared music lowpass (fixed 1800Hz per Task 2). */
+  private ensureFilter(): BiquadFilterNode | undefined {
+    const context = this.context, master = this.master;
+    if (!context || !master) return undefined;
+    if (!this.musicFilter) {
+      const filter = context.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 1800;
+      filter.connect(master);
+      this.musicFilter = filter;
+    }
+    return this.musicFilter;
+  }
 
   private ensureContext(): AudioContext | undefined {
     if (this.context) return this.context;
     const Constructor = typeof window === 'undefined' ? undefined : (window.AudioContext || (window as Window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext);
     if (!Constructor) return undefined;
-    try { const context = new Constructor(), master = context.createGain(); master.gain.value = .0001; master.connect(context.destination); this.context = context; this.master = master; return context; } catch { return undefined; }
+    try {
+      const context = new Constructor(), master = context.createGain();
+      master.gain.value = .0001; master.connect(context.destination);
+      const sfxBus = context.createGain();
+      sfxBus.gain.value = OOT_SFX_TUNING.master;
+      sfxBus.connect(master);
+      this.context = context; this.master = master; this.sfxBus = sfxBus;
+      return context;
+    } catch { return undefined; }
   }
   private canPlay(): boolean { return !this.disposed && !this.muted && this.lastActive; }
 
@@ -70,7 +445,7 @@ export class GameAudio {
   private startAmbience(): void {
     const context = this.context, master = this.master;
     if (!context || !master || context.state !== 'running' || !this.canPlay()) return;
-    const now = context.currentTime; master.gain.cancelScheduledValues(now); master.gain.setTargetAtTime(.14, now, .08);
+    const now = context.currentTime; master.gain.cancelScheduledValues(now); master.gain.setTargetAtTime(OOT_TUNING.master, now, .08);
     if (this.ambience) return;
     const ambience = context.createGain(), wind = context.createOscillator(), drift = context.createOscillator(), driftGain = context.createGain();
     ambience.gain.value = .035; ambience.connect(master); wind.type = 'sine'; wind.frequency.value = 82; drift.type = 'sine'; drift.frequency.value = .09; driftGain.gain.value = 11;
@@ -78,15 +453,35 @@ export class GameAudio {
     this.ambience = ambience; this.ambienceSources = [wind, drift];
   }
   private clearAmbience(): void { for (const source of this.ambienceSources) { try { source.stop(); } catch { /* stopped */ } source.disconnect(); } this.ambienceSources = []; this.ambience?.disconnect(); this.ambience = undefined; }
-  private playMelody(): void { const context = this.context; if (!context || context.currentTime < this.nextNote) return; const notes = [261.63,329.63,392,523.25,440,329.63]; this.tone(notes[Math.floor((context.currentTime*1.7)%notes.length)],.11,.045,'sine'); this.nextNote = context.currentTime + 1.45; }
-  private deliveryCue(): void { this.tone(659.25,.08,.09,'triangle'); this.tone(783.99,.19,.07,'triangle',.09); }
-  private purchaseCue(): void { this.tone(523.25,.06,.08,'sine'); this.tone(783.99,.16,.075,'sine',.07); }
-  private purrCue(): void { this.tone(110,.48,.055,'sine'); this.tone(164.81,.42,.035,'sine',.08); }
-  private tone(frequency: number, duration: number, volume: number, type: OscillatorType, delay = 0): void {
+  private tone(frequency: number, duration: number, volume: number, type: OscillatorType, delay = 0, destination?: AudioNode): void {
     const context = this.context, master = this.master; if (!context || !master || context.state !== 'running' || !this.canPlay()) return;
     const start = context.currentTime + delay, oscillator = context.createOscillator(), gain = context.createGain(); oscillator.type = type; oscillator.frequency.value = frequency;
-    gain.gain.setValueAtTime(.0001,start); gain.gain.exponentialRampToValueAtTime(volume,start+.018); gain.gain.exponentialRampToValueAtTime(.0001,start+duration); oscillator.connect(gain).connect(master); this.tones.add(oscillator);
+    gain.gain.setValueAtTime(.0001,start); gain.gain.exponentialRampToValueAtTime(volume,start+.018); gain.gain.exponentialRampToValueAtTime(.0001,start+duration); oscillator.connect(gain).connect(destination ?? master); this.tones.add(oscillator);
     oscillator.onended = () => { this.tones.delete(oscillator); oscillator.disconnect(); gain.disconnect(); }; oscillator.start(start); oscillator.stop(start + duration + .03);
   }
-  private takeSnapshot(state: GameState): Snapshot { return { deliveries: Math.max(state.profile.deliveries,state.run?.deliveries??0), coins: state.profile.coins, upgrades: `${state.profile.upgrades.speed}:${state.profile.upgrades.handling}:${state.profile.upgrades.braking}`, furniture: state.profile.furniture.join('|'), homePanel: state.homePanel }; }
+  private noiseSweep(fromFreq: number, toFreq: number, duration: number, volume = 0.08, delay = 0, destination?: AudioNode): void {
+    const context = this.context, master = this.master;
+    if (!context || !master || context.state !== 'running' || !this.canPlay()) return;
+    const start = context.currentTime + delay;
+    const bufferSize = Math.floor(context.sampleRate * duration);
+    const buffer = context.createBuffer(1, bufferSize, context.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    const filter = context.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(fromFreq, start);
+    filter.frequency.exponentialRampToValueAtTime(toFreq, start + duration);
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(.0001, start);
+    gain.gain.exponentialRampToValueAtTime(volume, start + .05);
+    gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
+    source.connect(filter).connect(gain).connect(destination ?? master);
+    this.noiseSources.add(source);
+    source.onended = () => { this.noiseSources.delete(source); source.disconnect(); filter.disconnect(); gain.disconnect(); };
+    source.start(start);
+    source.stop(start + duration + .05);
+  }
+  private takeSnapshot(state: GameState): Snapshot { return { deliveries: Math.max(state.profile.deliveries,state.run?.deliveries??0), coins: state.profile.coins, upgrades: `${state.profile.upgrades.speed}:${state.profile.upgrades.handling}:${state.profile.upgrades.braking}`, furniture: state.profile.furniture.join('|'), homePanel: state.homePanel, hasJob: !!state.run?.job, speed: state.player.speed, returning: !!state.run?.returning, hover: state.player.hover, elapsed: state.run?.elapsed ?? 0, dropActive: !!state.drop }; }
 }

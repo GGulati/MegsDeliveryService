@@ -108,9 +108,6 @@ export async function expectAnimating(page: import('@playwright/test').Page) {
 /** Click via direct DOM dispatch (avoids Playwright's navigation-wait quirk
  * on buttons whose handlers never navigate). */
 export async function domClick(page: import('@playwright/test').Page, selector: string) {
-  // Wait for the element to be visible before clicking — under load, the DOM
-  // may not be ready when the test runs. This avoids silent no-op clicks.
-  await page.locator(selector).waitFor({ state: 'visible', timeout: 10_000 });
   await page.evaluate(sel => {
     const el = document.querySelector(sel) as HTMLElement | null;
     if (!el) throw new Error(`domClick: ${sel} not found`);
