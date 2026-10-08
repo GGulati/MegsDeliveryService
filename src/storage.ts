@@ -1,5 +1,6 @@
 import type { GameState, Job, Mode, Player, Profile, Run, Vec3 } from './types';
 import { STOPS } from './world';
+import { CAPSTONES } from './home';
 
 /** Versioned localStorage records, one per save slot. */
 export const SAVE_KEY_PREFIX = 'megs-delivery-save-v1-slot';
@@ -92,7 +93,17 @@ function readJob(value: unknown): Job | null {
 
 function readProfile(value: unknown): Profile | null {
   if (!isRecord(value) || !integer(value.coins) || !isRecord(value.upgrades) || !integer(value.upgrades.speed, 0, 2) || !integer(value.upgrades.handling, 0, 2) || !integer(value.upgrades.braking, 0, 2) || !Array.isArray(value.furniture) || value.furniture.length > FURNITURE.size || !value.furniture.every((item) => typeof item === 'string' && FURNITURE.has(item as string)) || new Set(value.furniture).size !== value.furniture.length || typeof value.tutorialDone !== 'boolean' || !integer(value.runs) || !integer(value.deliveries)) return null;
-  return { coins: value.coins as number, upgrades: { speed: value.upgrades.speed as number, handling: value.upgrades.handling as number, braking: value.upgrades.braking as number }, furniture: [...value.furniture] as string[], tutorialDone: value.tutorialDone, runs: value.runs as number, deliveries: value.deliveries as number };
+  // Migrate old saves: capacity/glide default to 0, capstones default to {}.
+  const capacity = integer(value.upgrades.capacity, 0, 2) ? value.upgrades.capacity as number : 0;
+  const glide = integer(value.upgrades.glide, 0, 2) ? value.upgrades.glide as number : 0;
+  const capstones: Record<string, string> = {};
+  if (isRecord(value.upgrades.capstones)) {
+    for (const [track, id] of Object.entries(value.upgrades.capstones)) {
+      const options = (CAPSTONES as Record<string, readonly { id: string }[]>)[track];
+      if (typeof id === 'string' && options?.some((option) => option.id === id)) capstones[track] = id;
+    }
+  }
+  return { coins: value.coins as number, upgrades: { speed: value.upgrades.speed as number, handling: value.upgrades.handling as number, braking: value.upgrades.braking as number, capacity, glide, capstones }, furniture: [...value.furniture] as string[], tutorialDone: value.tutorialDone, runs: value.runs as number, deliveries: value.deliveries as number };
 }
 
 function readRun(value: unknown): Run | null | undefined {

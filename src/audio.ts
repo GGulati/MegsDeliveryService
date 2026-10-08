@@ -483,5 +483,5 @@ export class GameAudio {
     source.start(start);
     source.stop(start + duration + .05);
   }
-  private takeSnapshot(state: GameState): Snapshot { return { deliveries: Math.max(state.profile.deliveries,state.run?.deliveries??0), coins: state.profile.coins, upgrades: `${state.profile.upgrades.speed}:${state.profile.upgrades.handling}:${state.profile.upgrades.braking}`, furniture: state.profile.furniture.join('|'), homePanel: state.homePanel, hasJob: !!state.run?.job, speed: state.player.speed, returning: !!state.run?.returning, hover: state.player.hover, elapsed: state.run?.elapsed ?? 0, dropActive: !!state.drop }; }
+  private takeSnapshot(state: GameState): Snapshot { const u = state.profile.upgrades; const capKeys = Object.keys(u.capstones).sort().map(k => `${k}=${u.capstones[k]}`).join(','); return { deliveries: Math.max(state.profile.deliveries,state.run?.deliveries??0), coins: state.profile.coins, upgrades: `${u.speed}:${u.handling}:${u.braking}:${u.capacity}:${u.glide}:${capKeys}`, furniture: state.profile.furniture.join('|'), homePanel: state.homePanel, hasJob: !!state.run?.job, speed: state.player.speed, returning: !!state.run?.returning, hover: state.player.hover, elapsed: state.run?.elapsed ?? 0, dropActive: !!state.drop }; }
 }

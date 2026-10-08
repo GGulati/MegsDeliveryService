@@ -1,8 +1,9 @@
 import type { GameState } from './types';
 import { STOPS } from './world';
+import { CoinAnim } from './coin-anim';
 
 export interface UIActions { start: () => void; pause: () => void; resume: () => void; mute: () => void; fullscreen: () => void; unstuck: () => void; chooseJob?: (index: number) => void; returnHome?: () => void; nextDay?: () => void; }
-export interface UIInfo { muted: boolean; targetName: string; targetDistance: number; targetBearing?: number; speed: number; status: string; timeRemaining?: number; }
+export interface UIInfo { muted: boolean; targetName: string; targetDistance: number; targetBearing?: number; speed: number; status: string; timeRemaining?: number; project?: (x: number, y: number, z: number) => { x: number; y: number } | null; }
 
 // Pumpkin-tip dismissal: the bubble is dismissible per tip, and reappears when
 // genuinely new information arrives (new mode, tutorial stage, or tip text).
@@ -26,18 +27,27 @@ const money = (n: number) => `${Math.max(0, Math.round(n))} coins`;
 
 export class UI {
   private el: Record<string, HTMLElement> = {}; private previousRevision = -1; private offersKey = ''; private tip = emptyTipDismissal();
+  private lastCoinCount = -1; private lastEarnings = 0; private displayedCoins = 0; private coinAnim = new CoinAnim(); private coinRemainder = 0;
   constructor(root: HTMLElement, actions: UIActions) {
     root.classList.add('meg-ui'); root.innerHTML = `
 <header class="gamebar"><div class="gamebar-brand">MEG’S <span>Delivery Service</span></div><div class="gamebar-actions"><button class="icon-button" id="pause-btn" aria-label="Pause flight">${icon('pause')}</button></div></header><main class="screen-layer">
 <section class="title-card panel" id="title-card"><div class="eyebrow">${icon('star')} A LITTLE WITCH. A BIG SKY.</div><h1>MEG’S<br><em>Delivery</em> Service</h1><p class="premise">Take on a parcel, then return home <b>before nightfall</b> to bank your earnings.</p><p class="key-hint desktop-hint">Steer with <kbd>WASD</kbd> / arrows · rise with <kbd>W</kbd> · hover with <kbd>Space</kbd></p><p class="key-hint touch-hint">Touch anywhere to fly · release the stick to slow down</p><button id="start-btn" class="primary-button">Learn to fly <span>→</span></button><div class="title-controls"><button id="fullscreen-btn">${icon('fullscreen')} Fullscreen</button><button id="mute-btn-title" class="icon-button icon-button-sm" aria-label="Mute audio">${icon('sound')}</button></div><footer>MADE OF LITTLE ADVENTURES <span class="desktop-hint">⌨</span><span class="touch-hint">touch to fly</span> <span class="build-sha">build ${__BUILD_SHA__}</span></footer></section>
 <section class="offers-card panel menu-card" id="offers-card"><div class="eyebrow">${icon('envelope')} TODAY’S POST</div><h2>Choose a delivery</h2><p>Nightfall is already on its way. Pick one parcel and make it home with your earnings.</p><div class="offer-balances"><span>Satchel <b id="offer-earnings">0 coins</b></span><span>Banked <b id="offer-banked">0 coins</b></span></div><div id="offer-list" class="offer-list"></div><button id="return-home-btn" class="secondary-button">Return home</button></section>
 <section class="summary-card panel menu-card" id="summary-card"><div class="eyebrow">${icon('star')} DAY’S END</div><h2 id="summary-heading">A lovely landing.</h2><p id="summary-copy"></p><div class="summary-stats"><div><span>Deliveries</span><b id="summary-deliveries">0</b></div><div><span>Earnings saved</span><b id="summary-earnings">0 coins</b></div></div><button id="next-day-btn" class="primary-button">Another day <span>→</span></button></section>
-<section class="flight-hud" id="flight-hud"><div class="destination-card panel"><div class="eyebrow">${icon('envelope')} <span id="target-label">Next delivery</span></div><strong id="target-name">The village</strong><div class="target-direction"><span class="compass-arrow" id="target-arrow"></span><span id="target-distance">— m away</span><svg class="hourglass" id="hourglass" viewBox="0 0 40 48" aria-hidden="true"><defs><clipPath id="top-bulb"><polygon points="9,6 31,6 20,24"/></clipPath><clipPath id="bottom-bulb"><polygon points="9,42 31,42 20,24"/></clipPath></defs><path d="M9 6 H31 L20 24 L31 42 H9 L20 24 Z" fill="#fffdf5" fill-opacity="0.35" stroke="#55402e" stroke-width="2.5" stroke-linejoin="round"/><rect id="sand-top" x="9" y="6" width="22" height="18" fill="#e8b64c" clip-path="url(#top-bulb)"/><rect id="sand-bottom" x="9" y="42" width="22" height="0" fill="#e8b64c" clip-path="url(#bottom-bulb)"/><line class="sand-stream" x1="20" y1="24" x2="20" y2="30" stroke="#e8b64c" stroke-width="1.6" stroke-linecap="round"/><circle class="grain" cx="20" cy="22" r="1.3" fill="#e8b64c"/><circle class="grain grain-2" cx="20" cy="22" r="1" fill="#e8b64c"/><circle class="grain grain-3" cx="20" cy="22" r="1.1" fill="#e8b64c"/><line x1="6" y1="6" x2="34" y2="6" stroke="#55402e" stroke-width="3.5" stroke-linecap="round"/><line x1="6" y1="42" x2="34" y2="42" stroke="#55402e" stroke-width="3.5" stroke-linecap="round"/></svg></div></div><div class="tutorial-bubble" id="tutorial-bubble"><button class="bubble-close" id="bubble-close" aria-label="Dismiss tip">×</button><b>Pumpkin says:</b> <span id="tutorial-text"></span></div><div class="flight-readout panel"><span><b id="speed-value">0</b> m/s</span><span class="satchel-readout">Satchel <b id="flight-earnings">0</b></span></div></section>
+<section class="flight-hud" id="flight-hud"><div class="coin-counter panel" id="coin-counter"><span class="coin-icon" aria-hidden="true">●</span><b id="coin-count">0</b></div><div id="coin-layer" class="coin-layer"></div><div class="destination-card panel"><div class="eyebrow">${icon('envelope')} <span id="target-label">Next delivery</span></div><strong id="target-name">The village</strong><div class="target-direction"><span class="compass-arrow" id="target-arrow"></span><span id="target-distance">— m away</span><svg class="hourglass" id="hourglass" viewBox="0 0 40 48" aria-hidden="true"><defs><clipPath id="top-bulb"><polygon points="9,6 31,6 20,24"/></clipPath><clipPath id="bottom-bulb"><polygon points="9,42 31,42 20,24"/></clipPath></defs><path d="M9 6 H31 L20 24 L31 42 H9 L20 24 Z" fill="#fffdf5" fill-opacity="0.35" stroke="#55402e" stroke-width="2.5" stroke-linejoin="round"/><rect id="sand-top" x="9" y="6" width="22" height="18" fill="#e8b64c" clip-path="url(#top-bulb)"/><rect id="sand-bottom" x="9" y="42" width="22" height="0" fill="#e8b64c" clip-path="url(#bottom-bulb)"/><line class="sand-stream" x1="20" y1="24" x2="20" y2="30" stroke="#e8b64c" stroke-width="1.6" stroke-linecap="round"/><circle class="grain" cx="20" cy="22" r="1.3" fill="#e8b64c"/><circle class="grain grain-2" cx="20" cy="22" r="1" fill="#e8b64c"/><circle class="grain grain-3" cx="20" cy="22" r="1.1" fill="#e8b64c"/><line x1="6" y1="6" x2="34" y2="6" stroke="#55402e" stroke-width="3.5" stroke-linecap="round"/><line x1="6" y1="42" x2="34" y2="42" stroke="#55402e" stroke-width="3.5" stroke-linecap="round"/></svg></div></div><div class="tutorial-bubble" id="tutorial-bubble"><button class="bubble-close" id="bubble-close" aria-label="Dismiss tip">×</button><b>Pumpkin says:</b> <span id="tutorial-text"></span></div><div class="flight-readout panel"><span><b id="speed-value">0</b> m/s</span><span class="satchel-readout">Satchel <b id="flight-earnings">0</b></span></div></section>
 <section class="pause-card panel menu-card" id="pause-card"><div class="eyebrow">${icon('star')} TAKING A BREATHER<button id="mute-btn-pause" class="icon-button icon-button-sm" aria-label="Mute audio" style="margin-left:auto">${icon('sound')}</button></div><h2>The sky will wait.</h2><p id="pause-reason"></p><p class="key-hint desktop-hint">When you return: <kbd>WASD</kbd> or arrows to steer · <kbd>Q</kbd>/<kbd>E</kbd> for speed</p><p class="key-hint touch-hint">When you return: touch anywhere to fly · release the stick to slow down</p><button id="resume-btn" class="primary-button">Continue flying <span>→</span></button><button id="unstuck-btn" class="secondary-button">Unstuck me</button></section></main>`;
-    const get=(id:string)=>root.querySelector<HTMLElement>(`#${id}`)!; ['title-card','offers-card','summary-card','flight-hud','pause-card','hourglass','sand-top','sand-bottom','pause-reason','target-name','target-distance','target-arrow','target-label','tutorial-bubble','tutorial-text','bubble-close','speed-value','flight-earnings','mute-btn-title','mute-btn-pause','pause-btn','resume-btn','unstuck-btn','offer-list','return-home-btn','offer-earnings','offer-banked','summary-heading','summary-copy','summary-deliveries','summary-earnings','next-day-btn','start-btn'].forEach(id=>this.el[id]=get(id));
+    const get=(id:string)=>root.querySelector<HTMLElement>(`#${id}`)!; ['title-card','offers-card','summary-card','flight-hud','pause-card','hourglass','sand-top','sand-bottom','pause-reason','target-name','target-distance','target-arrow','target-label','tutorial-bubble','tutorial-text','bubble-close','speed-value','flight-earnings','coin-counter','coin-count','coin-layer','mute-btn-title','mute-btn-pause','pause-btn','resume-btn','unstuck-btn','offer-list','return-home-btn','offer-earnings','offer-banked','summary-heading','summary-copy','summary-deliveries','summary-earnings','next-day-btn','start-btn'].forEach(id=>this.el[id]=get(id));
     const click=(id:string, action:()=>void)=>get(id).onclick=e=>{action();(e.currentTarget as HTMLElement).blur();}; click('start-btn',actions.start); click('pause-btn',actions.pause); click('resume-btn',actions.resume); click('unstuck-btn',actions.unstuck); click('mute-btn-title',actions.mute); click('mute-btn-pause',actions.mute);
     get('bubble-close').onclick=e=>{this.tip=dismissTip(this.tip);this.el['tutorial-bubble'].hidden=true;(e.currentTarget as HTMLElement).blur();}; click('return-home-btn',()=>actions.returnHome?.()); click('next-day-btn',()=>actions.nextDay?.()); get('fullscreen-btn').onclick=actions.fullscreen; get('offer-list').onclick=e=>{const b=(e.target as HTMLElement).closest<HTMLButtonElement>('[data-job]');if(b){actions.chooseJob?.(+b.dataset.job!);b.blur();}};
   }
+  /** Screen position of the coin counter (center) — target for coin fly animation. */
+  coinCounterPosition(): { x: number; y: number } | null {
+    const el = this.el['coin-counter'];
+    if (!el || el.hidden) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
   render(state: GameState, info: UIInfo): void {
     const menu=['offers','summary'].includes(state.mode), title=state.mode==='title', paused=!title&&state.paused; this.el['title-card'].hidden=!title; this.el['offers-card'].hidden=state.mode!=='offers'||paused; this.el['summary-card'].hidden=state.mode!=='summary'||paused; this.el['flight-hud'].hidden=title||menu||paused; this.el['pause-card'].hidden=!paused;
     // Hourglass: upper sand drains proportionate to time remaining; lower fills.
@@ -58,6 +68,46 @@ export class UI {
     } this.el['tutorial-text'].textContent=info.status||state.message||'Let’s take the scenic route!'; // INVARIANT: the dismissal key and the displayed tip text share one source expression (tipText).
     const tipText=info.status||state.message||''; const tip=nextTipVisibility(this.tip,state.mode,state.tutorialStage,info.status,tipText,info.timeRemaining); this.tip=tip.next; this.el['tutorial-bubble'].hidden=tip.hidden;
     this.el['flight-earnings'].textContent=money(state.run?.earnings??0); this.el['offer-earnings'].textContent=money(state.run?.earnings??0); this.el['offer-banked'].textContent=money(state.profile.coins); this.renderOffers(state);
+    // C1+C2: prominent coin counter with pickup animation.
+    // The counter animates toward the true earnings: coins fly in one by one.
+    const targetCoins=state.run?.earnings??0;
+    const now=typeof performance!=='undefined'?performance.now():Date.now();
+    if(state.run&&targetCoins>this.lastEarnings){
+      const payout=targetCoins-this.lastEarnings;
+      const target=this.coinCounterPosition();
+      if(target){
+        let from={x:window.innerWidth/2,y:window.innerHeight*0.7};
+        const stop=STOPS.find(s=>s.id===state.run!.lastStop);
+        if(stop&&info.project){ const p=info.project(stop.position.x,stop.position.y??0,stop.position.z); if(p) from=p; }
+        this.coinRemainder=this.coinAnim.spawn(from,target,payout,now);
+      } else {
+        // Counter not visible: snap instantly.
+        this.displayedCoins=targetCoins;
+      }
+    } else if(targetCoins<this.displayedCoins){
+      // Earnings decreased (banked/new day): snap down.
+      this.displayedCoins=targetCoins; this.coinAnim=new CoinAnim(); this.coinRemainder=0;
+    }
+    this.lastEarnings=targetCoins;
+    const arrived=this.coinAnim.update(now);
+    if(arrived>0){
+      this.displayedCoins+=arrived;
+      const cc=this.el['coin-counter'];
+      cc.classList.remove('coin-pop'); void cc.offsetWidth; cc.classList.add('coin-pop');
+    }
+    if(this.coinRemainder>0&&this.coinAnim.activeCount===0){
+      this.displayedCoins+=this.coinRemainder; this.coinRemainder=0;
+    }
+    if(this.displayedCoins!==this.lastCoinCount){
+      this.lastCoinCount=this.displayedCoins;
+      this.el['coin-count'].textContent=String(Math.max(0,Math.round(this.displayedCoins)));
+    }
+    // Render active coin sprites.
+    const layer=this.el['coin-layer'];
+    const positions=this.coinAnim.positions(now);
+    while(layer.children.length<positions.length){ const s=document.createElement('span'); s.className='coin-sprite'; s.textContent='●'; layer.appendChild(s); }
+    while(layer.children.length>positions.length){ layer.removeChild(layer.lastChild!); }
+    positions.forEach((p,i)=>{ const s=layer.children[i] as HTMLElement; s.style.transform=`translate(${p.x}px,${p.y}px)`; });
     const s=state.summary, success=s?.success??false; this.el['summary-heading'].textContent=success?'A lovely landing.':'Rescued from nightfall.'; this.el['summary-copy'].textContent=success?`You banked ${money(s?.earnings??0)} after ${s?.deliveries??0} deliveries.`:'The unbanked satchel was lost, but tomorrow brings another chance.'; this.el['summary-deliveries'].textContent=String(s?.deliveries??0); this.el['summary-earnings'].textContent=money(s?.earnings??0); this.el['next-day-btn'].innerHTML=`${success?'Another day':'Back home'} <span>→</span>`;
     if(this.previousRevision!==state.revision){this.el['pause-reason'].textContent=state.pauseReason||'Rest your wings whenever you need.';this.previousRevision=state.revision;}
   }
