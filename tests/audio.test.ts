@@ -333,9 +333,7 @@ test('nightfall_warning fires once when elapsed crosses 300', async () => {
     // Disable theme system for SFX test: no signal, no melody notes, no theme entry.
     // @ts-expect-error accessing private for test
     audio.playSignal = () => {};
-    // @ts-expect-error accessing private for test
     audio.enterLullaby = () => {};
-    // @ts-expect-error accessing private for test
     audio.enterField = () => {};
     // @ts-expect-error accessing private for test
     audio.playLullaby = () => {};
@@ -368,9 +366,7 @@ test('nightfall_warning resets when a new run starts', async () => {
     // Disable theme system for SFX test.
     // @ts-expect-error accessing private for test
     audio.playSignal = () => {};
-    // @ts-expect-error accessing private for test
     audio.enterLullaby = () => {};
-    // @ts-expect-error accessing private for test
     audio.enterField = () => {};
     // @ts-expect-error accessing private for test
     audio.playLullaby = () => {};
