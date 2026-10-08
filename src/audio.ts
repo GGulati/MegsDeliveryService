@@ -21,6 +21,22 @@ export const OOT_TUNING = {
 /** Last N seconds of the day use the field theme (hourglass shaking). */
 export const FIELD_THEME_SECONDS = 60;
 
+/** Shared tuning for the OoT-inspired sound effects. Single source of truth —
+ * tune here, not in sfx(). */
+export const OOT_SFX_TUNING = {
+  master: 0.7, // SFX bus gain (separate from music, slightly louder so SFX cut through)
+  ui_click: { freq: 1200, dur: 0.04, vol: 0.05 }, // OoT menu cursor tick
+  takeoff: { fromFreq: 300, toFreq: 900, dur: 0.5, vol: 0.08 }, // Epona-style rising whoosh
+  landing: { freq: 150, dur: 0.2, vol: 0.1 }, // soft landing thud
+  parcel_pickup: { notes: [523.25, 659.25, 783.99], dur: 0.1, vol: 0.07 }, // item-get chime C–E–G
+  delivery_complete: { notes: [523.25, 659.25, 783.99, 1046.5], dur: 0.12, vol: 0.08 }, // item fanfare C–E–G–C′
+  purchase: { freq: 1318.5, dur: 0.15, vol: 0.06 }, // rupee "ding"
+  hover_toggle: { freq: 1568, dur: 0.08, vol: 0.04 }, // fairy sparkle
+  nightfall_warning: { notes: [440, 523.25, 659.25], dur: 0.3, vol: 0.06 }, // ocarina-like phrase A–C–E
+  bump: { freq: 90, dur: 0.15, vol: 0.1 }, // wall bump thud
+  purr: { freq: 110, dur: 0.4, vol: 0.05 }, // cat purr (kept as-is, not OoT)
+} as const;
+
 /** Lullaby progression: 8 bars of I–V–vi–IV in C major with added 9ths.
  * Pad voicings are close-position triads + 9th; bass roots sit an octave below. */
 const LULLABY_CHORDS: { bass: number; pad: number[] }[] = [
@@ -63,6 +79,7 @@ const SIGNAL_FALLING = [67, 64, 60, 55];
 /** Procedural, gesture-unlocked Web Audio with an intentionally small graph. */
 export class GameAudio {
   private context?: AudioContext; private master?: GainNode; private ambience?: GainNode;
+  private sfxBus?: GainNode; // SFX bus: all sfx() output routes here, then to master
   private ambienceSources: OscillatorNode[] = []; private tones = new Set<OscillatorNode>();
   private noiseSources = new Set<AudioBufferSourceNode>();
   private muted = true; private disposed = false; private snapshot?: Snapshot;
@@ -184,6 +201,7 @@ export class GameAudio {
     for (const source of this.noiseSources) { try { source.stop(); } catch { /* stopped */ } source.disconnect(); }
     this.noiseSources.clear();
     this.musicFilter?.disconnect(); this.musicFilter = undefined;
+    this.sfxBus?.disconnect(); this.sfxBus = undefined;
     if (this.context && this.context.state !== 'closed') void this.context.close().catch(() => undefined);
     this.context = undefined; this.master = undefined;
   }
@@ -191,41 +209,42 @@ export class GameAudio {
   sfx(name: SfxName): void {
     if (this.muted || this.disposed || !this.context) return;
     if (this.context.state !== 'running') return;
+    // All SFX route through the sfxBus (falls back to master if the bus is gone).
+    const bus = this.sfxBus ?? this.master;
+    const t = OOT_SFX_TUNING;
     switch (name) {
-      case 'ui_click': this.tone(800, 0.05, 0.06, 'square'); break;
-      case 'takeoff': this.noiseSweep(400, 1200, 0.4); break;
-      case 'landing':
-        this.tone(120, 0.25, 0.12, 'sine');
-        this.noiseSweep(200, 100, 0.2); // soft noise thud
+      case 'ui_click': // OoT menu cursor: crisp warm tick (sine, not square)
+        this.tone(t.ui_click.freq, t.ui_click.dur, t.ui_click.vol, 'sine', 0, bus); break;
+      case 'takeoff': // Epona-style rising whoosh
+        this.noiseSweep(t.takeoff.fromFreq, t.takeoff.toFreq, t.takeoff.dur, t.takeoff.vol, 0, bus); break;
+      case 'landing': // soft landing thud
+        this.tone(t.landing.freq, t.landing.dur, t.landing.vol, 'sine', 0, bus);
+        this.noiseSweep(200, 100, 0.2, t.landing.vol, 0, bus); // soft noise thud
         break;
-      case 'parcel_pickup':
-        this.tone(659.25, 0.08, 0.07, 'triangle');
-        this.tone(880, 0.12, 0.06, 'triangle', 0.06);
+      case 'parcel_pickup': // item-get chime: rising C–E–G arpeggio
+        t.parcel_pickup.notes.forEach((freq, i) =>
+          this.tone(freq, t.parcel_pickup.dur, t.parcel_pickup.vol, 'triangle', i * 0.06, bus));
         break;
-      case 'delivery_complete':
-        this.tone(523.25, 0.12, 0.08, 'triangle');
-        this.tone(659.25, 0.12, 0.08, 'triangle', 0.1);
-        this.tone(783.99, 0.12, 0.08, 'triangle', 0.2);
-        this.tone(1046.5, 0.3, 0.07, 'triangle', 0.3);
+      case 'delivery_complete': // item fanfare: C–E–G–C′
+        t.delivery_complete.notes.forEach((freq, i) =>
+          this.tone(freq, t.delivery_complete.dur, t.delivery_complete.vol, 'triangle', i * 0.1, bus));
         break;
-      case 'purchase':
-        this.tone(987.77, 0.08, 0.06, 'sine');
-        this.tone(1318.5, 0.18, 0.05, 'sine', 0.07);
+      case 'purchase': // rupee "ding": single bright sine
+        this.tone(t.purchase.freq, t.purchase.dur, t.purchase.vol, 'sine', 0, bus);
         break;
-      case 'hover_toggle':
-        this.tone(500, 0.06, 0.05, 'sine');
+      case 'hover_toggle': // fairy sparkle: very short high shimmer
+        this.tone(t.hover_toggle.freq, t.hover_toggle.dur, t.hover_toggle.vol, 'sine', 0, bus);
         break;
-      case 'nightfall_warning':
-        // 1.2s decay per design spec
-        this.tone(880, 1.2, 0.06, 'sine');
-        this.tone(1320, 1.0, 0.03, 'sine', 0.05);
+      case 'nightfall_warning': // ocarina-like phrase: lyrical A–C–E, soft sine
+        t.nightfall_warning.notes.forEach((freq, i) =>
+          this.tone(freq, t.nightfall_warning.dur, t.nightfall_warning.vol, 'sine', i * 0.15, bus));
         break;
-      case 'bump':
-        this.tone(90, 0.18, 0.1, 'sine');
+      case 'bump': // wall bump thud (unchanged character)
+        this.tone(t.bump.freq, t.bump.dur, t.bump.vol, 'sine', 0, bus);
         break;
-      case 'purr':
-        this.tone(110, 0.48, 0.055, 'sine');
-        this.tone(164.81, 0.42, 0.035, 'sine', 0.08);
+      case 'purr': // cat purr (unchanged — not OoT, but it's a cat)
+        this.tone(110, 0.48, 0.055, 'sine', 0, bus);
+        this.tone(164.81, 0.42, 0.035, 'sine', 0.08, bus);
         break;
       default: break;
     }
@@ -394,7 +413,15 @@ export class GameAudio {
     if (this.context) return this.context;
     const Constructor = typeof window === 'undefined' ? undefined : (window.AudioContext || (window as Window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext);
     if (!Constructor) return undefined;
-    try { const context = new Constructor(), master = context.createGain(); master.gain.value = .0001; master.connect(context.destination); this.context = context; this.master = master; return context; } catch { return undefined; }
+    try {
+      const context = new Constructor(), master = context.createGain();
+      master.gain.value = .0001; master.connect(context.destination);
+      const sfxBus = context.createGain();
+      sfxBus.gain.value = OOT_SFX_TUNING.master;
+      sfxBus.connect(master);
+      this.context = context; this.master = master; this.sfxBus = sfxBus;
+      return context;
+    } catch { return undefined; }
   }
   private canPlay(): boolean { return !this.disposed && !this.muted && this.lastActive; }
 
@@ -432,7 +459,7 @@ export class GameAudio {
     gain.gain.setValueAtTime(.0001,start); gain.gain.exponentialRampToValueAtTime(volume,start+.018); gain.gain.exponentialRampToValueAtTime(.0001,start+duration); oscillator.connect(gain).connect(destination ?? master); this.tones.add(oscillator);
     oscillator.onended = () => { this.tones.delete(oscillator); oscillator.disconnect(); gain.disconnect(); }; oscillator.start(start); oscillator.stop(start + duration + .03);
   }
-  private noiseSweep(fromFreq: number, toFreq: number, duration: number, volume = 0.08, delay = 0): void {
+  private noiseSweep(fromFreq: number, toFreq: number, duration: number, volume = 0.08, delay = 0, destination?: AudioNode): void {
     const context = this.context, master = this.master;
     if (!context || !master || context.state !== 'running' || !this.canPlay()) return;
     const start = context.currentTime + delay;
@@ -450,7 +477,7 @@ export class GameAudio {
     gain.gain.setValueAtTime(.0001, start);
     gain.gain.exponentialRampToValueAtTime(volume, start + .05);
     gain.gain.exponentialRampToValueAtTime(.0001, start + duration);
-    source.connect(filter).connect(gain).connect(master);
+    source.connect(filter).connect(gain).connect(destination ?? master);
     this.noiseSources.add(source);
     source.onended = () => { this.noiseSources.delete(source); source.disconnect(); filter.disconnect(); gain.disconnect(); };
     source.start(start);
