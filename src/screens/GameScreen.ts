@@ -255,11 +255,6 @@ export class GameScreen implements Screen {
   }
 
   private draw(dt: number): void {
-    if (this.state.run) {
-      this.audio.setDuskAmount(this.state.run.elapsed / RUN_SECONDS);
-    } else {
-      this.audio.setDuskAmount(0); // menu/home = day
-    }
     this.audio.update(this.state, !this.bootReady || this.contextLost);
     if (!this.renderer || this.contextLost) return;
     this.renderer.render(this.state, dt);
