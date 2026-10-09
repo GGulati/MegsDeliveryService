@@ -21,35 +21,35 @@ test('keyboard input moves the player', async ({ page }) => {
   // Initial speed should be low
   const speedBefore = await getSpeed();
 
-  // Hold E to accelerate (throttle up)
+  // Hold E to accelerate (throttle up) — poll until speed increases
   await page.keyboard.down('e');
-  await page.waitForTimeout(2000);
-  const speedAfterE = await getSpeed();
+  await expect(async () => {
+    const s = await getSpeed();
+    expect(s).toBeGreaterThan(speedBefore);
+  }).toPass({ timeout: 10_000 });
   await page.keyboard.up('e');
-
-  expect(speedAfterE, `E should accelerate (was ${speedBefore}, now ${speedAfterE})`)
-    .toBeGreaterThan(speedBefore);
 
   // Distance to target should be changing (player is moving)
   const dist1 = await getDistance();
-  await page.waitForTimeout(1000);
-  const dist2 = await getDistance();
-  // Distance text should update as the player moves
   expect(dist1).toBeTruthy();
-  expect(dist2).toBeTruthy();
+  await expect(async () => {
+    const d2 = await getDistance();
+    expect(d2).toBeTruthy();
+    expect(d2).not.toBe(dist1);
+  }).toPass({ timeout: 10_000 });
 
-  // E should brake? No — Q brakes (throttle down). Space is hover.
-  // Accelerate again, then Q to slow
+  // Q brakes (throttle down). Space is hover.
+  // Accelerate again, then Q to slow — poll until speed decreases
   await page.keyboard.down('e');
   await page.waitForTimeout(1000);
   await page.keyboard.up('e');
   const speedCruising = await getSpeed();
   await page.keyboard.down('q');
-  await page.waitForTimeout(1500);
+  await expect(async () => {
+    const s = await getSpeed();
+    expect(s).toBeLessThan(speedCruising);
+  }).toPass({ timeout: 10_000 });
   await page.keyboard.up('q');
-  const speedAfterBrake = await getSpeed();
-  expect(speedAfterBrake, `Q should brake (was ${speedCruising}, now ${speedAfterBrake})`)
-    .toBeLessThan(speedCruising);
 
   expect(errors, `expected zero errors, got:\n${errors.join('\n')}`).toEqual([]);
 });
