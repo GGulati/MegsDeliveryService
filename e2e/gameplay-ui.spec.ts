@@ -58,11 +58,12 @@ test('pause menu shows with mute, resume returns to flight', async ({ page }) =>
   expect(errors, `expected zero errors, got:\n${errors.join('\n')}`).toEqual([]);
 });
 
-/** Tier 2 — coin fly animation (delivery -> Meg) and pause button.
+/** Tier 2 — coin fly animation uses 3D sprites (delivery -> Meg) and pause button.
  * The old #coin-counter HUD element was removed (it covered the pause button).
- * Coin sprites now fly from the delivery point to Meg's screen position.
+ * The old #coin-layer DOM overlay was removed — coins are now THREE.Sprite
+ * objects in the 3D scene, flying from the delivery stop to Meg.
  * The satchel readout (#flight-earnings) shows the true earnings. */
-test('no coin counter HUD, coin layer exists, pause clickable', async ({ page }) => {
+test('no coin counter HUD, no DOM coin layer, pause clickable', async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await collectErrors(page);
   await startNewGame(page);
@@ -74,9 +75,9 @@ test('no coin counter HUD, coin layer exists, pause clickable', async ({ page })
   const coinCounter = page.locator('#coin-counter');
   await expect(coinCounter, 'coin counter should NOT exist').toHaveCount(0);
 
-  // Coin layer should exist for the fly animation
+  // The #coin-layer DOM overlay was removed (now using THREE.Sprite)
   const coinLayer = page.locator('#coin-layer');
-  await expect(coinLayer, 'coin animation layer should exist').toBeAttached();
+  await expect(coinLayer, 'DOM coin layer should NOT exist').toHaveCount(0);
 
   // Pause button should be clickable (not covered by any coin UI)
   const pauseBtn = page.locator('#pause-btn');
