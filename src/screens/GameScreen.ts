@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { Screen } from './Screen';
 import { startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget, relativeBearing, RUN_SECONDS } from '../simulation';
 import { initGameState, type GameContext } from '../game-context';
@@ -268,6 +269,14 @@ export class GameScreen implements Screen {
       targetBearing: relativeBearing(this.state.player.position, target.position, this.state.player.yaw),
       speed: this.state.player.speed, status: '',
       timeRemaining: this.state.run ? Math.max(0, RUN_SECONDS - this.state.run.elapsed) : undefined,
+      project: (x, y, z) => {
+        const v = new THREE.Vector3(x, y, z).project(this.renderer.camera);
+        if (v.z > 1) return null; // Behind camera
+        return {
+          x: (v.x * 0.5 + 0.5) * window.innerWidth,
+          y: (-v.y * 0.5 + 0.5) * window.innerHeight,
+        };
+      },
     });
     this.homeUI.render(this.state);
     this.touchControls.render(this.state);
