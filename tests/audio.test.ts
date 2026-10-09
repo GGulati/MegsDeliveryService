@@ -32,7 +32,7 @@ function install(): () => void {
 async function flush() { await Promise.resolve(); await Promise.resolve(); }
 
 test('audio is initially muted and does not allocate a context', () => {
-  const restore = install(); try { const audio = new GameAudio(); audio.update(createState(), false); assert.deepEqual(audio.debugState(), { context: 'unavailable', muted: true, duskAmount: 0, activeTones: 0 }); } finally { restore(); }
+  const restore = install(); try { const audio = new GameAudio(); audio.update(createState(), false); assert.deepEqual(audio.debugState(), { context: 'unavailable', muted: true, activeTones: 0 }); } finally { restore(); }
 });
 
 test('unmute starts only after an active update, then pause and resume reconcile once', async () => {
@@ -130,36 +130,12 @@ for (const cue of allCues) {
   });
 }
 
-test('setDuskAmount clamps to [0,1]', () => {
-  const restore = install(); try {
-    const audio = new GameAudio();
-    audio.setDuskAmount(-0.5);
-    assert.equal(audio.debugState().duskAmount, 0);
-    audio.setDuskAmount(1.5);
-    assert.equal(audio.debugState().duskAmount, 1);
-    audio.setDuskAmount(0.5);
-    assert.equal(audio.debugState().duskAmount, 0.5);
-  } finally { restore(); }
-});
-
-test('nextRandom advances seed (deterministic sequence)', () => {
-  const restore = install(); try {
-    const a1 = new GameAudio(); const a2 = new GameAudio();
-    // @ts-expect-error accessing private for test
-    const r1 = [a1.nextRandom(), a1.nextRandom(), a1.nextRandom()];
-    // @ts-expect-error accessing private for test
-    const r2 = [a2.nextRandom(), a2.nextRandom(), a2.nextRandom()];
-    assert.deepEqual(r1, r2, 'same seed produces same sequence');
-    assert.ok(r1[0] !== r1[1] || r1[1] !== r1[2], 'sequence advances (not constant)');
-  } finally { restore(); }
-});
-
-test('debugState includes duskAmount and activeTones', () => {
+test('debugState includes activeTones', () => {
   const restore = install(); try {
     const audio = new GameAudio();
     const state = audio.debugState();
-    assert.ok('duskAmount' in state, 'has duskAmount');
     assert.ok('activeTones' in state, 'has activeTones');
+    assert.ok(!('duskAmount' in state), 'duskAmount removed');
   } finally { restore(); }
 });
 
@@ -179,7 +155,7 @@ test('game→menu transition does not fire spurious SFX (snapshot ordering)', as
     // Game active: establish a game snapshot (coins earned, upgrade bought).
     const gameState = createState();
     gameState.profile.coins = 50;
-    gameState.profile.upgrades = { speed: 1, handling: 0, braking: 0 };
+    gameState.profile.upgrades = { speed: 1, handling: 0, braking: 0, capacity: 0, glide: 0, capstones: {} };
     audio.update(gameState, false);
     audio.update(gameState, false);
     fired.length = 0; // ignore anything during gameplay
@@ -232,7 +208,9 @@ const testJob = { from: 'home', to: 'bakery', payout: 20, label: 'test', parcel:
 /** Suppress the adaptive melody so trigger tests count only SFX oscillators. */
 function suppressMelody(audio: GameAudio, ctx: { currentTime: number }): void {
   // @ts-expect-error accessing private for test
-  audio.nextNote = ctx.currentTime + 10000;
+  audio.lullabyNextNote = Infinity;
+  // @ts-expect-error accessing private for test
+  audio.fieldNextNote = Infinity;
 }
 
 
@@ -352,6 +330,15 @@ test('hover_toggle triggers when hover changes', async () => {
 test('nightfall_warning fires once when elapsed crosses 300', async () => {
   const restore = install(); try {
     const audio = new GameAudio();
+    // Disable theme system for SFX test: no signal, no melody notes, no theme entry.
+    // @ts-expect-error accessing private for test
+    audio.playSignal = () => {};
+    audio.enterLullaby = () => {};
+    audio.enterField = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playLullaby = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playField = () => {};
     const s1 = stateWithRun({ elapsed: 299 });
     audio.update(s1, false);
     audio.setMuted(false);
@@ -376,6 +363,15 @@ test('nightfall_warning fires once when elapsed crosses 300', async () => {
 test('nightfall_warning resets when a new run starts', async () => {
   const restore = install(); try {
     const audio = new GameAudio();
+    // Disable theme system for SFX test.
+    // @ts-expect-error accessing private for test
+    audio.playSignal = () => {};
+    audio.enterLullaby = () => {};
+    audio.enterField = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playLullaby = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playField = () => {};
     const s1 = stateWithRun({ elapsed: 299 });
     audio.update(s1, false);
     audio.setMuted(false);

@@ -117,9 +117,9 @@ export function createPlayer(position: Vec3 = STOPS[0].position): Player {
 export function createState(): GameState {
   return {
     mode: 'title', player: createPlayer(),
-    profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0 }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
+    profile: { coins: 0, upgrades: { speed: 0, handling: 0, braking: 0, capacity: 0, glide: 0, capstones: {} }, furniture: [], tutorialDone: false, runs: 0, deliveries: 0 },
     run: null, paused: false, pauseReason: '', message: '', tutorialStage: 0, drop: null, descent: null, haloFade: 0,
-    homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', summary: null, revision: 0,
+    homePosition: { x: 0, z: 3 }, homeFacing: 0, homePanel: 'none', homeSitting: false, petCount: 0, summary: null, revision: 0,
     // General-purpose save seed (2026-09-30): deterministic RNG for ambient
     // life and any future seeded systems. Generated once per save file.
     seed: Math.floor(Math.random() * 0x7fffffff),
@@ -248,7 +248,7 @@ function completeDrop(state: GameState, stopId: string): void {
   run.job = null;
   run.lastStop = stop.id;
   run.recentStops = [...run.recentStops, stop.id].slice(-3);
-  run.offers = makeOffers(run.seed, run.deliveries, stop.id, run.recentStops);
+  run.offers = makeOffers(run.seed, run.deliveries, stop.id, run.recentStops, offerSlots(state));
   run.returning = false;
   state.mode = 'offers';
   state.message = 'Delivered! Choose the next parcel or return home.';
@@ -266,7 +266,7 @@ export function startRun(state: GameState, seed = Date.now()): void {
   state.run = {
     seed: safeSeed, elapsed: 0, earnings: 0, deliveries: 0,
     job: null,
-    offers: makeOffers(safeSeed, 0, 'home', []),
+    offers: makeOffers(safeSeed, 0, 'home', [], offerSlots(state)),
     returning: false, lastStop: 'home', recentStops: [],
   };
   state.summary = null;
@@ -364,7 +364,7 @@ function hashString(str: string): number {
   return h >>> 0;
 }
 
-export function makeOffers(seed: number, delivery: number, from: string, recentStops: string[]): import('./types').Job[] {
+export function makeOffers(seed: number, delivery: number, from: string, recentStops: string[], count = 2): import('./types').Job[] {
   let value = hash(seed ^ hash(delivery) ^ hashString(from));
   const origin = STOPS.find((item) => item.id === from)!;
   const excluded = new Set(['home', from, ...recentStops]);
@@ -381,6 +381,14 @@ export function makeOffers(seed: number, delivery: number, from: string, recentS
     { name: 'Long haul', items: long },
   ].filter((cat) => cat.items.length > 0);
 
+  // Pick one stop from each category
+  const pickFrom = (items: typeof candidates, salt: number): typeof candidates[0] => {
+    value = hash(value + salt);
+    return items[value % items.length];
+  };
+
+  // Original 2-offer path (preserves exact hash chain for backward compatibility
+  // with tests that assert seed 1 offers harbor-cafe).
   // Pick 2 random categories (seeded)
   value = hash(value + 1);
   const catIndex1 = value % categories.length;
@@ -393,12 +401,6 @@ export function makeOffers(seed: number, delivery: number, from: string, recentS
       catIndex2 = value % categories.length;
     }
   }
-
-  // Pick one stop from each category
-  const pickFrom = (items: typeof candidates, salt: number): typeof candidates[0] => {
-    value = hash(value + salt);
-    return items[value % items.length];
-  };
 
   const first = pickFrom(categories[catIndex1].items, 10);
   // Edge case: if only one candidate exists total, return a single offer
@@ -423,14 +425,74 @@ export function makeOffers(seed: number, delivery: number, from: string, recentS
     }
   }
 
+  const picked = [first, second];
+  const usedStops = new Set(picked.map((p) => p.stop.id));
+  const usedCatIndexes = new Set([catIndex1, catIndex2]);
+  // For count > 2: pick additional categories and stops, no duplicates
+  let extraGuard = 0;
+  while (picked.length < count && extraGuard < count * 20) {
+    extraGuard++;
+    value = hash(value + 100 + extraGuard);
+    const idx = value % categories.length;
+    if (usedCatIndexes.has(idx) && usedCatIndexes.size < categories.length) continue;
+    usedCatIndexes.add(idx);
+    const catItems = categories[idx].items.filter((c) => !usedStops.has(c.stop.id));
+    const pool = catItems.length > 0 ? catItems : candidates.filter((c) => !usedStops.has(c.stop.id));
+    if (pool.length === 0) break;
+    const choice = pickFrom(pool, 40 + extraGuard * 10);
+    usedStops.add(choice.stop.id);
+    picked.push(choice);
+  }
+
   const payoutFor = (distance: number) => distance < 130 ? 20 : distance <= 260 ? 35 : 50;
 
-  return [first, second]
+  return picked
     .sort((a, b) => a.distance - b.distance)
     .map(({ stop, distance }) => {
       const category = distance < 130 ? 'Short hop' : distance <= 260 ? 'Medium run' : 'Long haul';
       return { from, to: stop.id, payout: payoutFor(distance), label: category, parcel: 'Delivery parcel' };
     });
+}
+
+/** Whether the profile has a specific capstone chosen for a track. */
+export function hasCapstone(state: GameState, track: string, id: string): boolean {
+  return state.profile.upgrades.capstones[track] === id;
+}
+
+/** Number of job offer slots: 2 base + capacity levels + deep-satchel capstone. */
+export function offerSlots(state: GameState): number {
+  const u = state.profile.upgrades;
+  let slots = 2 + u.capacity;
+  if (u.capstones['capacity'] === 'deep-satchel') slots += 1;
+  return slots;
+}
+
+/** Flight stats with all broom upgrade and capstone effects applied.
+ * Exported for testing; step() uses this for the per-frame values. */
+export function computeFlightStats(state: GameState, verticalSpeed: number): {
+  maxSpeed: number; turnRate: number; brakeRate: number; accel: number;
+} {
+  const u = state.profile.upgrades;
+  const cap = (track: string, id: string) => u.capstones[track] === id;
+  const player = state.player;
+
+  let maxSpeed = MAX_SPEED * (1 + u.speed * 0.1);
+  if (cap('speed', 'tailwind')) maxSpeed *= 1.15;
+  if (cap('glide', 'dive-bomber') && verticalSpeed < -5) maxSpeed *= 1.3;
+
+  let turnRate = TURN_RATE * (1 + u.handling * 0.2);
+  if (player.speed > maxSpeed * 0.5) turnRate *= (1 + u.glide * 0.1);
+  if (cap('handling', 'tight-turns')) turnRate *= 1.25;
+  if (cap('glide', 'cloud-surfer') && player.position.y > 60) turnRate *= 1.25;
+
+  let brakeRate = brakeDecel(player.speed, u.braking);
+  if (cap('braking', 'quick-stop')) brakeRate *= 1.3;
+  if (player.hover && cap('handling', 'stable-hover')) brakeRate *= 1.43; // 30% faster engage
+
+  let accel = ACCELERATION;
+  if (cap('speed', 'quickstart')) accel *= 1.3;
+
+  return { maxSpeed, turnRate, brakeRate, accel };
 }
 
 function sweep(start: Vec3, delta: Vec3): { t: number; normal: Vec3 } | undefined {
@@ -625,9 +687,10 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   const player = state.player;
   const turn = clamp(input.turn, -1, 1);
   const climb = clamp(input.climb, -1, 1);
-  const maxSpeed = MAX_SPEED * (1 + state.profile.upgrades.speed * 0.1);
-  const turnRate = TURN_RATE * (1 + state.profile.upgrades.handling * 0.2);
-  const brakeRate = brakeDecel(player.speed, state.profile.upgrades.braking);
+  // Preliminary vertical speed for the dive-bomber capstone (uses current
+  // speed; the authoritative value is recomputed after the speed update).
+  const prelimVertical = player.hover ? 0 : climb * Math.max(player.speed, 3) * 0.7;
+  const { maxSpeed, turnRate, brakeRate, accel } = computeFlightStats(state, prelimVertical);
   player.yaw += turn * turnRate * seconds;
   player.pitch += (climb * 0.38 - player.pitch) * Math.min(1, 7 * seconds);
   // Release-to-brake (touch stick): releasing the stick collapses the cruise
@@ -670,7 +733,7 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   }
   const held = player.throttle > INPUT_DEADZONE ? player.throttle : player.speed;
   const targetSpeed = player.hover ? 0 : brakeCap === undefined ? player.throttle : Math.min(brakeCap, held);
-  player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -brakeRate * seconds, ACCELERATION * seconds), 0, maxSpeed);
+  player.speed = clamp(player.speed + clamp(targetSpeed - player.speed, -brakeRate * seconds, accel * seconds), 0, maxSpeed);
   if (Math.abs(player.speed) < 0.01) player.speed = 0;
   if (player.brakeHold && player.speed === 0) {
     player.brakeHold = false;
@@ -691,6 +754,9 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   // penetrate — the next iteration re-sweeps the remainder so Meg slides
   // through or stops cleanly instead of rattling between the walls.
   let remaining = { ...delta };
+  // Hardest downward impact into the ground this frame (m/s), for the bumpy
+  // landing penalty. Only ground hits (normal.y dominant), not wall slides.
+  let landingImpact = 0;
   for (let sweepIter = 0; sweepIter < 3; sweepIter++) {
     const hit = sweep(player.position, remaining);
     if (!hit) {
@@ -698,6 +764,10 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
       break;
     }
     if (!(hit.normal.x || hit.normal.y || hit.normal.z)) break; // degenerate: de-penetration handles it
+    // Ground impact: normal points mostly up, and we're moving down into it.
+    if (hit.normal.y > 0.7 && remaining.y < 0) {
+      landingImpact = Math.max(landingImpact, -remaining.y / seconds);
+    }
     const safeT = Math.max(0, hit.t - 0.0001);
     player.position.x += remaining.x * safeT; player.position.y += remaining.y * safeT; player.position.z += remaining.z * safeT;
     const rest = 1 - safeT;
@@ -742,7 +812,21 @@ export function step(state: GameState, input: FlightInput, dt: number): void {
   player.position.x = clamp(player.position.x, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   // Floor follows the terrain: 3m above ground (or water), so Meg can't clip hills.
   const groundY = Math.max(heightAt(player.position.x, player.position.z), 0) + MIN_ALTITUDE;
+  const yBeforeClamp = player.position.y;
   player.position.y = clamp(player.position.y, groundY, MAX_ALTITUDE);
+  // Hard landing into the terrain floor counts for the bumpy-landing penalty.
+  if (yBeforeClamp < groundY) {
+    landingImpact = Math.max(landingImpact, (groundY - yBeforeClamp) / seconds);
+  }
+  // Bumpy landing penalty: hard ground impacts bleed speed, unless
+  // feather-touch or careful-packer negates it.
+  const noBumpPenalty =
+    state.profile.upgrades.capstones['braking'] === 'feather-touch' ||
+    state.profile.upgrades.capstones['capacity'] === 'careful-packer';
+  if (landingImpact > 8 && !noBumpPenalty) {
+    player.speed *= 0.6;
+    player.throttle = Math.min(player.throttle, player.speed);
+  }
   player.position.z = clamp(player.position.z, -WORLD_LIMIT + RADIUS, WORLD_LIMIT - RADIUS);
   // Velocity is what actually happened, not what was attempted: pinned
   // against a wall it reads ~0 instead of the full into-wall delta.

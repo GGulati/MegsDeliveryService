@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { Screen } from './Screen';
 import { startTutorial, step, toggleHover, interact, setPaused, nearestStop, startRun, chooseJob, returnHome, getTarget, relativeBearing, RUN_SECONDS } from '../simulation';
 import { initGameState, type GameContext } from '../game-context';
@@ -7,11 +8,12 @@ import { UI } from '../ui';
 import { Input } from '../input';
 import { HomeUI } from '../home-ui';
 import { TouchControls, landingCommitted, touchControlsVisible } from '../touch-controls';
-import { enterHome, closeHomePanel, buyUpgrade, buyFurniture, nearbyStation } from '../home';
+import { enterHome, closeHomePanel, buyUpgrade, buyCapstone, buyFurniture, nearbyStation } from '../home';
 import { SaveStore, setLastSlot, getMuted, setMuted as setGlobalMuted } from '../storage';
 import type { SaveResult } from '../storage';
 import { GameAudio } from '../audio';
 import type { GameState } from '../types';
+import { CoinSprites } from '../coin-anim';
 
 /** GameScreen owns the renderer, game state, and all gameplay logic.
  * Constructed with a fully-built GameContext (see buildGameContext) after
@@ -47,6 +49,11 @@ export class GameScreen implements Screen {
   private testing = false;
   private disposed = false;
   private bootTime: number;
+  private coinSprites!: CoinSprites;
+  private lastEarnings = 0;
+  // Coin spawn queued on delivery; fired once the offers modal closes so the
+  // sprites are visible in the 3D scene instead of hidden behind the modal.
+  private pendingCoins: { from: THREE.Vector3; payout: number } | null = null;
 
   constructor(
     root: HTMLElement,
@@ -72,6 +79,9 @@ export class GameScreen implements Screen {
     this.bootTime = context.bootTime;
     this.coarsePointer = context.coarsePointer;
     this.testing = new URLSearchParams(location.search).get('test') === '1';
+    this.coinSprites = new CoinSprites(this.renderer.scene);
+    // Expose state for e2e testing (harmless in production).
+    (window as unknown as { __gameState?: () => unknown }).__gameState = () => this.state;
   }
 
   /** Synchronous: all heavy work already happened in buildGameContext().
@@ -170,6 +180,7 @@ export class GameScreen implements Screen {
       close() { if (!self.bootReady) return; self.audio.sfx('ui_click'); closeHomePanel(self.state); self.input.clear(); self.persist(); self.draw(0); },
       start() { if (!self.bootReady) return; self.audio.sfx('ui_click'); startRun(self.state, self.testing ? 42 : undefined); self.input.clear(); self.persist(); self.draw(0); },
       upgrade(track) { if (!self.bootReady) return; self.audio.sfx('ui_click'); buyUpgrade(self.state, track); self.persist(); self.draw(0); },
+      capstone(track, id) { if (!self.bootReady) return; self.audio.sfx('ui_click'); buyCapstone(self.state, track, id); self.persist(); self.draw(0); },
       furnish(id) { if (!self.bootReady) return; self.audio.sfx('ui_click'); buyFurniture(self.state, id); self.persist(); self.draw(0); },
     });
     this.saveBanner = document.createElement('aside');
@@ -257,6 +268,28 @@ export class GameScreen implements Screen {
   private draw(dt: number): void {
     this.audio.update(this.state, !this.bootReady || this.contextLost);
     if (!this.renderer || this.contextLost) return;
+    // Coin pickup animation: on delivery, queue the spawn; fire it once the
+    // offers modal closes so the sprites fly visibly in the 3D scene.
+    const targetCoins = this.state.run?.earnings ?? 0;
+    if (this.state.run && targetCoins > this.lastEarnings) {
+      const payout = targetCoins - this.lastEarnings;
+      const mp = this.state.player.position;
+      let from = new THREE.Vector3(mp.x, mp.y + 2, mp.z - 5);
+      const stop = STOPS.find(s => s.id === this.state.run!.lastStop);
+      if (stop) from = new THREE.Vector3(stop.position.x, (stop.position.y ?? 0) + 2, stop.position.z);
+      this.pendingCoins = { from, payout };
+    } else if (!this.state.run || targetCoins < this.lastEarnings) {
+      this.pendingCoins = null;
+      this.coinSprites.clear();
+    }
+    this.lastEarnings = targetCoins;
+    if (this.pendingCoins && this.state.mode !== 'offers') {
+      const p = this.pendingCoins;
+      this.pendingCoins = null;
+      const mp = this.state.player.position;
+      this.coinSprites.spawn(p.from, new THREE.Vector3(mp.x, mp.y + 1, mp.z), p.payout);
+    }
+    this.coinSprites.update(dt);
     this.renderer.render(this.state, dt);
     const target = getTarget(this.state) ?? STOPS[0];
     this.ui.render(this.state, {

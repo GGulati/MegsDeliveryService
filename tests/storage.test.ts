@@ -118,3 +118,14 @@ test('malformed saves remain recoverable', async () => {
   try {const store=new SaveStore();assert.equal((await store.acquire()).kind,'invalid');assert.equal(store.canSave,false);store.continueSession();assert.equal(store.save(createState()),false);assert.equal(writes,0);}
   finally {if(storage)Object.defineProperty(globalThis,'localStorage',storage);else delete (globalThis as {localStorage?:unknown}).localStorage;if(nav)Object.defineProperty(globalThis,'navigator',nav);else delete (globalThis as {navigator?:unknown}).navigator;}
 });
+
+test('decodeSave defaults homeSitting=false and petCount=0', () => {
+  const state = createState();
+  state.homeSitting = true;
+  state.petCount = 5;
+  const encoded = encodeSave(state);
+  const decoded = decodeSave(encoded);
+  assert.ok(decoded, 'should decode');
+  assert.equal(decoded.homeSitting, false, 'homeSitting should default to false on load');
+  assert.equal(decoded.petCount, 0, 'petCount should default to 0 on load');
+});

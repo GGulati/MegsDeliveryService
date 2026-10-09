@@ -137,8 +137,10 @@ export class GameRenderer {
 
     const atHome=state.mode==='home';
     [this.world,this.hero,this.dropParcel,this.glowColumn,this.targetRing,this.clouds,this.birds].forEach(object=>object.visible=!atHome);
-    this.room.update(state,step);
-    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=48;this.camera.updateProjectionMatrix();const hp=state.homePosition||{x:0,z:0};const frame=homeCameraFrame(hp.x,hp.z);const nl=homeLookStep([this.homeLook.x,this.homeLook.z],[frame.look[0],frame.look[2]],this.lastMode!=='home',step);this.homeLook.set(nl[0],HOME_LOOK_Y,nl[1]);this.camera.position.set(this.homeLook.x+HOME_CAM_OFFSET.x,this.homeLook.y+HOME_CAM_OFFSET.y,this.homeLook.z+HOME_CAM_OFFSET.z);this.camera.up.set(0,1,0);this.camera.lookAt(this.homeLook);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
+    // Home has no run clock, so game-time is dawn (t=0): duskFactor 0.25 keeps
+    // the lamp's moths subtly present for the "cozy glow after a long shift".
+    this.room.update(state,step, atHome ? skyAt(timeOfDay(0)).duskFactor : 0);
+    if(atHome){this.scene.fog=null;this.renderer.setClearColor(0xd5c6ae);this.camera.fov=state.homeSitting?53:48;this.camera.updateProjectionMatrix();const hp=state.homePosition||{x:0,z:0};const frame=homeCameraFrame(hp.x,hp.z);const nl=homeLookStep([this.homeLook.x,this.homeLook.z],[frame.look[0],frame.look[2]],this.lastMode!=='home',step);this.homeLook.set(nl[0],HOME_LOOK_Y,nl[1]);this.camera.position.set(this.homeLook.x+HOME_CAM_OFFSET.x,this.homeLook.y+HOME_CAM_OFFSET.y,this.homeLook.z+HOME_CAM_OFFSET.z);this.camera.up.set(0,1,0);this.camera.lookAt(this.homeLook);this.lastMode=state.mode;this.renderer.render(this.scene,this.camera);return;}
     if(this.camera.fov!==62){this.camera.fov=62;this.camera.updateProjectionMatrix();}
     this.scene.fog=this.outdoorFog;this.renderer.setClearColor(0xaed9e8);
 
