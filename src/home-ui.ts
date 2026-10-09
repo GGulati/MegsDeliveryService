@@ -45,13 +45,11 @@ export class HomeUI {
     if(state.homePanel==='jobs') content='<div class="eyebrow">A NEW DELIVERY DAY</div><h2>The town is waiting.</h2><p>Choose your first delivery — pick the route that suits you. You have eight minutes to make deliveries and return home. Anything still in your satchel at nightfall will be lost.</p><button class="primary-button" data-action="start">See today’s deliveries →</button>';
     if(state.homePanel==='brooms') content=`<div class="eyebrow">THE BROOM STAND</div>${balance}<h2>A little more magic.</h2><div class="shop-list">${BROOM_TRACKS.map(track=>{
       const level=p.upgrades[track.id],cost=level===0?60:120;
-      const row=`<button data-upgrade="${track.id}" ${level===2||p.coins<cost?'disabled':''}><span><b>${track.name}</b><small>${track.description} · ${level}/2</small></span><strong>${level===2?'Mastered':p.coins<cost?`Need ${cost-p.coins} more`:`${cost} coins`}</strong></button>`;
+      const row=`<button data-upgrade="${track.id}" ${level===2||p.coins<cost?'disabled':''}><span><b>${track.name}</b><small>${track.description} · ${level}/2</small></span><strong>${level===2?'Max':cost}</strong></button>`;
       const cards=capstoneOptions(p,track.id);
-      const capstones=cards?`<div class="capstone-cards">${cards.map(c=>{
-        const label=c.active?'Active':(p.upgrades.capstones[track.id]?`Switch · ${c.cost} coins`:`Choose · ${c.cost} coins`);
-        const need=!c.active&&!c.affordable?`Need ${c.cost-p.coins} more`:'';
-        return `<div class="capstone-card${c.active?' active':''}"><span><b>${c.name}</b><small>${c.description}</small></span><button data-capstone="${track.id}:${c.id}" ${c.active||!c.affordable?'disabled':''}>${c.active?'Active':need||label}</button></div>`;
-      }).join('')}</div>`:'';
+      const capstones=cards?`<div class="capstone-branch">${cards.map(c=>
+        `<div class="capstone-card${c.active?' active':''}"><span><b>${c.name}</b><small>${c.description}</small></span><button data-capstone="${track.id}:${c.id}" ${c.active||!c.affordable?'disabled':''}>${c.active?'Active':c.cost}</button></div>`
+      ).join('')}</div>`:'';
       return row+capstones;
     }).join('')}</div>`;
     if(state.homePanel==='decor') content=`<div class="eyebrow">THE HOME CATALOGUE</div>${balance}<h2>Make yourself at home.</h2><div class="shop-list">${FURNITURE.map(item=>`<button data-furnish="${item.id}" ${p.furniture.includes(item.id)||p.coins<item.cost?'disabled':''}><span><b>${item.name}</b><small>${item.description}</small></span><strong>${p.furniture.includes(item.id)?'At home':p.coins<item.cost?`Need ${item.cost-p.coins} more`:`${item.cost} coins`}</strong></button>`).join('')}</div>`;

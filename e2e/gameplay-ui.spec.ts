@@ -62,7 +62,7 @@ test('pause menu shows with mute, resume returns to flight', async ({ page }) =>
  * The old #coin-counter HUD element was removed (it covered the pause button).
  * The old #coin-layer DOM overlay was removed — coins are now THREE.Sprite
  * objects in the 3D scene, flying from the delivery stop to Meg.
- * The satchel readout (#flight-earnings) shows the true earnings. */
+ * Coins are tracked in the top-left gamebar (#gamebar-coins). */
 test('no coin counter HUD, no DOM coin layer, pause clickable', async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await collectErrors(page);
@@ -85,9 +85,9 @@ test('no coin counter HUD, no DOM coin layer, pause clickable', async ({ page })
   const box = await pauseBtn.boundingBox();
   expect(box, 'pause button should have a valid position').toBeTruthy();
 
-  // Satchel readout shows earnings (the original coin display)
-  const earnings = page.locator('#flight-earnings');
-  await expect(earnings, 'satchel earnings readout should be visible').toBeVisible();
+  // Gamebar coin display shows the banked coins (top-left)
+  const coins = page.locator('#gamebar-coins');
+  await expect(coins, 'gamebar coin display should be visible').toBeVisible();
 
   expect(errors, `expected zero errors, got:\n${errors.join('\n')}`).toEqual([]);
 });

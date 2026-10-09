@@ -115,12 +115,15 @@ export async function domClick(page: import('@playwright/test').Page, selector: 
   }, selector);
 }
 
-/** Read HUD values from the DOM. */
+/** Read HUD values from the DOM and game state. */
 export async function hud(page: import('@playwright/test').Page) {
-  return page.evaluate(() => ({
-    targetName: document.querySelector('#target-name')?.textContent?.trim() ?? null,
-    targetDistance: document.querySelector('#target-distance')?.textContent?.trim() ?? null,
-    speed: document.querySelector('#speed-value')?.textContent?.trim() ?? null,
-    coins: document.querySelector('#flight-earnings')?.textContent?.trim() ?? null,
-  }));
+  return page.evaluate(() => {
+    const gs = (window as unknown as { __gameState?: () => { player: { speed: number } } }).__gameState?.();
+    return {
+      targetName: document.querySelector('#target-name')?.textContent?.trim() ?? null,
+      targetDistance: document.querySelector('#target-distance')?.textContent?.trim() ?? null,
+      speed: gs ? String(Math.round(gs.player.speed)) : null,
+      coins: document.querySelector('#gamebar-coins')?.textContent?.trim() ?? null,
+    };
+  });
 }
