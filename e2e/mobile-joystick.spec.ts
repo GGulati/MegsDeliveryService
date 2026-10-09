@@ -14,6 +14,7 @@ async function startFlightMobile(page: import('@playwright/test').Page) {
   await page.goto('/');
   await expect(page.locator('.menu-screen')).toBeVisible({ timeout: 10_000 });
   await page.locator('button:has-text("New Game")').first().click();
+  await expect(page.locator('.loading-screen')).toBeVisible();
   await expectUnhidden(page, '.meg-ui', 30_000);
   await expect(page.locator('.loading-screen')).toBeHidden({ timeout: 30_000 });
   await domClick(page, '#start-btn');

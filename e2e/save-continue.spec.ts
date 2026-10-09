@@ -13,6 +13,7 @@ test('save persists across reload, Continue restores the game', async ({ page })
   // Start a new game and enter flight (triggers persist via start())
   await expect(page.locator('.menu-screen')).toBeVisible({ timeout: 10_000 });
   await page.locator('button:has-text("New Game")').first().click();
+  await expect(page.locator('.loading-screen')).toBeVisible();
   await expectUnhidden(page, '.meg-ui', 30_000);
   await expect(page.locator('.loading-screen')).toBeHidden({ timeout: 30_000 });
   await domClick(page, '#start-btn');
@@ -34,6 +35,7 @@ test('save persists across reload, Continue restores the game', async ({ page })
 
   // Continue restores the game (not the title screen)
   await continueBtn.click();
+  await expect(page.locator('.loading-screen')).toBeVisible();
   await expectUnhidden(page, '.meg-ui', 30_000);
   await expect(page.locator('.loading-screen')).toBeHidden({ timeout: 30_000 });
   // Should be back in flight/tutorial, not at the title card
