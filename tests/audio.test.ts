@@ -32,7 +32,7 @@ function install(): () => void {
 async function flush() { await Promise.resolve(); await Promise.resolve(); }
 
 test('audio is initially muted and does not allocate a context', () => {
-  const restore = install(); try { const audio = new GameAudio(); audio.update(createState(), false); assert.deepEqual(audio.debugState(), { context: 'unavailable', muted: true, duskAmount: 0, activeTones: 0 }); } finally { restore(); }
+  const restore = install(); try { const audio = new GameAudio(); audio.update(createState(), false); assert.deepEqual(audio.debugState(), { context: 'unavailable', muted: true, activeTones: 0 }); } finally { restore(); }
 });
 
 test('unmute starts only after an active update, then pause and resume reconcile once', async () => {
@@ -130,36 +130,13 @@ for (const cue of allCues) {
   });
 }
 
-test('setDuskAmount clamps to [0,1]', () => {
-  const restore = install(); try {
-    const audio = new GameAudio();
-    audio.setDuskAmount(-0.5);
-    assert.equal(audio.debugState().duskAmount, 0);
-    audio.setDuskAmount(1.5);
-    assert.equal(audio.debugState().duskAmount, 1);
-    audio.setDuskAmount(0.5);
-    assert.equal(audio.debugState().duskAmount, 0.5);
-  } finally { restore(); }
-});
-
-test('nextRandom advances seed (deterministic sequence)', () => {
-  const restore = install(); try {
-    const a1 = new GameAudio(); const a2 = new GameAudio();
-    // @ts-expect-error accessing private for test
-    const r1 = [a1.nextRandom(), a1.nextRandom(), a1.nextRandom()];
-    // @ts-expect-error accessing private for test
-    const r2 = [a2.nextRandom(), a2.nextRandom(), a2.nextRandom()];
-    assert.deepEqual(r1, r2, 'same seed produces same sequence');
-    assert.ok(r1[0] !== r1[1] || r1[1] !== r1[2], 'sequence advances (not constant)');
-  } finally { restore(); }
-});
-
-test('debugState includes duskAmount and activeTones', () => {
+test('debugState includes activeTones', () => {
   const restore = install(); try {
     const audio = new GameAudio();
     const state = audio.debugState();
-    assert.ok('duskAmount' in state, 'has duskAmount');
     assert.ok('activeTones' in state, 'has activeTones');
+    assert.ok('context' in state, 'has context');
+    assert.ok('muted' in state, 'has muted');
   } finally { restore(); }
 });
 
@@ -229,10 +206,25 @@ function stateWithRun(overrides: Record<string, unknown> = {}): import('../src/t
 }
 
 const testJob = { from: 'home', to: 'bakery', payout: 20, label: 'test', parcel: 'box' };
-/** Suppress the adaptive melody so trigger tests count only SFX oscillators. */
+/** Suppress the adaptive sequencers so trigger tests count only SFX oscillators.
+ * PR #45 replaced the single melody line with per-theme sequencers gated by
+ * lullabyNextNote/fieldNextNote. */
 function suppressMelody(audio: GameAudio, ctx: { currentTime: number }): void {
   // @ts-expect-error accessing private for test
-  audio.nextNote = ctx.currentTime + 10000;
+  audio.lullabyNextNote = ctx.currentTime + 10000;
+  // @ts-expect-error accessing private for test
+  audio.fieldNextNote = ctx.currentTime + 10000;
+}
+
+/** Align the theme state so no transition signal/pads pollute oscillator counts.
+ * The nightfall threshold (RUN_SECONDS - FIELD_THEME_SECONDS) is also the
+ * lullaby→field theme boundary, so tests crossing it must pre-align the theme. */
+function alignTheme(audio: GameAudio, theme: 'lullaby' | 'field'): void {
+  audio.currentTheme = theme;
+  // @ts-expect-error accessing private for test
+  audio.targetTheme = theme;
+  // @ts-expect-error accessing private for test
+  audio.transitioning = false;
 }
 
 
@@ -360,6 +352,9 @@ test('nightfall_warning fires once when elapsed crosses 300', async () => {
     ctx.state = 'running';
     suppressMelody(audio, ctx);
     audio.update(s1, false); // warmup
+    // The warning threshold is also the lullaby→field theme boundary; pre-align
+    // the theme so the transition signal/pads don't pollute oscillator counts.
+    alignTheme(audio, 'field');
     ctx.currentTime = 100;
     // Cross 300: should fire
     const before1 = ctx.oscillators.length;
