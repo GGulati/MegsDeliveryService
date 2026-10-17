@@ -12,7 +12,9 @@ test('console stays clean through menu, new game, flight, pause, resume', async 
 
   // Enter flight from the title screen
   await domClick(page, '#start-btn');
-  await expectUnhidden(page, '#flight-hud', 10_000);
+  // World building takes ~22s in headless Chromium; use the default 30s
+  // timeout (not 10s) to match the known system behavior.
+  await expectUnhidden(page, '#flight-hud');
 
   // Pause via HUD button, then resume
   await page.locator('#pause-btn').click();

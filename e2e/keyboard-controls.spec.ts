@@ -20,14 +20,15 @@ test('keyboard input moves the player', async ({ page }) => {
   // Initial speed should be low
   const speedBefore = await getSpeed();
 
-  // Hold E to accelerate (throttle up)
+  // Hold E to accelerate (throttle up). Poll the game-state speed until it
+  // rises rather than waiting a fixed wall-clock time: under slow software
+  // rendering (SwiftShader) frames are sparse, so wall-clock waits don't
+  // correspond to simulated physics time. Waiting on the actual effect is
+  // robust to render speed.
   await page.keyboard.down('e');
-  await page.waitForTimeout(2000);
+  await expect.poll(getSpeed, { timeout: 30_000 }).toBeGreaterThan(speedBefore);
   const speedAfterE = await getSpeed();
   await page.keyboard.up('e');
-
-  expect(speedAfterE, `E should accelerate (was ${speedBefore}, now ${speedAfterE})`)
-    .toBeGreaterThan(speedBefore);
 
   // Distance to target should be changing (player is moving)
   const dist1 = await getDistance();
@@ -38,13 +39,14 @@ test('keyboard input moves the player', async ({ page }) => {
   expect(dist2).toBeTruthy();
 
   // E should brake? No — Q brakes (throttle down). Space is hover.
-  // Accelerate again, then Q to slow
+  // Accelerate again, then Q to slow. Again poll on the speed condition
+  // rather than assuming wall-clock time maps to physics time.
   await page.keyboard.down('e');
-  await page.waitForTimeout(1000);
+  await expect.poll(getSpeed, { timeout: 30_000 }).toBeGreaterThan(speedAfterE);
   await page.keyboard.up('e');
   const speedCruising = await getSpeed();
   await page.keyboard.down('q');
-  await page.waitForTimeout(1500);
+  await expect.poll(getSpeed, { timeout: 30_000 }).toBeLessThan(speedCruising);
   await page.keyboard.up('q');
   const speedAfterBrake = await getSpeed();
   expect(speedAfterBrake, `Q should brake (was ${speedCruising}, now ${speedAfterBrake})`)
