@@ -15,10 +15,12 @@ test('tutorial stages advance with keyboard input', async ({ page }) => {
   // The tutorial starts at Stage 0 ("Steer toward..."), but the player spawns
   // with speed 9, so Stage 0→1 (movement gate) fires within a few frames.
   // By the time the HUD is up, we're reliably at Stage 1. Verify the bubble
-  // is visible and showing the Stage 1 instruction (desktop copy).
+  // is showing the Stage 1 instruction (desktop copy).
+  // Note: the bubble is intentionally hidden via CSS on mobile viewports
+  // (≤650px, .tutorial-bubble{display:none}), so we assert the text content
+  // in the DOM rather than visibility — the text proves the stage advanced.
   // The full stage-transition logic (0→1→2→complete) is covered headlessly
   // in tests/gameplay.test.ts; e2e proves the UI wiring.
-  await expect(page.locator('#tutorial-bubble')).toBeVisible();
   await expect(async () => {
     const text = await bubbleText();
     expect(text).toContain('slow down');
