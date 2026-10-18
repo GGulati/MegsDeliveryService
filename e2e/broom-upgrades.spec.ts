@@ -78,10 +78,10 @@ test('broom upgrade purchasing with capstone respec', async ({ page }) => {
   const carefulPackerBtn = page.locator('button[data-capstone="capacity:careful-packer"]').first();
   await expect(deepSatchelBtn, 'Deep Satchel card should appear').toBeVisible({ timeout: 5_000 });
   await expect(carefulPackerBtn, 'Careful Packer card should appear').toBeVisible({ timeout: 5_000 });
-  await expect(deepSatchelBtn).toContainText('Choose');
-  await expect(carefulPackerBtn).toContainText('Choose');
+  await expect(deepSatchelBtn).toContainText('120');
+  await expect(carefulPackerBtn).toContainText('120');
 
-  // Click Deep Satchel "Choose" — costs 120
+  // Click Deep Satchel (costs 120)
   const coinsBeforeCapstone = await getCoins();
   // Wait for the button to be enabled (UI re-renders after L2 purchase)
   await expect(deepSatchelBtn).toBeEnabled({ timeout: 5_000 });
@@ -93,11 +93,11 @@ test('broom upgrade purchasing with capstone respec', async ({ page }) => {
   // Verify Deep Satchel shows "Active"
   await expect(page.locator('button[data-capstone="capacity:deep-satchel"]').first())
     .toContainText('Active');
-  // Careful Packer should now show "Switch"
+  // Careful Packer should now show the respec cost ("120")
   await expect(page.locator('button[data-capstone="capacity:careful-packer"]').first())
-    .toContainText('Switch');
+    .toContainText('120');
 
-  // Click Careful Packer "Switch" — costs another 120 (respec)
+  // Click Careful Packer (costs another 120 for respec)
   await page.locator('button[data-capstone="capacity:careful-packer"]').first().click();
   await page.waitForTimeout(500);
   const coinsAfterSwitch = await getCoins();
@@ -107,7 +107,7 @@ test('broom upgrade purchasing with capstone respec', async ({ page }) => {
   await expect(page.locator('button[data-capstone="capacity:careful-packer"]').first())
     .toContainText('Active');
   await expect(page.locator('button[data-capstone="capacity:deep-satchel"]').first())
-    .toContainText('Switch');
+    .toContainText('120');
 
   // Verify game state reflects the respec
   const capstone = await page.evaluate(() => {
