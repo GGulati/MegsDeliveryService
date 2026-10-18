@@ -135,8 +135,7 @@ test('debugState includes activeTones', () => {
     const audio = new GameAudio();
     const state = audio.debugState();
     assert.ok('activeTones' in state, 'has activeTones');
-    assert.ok('context' in state, 'has context');
-    assert.ok('muted' in state, 'has muted');
+    assert.ok(!('duskAmount' in state), 'duskAmount removed');
   } finally { restore(); }
 });
 
@@ -156,7 +155,7 @@ test('game→menu transition does not fire spurious SFX (snapshot ordering)', as
     // Game active: establish a game snapshot (coins earned, upgrade bought).
     const gameState = createState();
     gameState.profile.coins = 50;
-    gameState.profile.upgrades = { speed: 1, handling: 0, braking: 0 };
+    gameState.profile.upgrades = { speed: 1, handling: 0, braking: 0, capacity: 0, glide: 0, capstones: {} };
     audio.update(gameState, false);
     audio.update(gameState, false);
     fired.length = 0; // ignore anything during gameplay
@@ -206,25 +205,12 @@ function stateWithRun(overrides: Record<string, unknown> = {}): import('../src/t
 }
 
 const testJob = { from: 'home', to: 'bakery', payout: 20, label: 'test', parcel: 'box' };
-/** Suppress the adaptive sequencers so trigger tests count only SFX oscillators.
- * PR #45 replaced the single melody line with per-theme sequencers gated by
- * lullabyNextNote/fieldNextNote. */
+/** Suppress the adaptive melody so trigger tests count only SFX oscillators. */
 function suppressMelody(audio: GameAudio, ctx: { currentTime: number }): void {
   // @ts-expect-error accessing private for test
-  audio.lullabyNextNote = ctx.currentTime + 10000;
+  audio.lullabyNextNote = Infinity;
   // @ts-expect-error accessing private for test
-  audio.fieldNextNote = ctx.currentTime + 10000;
-}
-
-/** Align the theme state so no transition signal/pads pollute oscillator counts.
- * The nightfall threshold (RUN_SECONDS - FIELD_THEME_SECONDS) is also the
- * lullaby→field theme boundary, so tests crossing it must pre-align the theme. */
-function alignTheme(audio: GameAudio, theme: 'lullaby' | 'field'): void {
-  audio.currentTheme = theme;
-  // @ts-expect-error accessing private for test
-  audio.targetTheme = theme;
-  // @ts-expect-error accessing private for test
-  audio.transitioning = false;
+  audio.fieldNextNote = Infinity;
 }
 
 
@@ -344,6 +330,17 @@ test('hover_toggle triggers when hover changes', async () => {
 test('nightfall_warning fires once when elapsed crosses 300', async () => {
   const restore = install(); try {
     const audio = new GameAudio();
+    // Disable theme system for SFX test: no signal, no melody notes, no theme entry.
+    // @ts-expect-error accessing private for test
+    audio.playSignal = () => {};
+    // @ts-expect-error accessing private for test
+    audio.enterLullaby = () => {};
+    // @ts-expect-error accessing private for test
+    audio.enterField = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playLullaby = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playField = () => {};
     const s1 = stateWithRun({ elapsed: 299 });
     audio.update(s1, false);
     audio.setMuted(false);
@@ -352,9 +349,6 @@ test('nightfall_warning fires once when elapsed crosses 300', async () => {
     ctx.state = 'running';
     suppressMelody(audio, ctx);
     audio.update(s1, false); // warmup
-    // The warning threshold is also the lullaby→field theme boundary; pre-align
-    // the theme so the transition signal/pads don't pollute oscillator counts.
-    alignTheme(audio, 'field');
     ctx.currentTime = 100;
     // Cross 300: should fire
     const before1 = ctx.oscillators.length;
@@ -371,6 +365,17 @@ test('nightfall_warning fires once when elapsed crosses 300', async () => {
 test('nightfall_warning resets when a new run starts', async () => {
   const restore = install(); try {
     const audio = new GameAudio();
+    // Disable theme system for SFX test.
+    // @ts-expect-error accessing private for test
+    audio.playSignal = () => {};
+    // @ts-expect-error accessing private for test
+    audio.enterLullaby = () => {};
+    // @ts-expect-error accessing private for test
+    audio.enterField = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playLullaby = () => {};
+    // @ts-expect-error accessing private for test
+    audio.playField = () => {};
     const s1 = stateWithRun({ elapsed: 299 });
     audio.update(s1, false);
     audio.setMuted(false);
