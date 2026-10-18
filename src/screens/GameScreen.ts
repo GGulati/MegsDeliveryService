@@ -13,6 +13,7 @@ import { SaveStore, setLastSlot, getMuted, setMuted as setGlobalMuted } from '..
 import type { SaveResult } from '../storage';
 import { GameAudio } from '../audio';
 import type { GameState } from '../types';
+import { CoinSprites } from '../coin-anim';
 
 /** GameScreen owns the renderer, game state, and all gameplay logic.
  * Constructed with a fully-built GameContext (see buildGameContext) after
@@ -48,6 +49,8 @@ export class GameScreen implements Screen {
   private testing = false;
   private disposed = false;
   private bootTime: number;
+  private coinSprites!: CoinSprites;
+  private lastEarnings = 0;
 
   constructor(
     root: HTMLElement,
@@ -73,6 +76,7 @@ export class GameScreen implements Screen {
     this.bootTime = context.bootTime;
     this.coarsePointer = context.coarsePointer;
     this.testing = new URLSearchParams(location.search).get('test') === '1';
+    this.coinSprites = new CoinSprites(this.renderer.scene);
     // Expose state for e2e testing (harmless in production).
     (window as unknown as { __gameState?: () => unknown }).__gameState = () => this.state;
   }
@@ -261,6 +265,21 @@ export class GameScreen implements Screen {
   private draw(dt: number): void {
     this.audio.update(this.state, !this.bootReady || this.contextLost);
     if (!this.renderer || this.contextLost) return;
+    // Coin pickup animation: on delivery, sprites fly from the stop to Meg.
+    const targetCoins = this.state.run?.earnings ?? 0;
+    if (this.state.run && targetCoins > this.lastEarnings) {
+      const payout = targetCoins - this.lastEarnings;
+      const mp = this.state.player.position;
+      const to = new THREE.Vector3(mp.x, mp.y + 1, mp.z);
+      let from = new THREE.Vector3(mp.x, mp.y + 2, mp.z - 5);
+      const stop = STOPS.find(s => s.id === this.state.run!.lastStop);
+      if (stop) from = new THREE.Vector3(stop.position.x, (stop.position.y ?? 0) + 2, stop.position.z);
+      this.coinSprites.spawn(from, to, payout);
+    } else if (!this.state.run || targetCoins < this.lastEarnings) {
+      this.coinSprites.clear();
+    }
+    this.lastEarnings = targetCoins;
+    this.coinSprites.update(dt);
     this.renderer.render(this.state, dt);
     const target = getTarget(this.state) ?? STOPS[0];
     this.ui.render(this.state, {
@@ -269,14 +288,6 @@ export class GameScreen implements Screen {
       targetBearing: relativeBearing(this.state.player.position, target.position, this.state.player.yaw),
       speed: this.state.player.speed, status: '',
       timeRemaining: this.state.run ? Math.max(0, RUN_SECONDS - this.state.run.elapsed) : undefined,
-      project: (x, y, z) => {
-        const v = new THREE.Vector3(x, y, z).project(this.renderer.camera);
-        if (v.z > 1) return null; // Behind camera
-        return {
-          x: (v.x * 0.5 + 0.5) * window.innerWidth,
-          y: (-v.y * 0.5 + 0.5) * window.innerHeight,
-        };
-      },
     });
     this.homeUI.render(this.state);
     this.touchControls.render(this.state);
