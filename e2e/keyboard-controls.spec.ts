@@ -5,6 +5,7 @@ import { test, expect, collectErrors, startNewGame, domClick, expectUnhidden } f
  * arrow keys turn, Space brakes. This is the primary desktop control
  * path — currently no e2e verifies input actually moves the player. */
 test('keyboard input moves the player', async ({ page }) => {
+  test.setTimeout(180_000); // Slow: 22s world loading + flight actions
   const errors = await collectErrors(page);
   await startNewGame(page);
   await domClick(page, '#start-btn');
