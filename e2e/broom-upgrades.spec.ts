@@ -28,6 +28,7 @@ test('broom upgrade purchasing with capstone respec', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.menu-screen')).toBeVisible({ timeout: 10_000 });
   await page.locator('.menu-screen button:has-text("Continue")').first().click();
+  await expect(page.locator('.loading-screen')).toBeVisible();
   await expectUnhidden(page, '.meg-ui', 30_000);
   await expect(page.locator('.loading-screen')).toBeHidden({ timeout: 30_000 });
   await page.waitForTimeout(1000);
