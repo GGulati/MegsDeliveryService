@@ -11,9 +11,10 @@ test('keyboard input moves the player', async ({ page }) => {
   await domClick(page, '#start-btn');
   await expectUnhidden(page, '#flight-hud', 10_000);
 
-  const getSpeed = () => page.evaluate(() =>
-    parseFloat(document.querySelector('#speed-value')?.textContent ?? '0')
-  );
+  const getSpeed = () => page.evaluate(() => {
+    const gs = (window as unknown as { __gameState?: () => { player: { speed: number } } }).__gameState?.();
+    return gs ? gs.player.speed : 0;
+  });
   const getDistance = () => page.evaluate(() =>
     document.querySelector('#target-distance')?.textContent ?? ''
   );
