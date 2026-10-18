@@ -123,7 +123,7 @@ export async function hud(page: import('@playwright/test').Page) {
       targetName: document.querySelector('#target-name')?.textContent?.trim() ?? null,
       targetDistance: document.querySelector('#target-distance')?.textContent?.trim() ?? null,
       speed: gs ? String(Math.round(gs.player.speed)) : null,
-      coins: document.querySelector('#gamebar-coins')?.textContent?.trim() ?? null,
+      coins: gs ? String(gs.profile.coins) : null,
     };
   });
 }

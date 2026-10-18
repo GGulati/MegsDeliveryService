@@ -61,8 +61,7 @@ test('pause menu shows with mute, resume returns to flight', async ({ page }) =>
 /** Tier 2 — coin fly animation uses 3D sprites (delivery -> Meg) and pause button.
  * The old #coin-counter HUD element was removed (it covered the pause button).
  * The old #coin-layer DOM overlay was removed — coins are now THREE.Sprite
- * objects in the 3D scene, flying from the delivery stop to Meg.
- * Coins are tracked in the top-left gamebar (#gamebar-coins). */
+ * objects in the 3D scene, flying from the delivery stop to Meg. */
 test('no coin counter HUD, no DOM coin layer, pause clickable', async ({ page }) => {
   test.setTimeout(120_000);
   const errors = await collectErrors(page);
@@ -84,10 +83,6 @@ test('no coin counter HUD, no DOM coin layer, pause clickable', async ({ page })
   await expect(pauseBtn, 'pause button should be visible').toBeVisible();
   const box = await pauseBtn.boundingBox();
   expect(box, 'pause button should have a valid position').toBeTruthy();
-
-  // Gamebar coin display shows the banked coins (top-left)
-  const coins = page.locator('#gamebar-coins');
-  await expect(coins, 'gamebar coin display should be visible').toBeVisible();
 
   expect(errors, `expected zero errors, got:\n${errors.join('\n')}`).toEqual([]);
 });

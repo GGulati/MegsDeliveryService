@@ -52,7 +52,7 @@ export class HomeUI {
       ).join('')}</div>`:'';
       return row+capstones;
     }).join('')}</div>`;
-    if(state.homePanel==='decor') content=`<div class="eyebrow">THE HOME CATALOGUE</div>${balance}<h2>Make yourself at home.</h2><div class="shop-list">${FURNITURE.map(item=>`<button data-furnish="${item.id}" ${p.furniture.includes(item.id)||p.coins<item.cost?'disabled':''}><span><b>${item.name}</b><small>${item.description}</small></span><strong>${p.furniture.includes(item.id)?'At home':p.coins<item.cost?`Need ${item.cost-p.coins} more`:`${item.cost} coins`}</strong></button>`).join('')}</div>`;
+    if(state.homePanel==='decor') content=`<div class="eyebrow">THE HOME CATALOGUE</div>${balance}<h2>Make yourself at home.</h2><div class="shop-list">${FURNITURE.map(item=>`<button data-furnish="${item.id}" ${p.furniture.includes(item.id)||p.coins<item.cost?'disabled':''}><span><b>${item.name}</b><small>${item.description}</small></span><strong>${p.furniture.includes(item.id)?'At home':item.cost}</strong></button>`).join('')}</div>`;
     if(state.homePanel==='cat') content='<div class="eyebrow">PUMPKIN’S CORNER</div><h2>A very good copilot.</h2><p>Pumpkin leans into your hand and purrs. The best part of any delivery day is coming home together.</p><div class="purr">♡ purr… purr… ♡</div>';
     this.root.innerHTML=`<section class="menu-card panel room-menu">${content}<button class="secondary-button" data-action="close">Back to your room</button></section>`;
   }
