@@ -3,4 +3,4 @@ dist/
 output/
 .playwright-cli/
 *.log
-backlog.md
+backlog.mdtest-results/
