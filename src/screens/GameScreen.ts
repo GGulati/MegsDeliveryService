@@ -72,6 +72,8 @@ export class GameScreen implements Screen {
     this.bootTime = context.bootTime;
     this.coarsePointer = context.coarsePointer;
     this.testing = new URLSearchParams(location.search).get('test') === '1';
+    // Expose state for e2e testing (harmless in production).
+    (window as unknown as { __gameState?: () => unknown }).__gameState = () => this.state;
   }
 
   /** Synchronous: all heavy work already happened in buildGameContext().
