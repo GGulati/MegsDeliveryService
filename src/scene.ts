@@ -227,12 +227,6 @@ export class GameRenderer {
 
   private makeWorld(): THREE.Group {
     const g = new THREE.Group();
-    // Headless (no GPU) gets a simplified world: the full 1024² terrain bake
-    // and 40K-vertex mesh are too slow in software rendering. This also helps
-    // low-power devices. Game logic is unaffected — only visual detail.
-    const headless = typeof navigator !== 'undefined' && (navigator as { webdriver?: boolean }).webdriver === true;
-    const TEX = headless ? 256 : 1024;
-    const SEG = headless ? 50 : 200;
     // One water plane for the whole world. Idyllic Ghibli bay water (2026-10-02):
     // dreamy shore-pinned swell, lighting-driven color, marching foam bands,
     // voronoi foam net, ebbing contact ring, sparkles, fresnel sky tint.
@@ -248,13 +242,14 @@ export class GameRenderer {
     // bakeTerrainTexture, so the GPU filters it smoothly per-pixel. Vertex
     // colors on the 2.2m mesh grid can't do this — they interpolate as visible
     // triangles. The heightfield still displaces the vertices.
-    const islandGeo = new THREE.PlaneGeometry(440, 440, SEG, SEG);
+    const islandGeo = new THREE.PlaneGeometry(440, 440, 200, 200);
     islandGeo.rotateX(-Math.PI / 2);
     const pos = islandGeo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
     }
     islandGeo.computeVertexNormals();
+    const TEX = 1024;
     const canvas = document.createElement('canvas');
     canvas.width = TEX; canvas.height = TEX;
     const ctx = canvas.getContext('2d')!;
