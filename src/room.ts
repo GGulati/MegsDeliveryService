@@ -1,7 +1,55 @@
 import * as THREE from 'three';
 import type { GameState } from './types';
 import { FURNITURE, HOME_STATIONS } from './home';
+import { createPumpkin, PUMPKIN_PERCHES, type Pumpkin } from './pumpkin';
 type HomeState = GameState & { homeFacing?: number; homePanel?: string; homeInteraction?: string };
+
+/** --- Ambient liveliness helpers (pure, unit-tested) --- */
+
+const PLANT_POS = { x: -7, z: 4.6 };
+const PLANT_RADIUS = 2;
+/** 0→1 how close the player is to the moonleaf plant (1 at the pot, 0 beyond 2m). */
+export function plantProximity(px: number, pz: number): number {
+  const d = Math.hypot(px - PLANT_POS.x, pz - PLANT_POS.z);
+  return Math.max(0, 1 - d / PLANT_RADIUS);
+}
+/** Leaf sway angle multiplier: silent with no proximity, oscillates otherwise. */
+export function plantSway(t: number, phase: number, proximity: number): number {
+  return Math.sin(t * 3 + phase) * proximity;
+}
+
+const RUG_POS = { x: 0, z: -0.2 };
+const RUG_RADIUS = 2.1;
+/** Whether the player stands on the woven rug. */
+export function isOnRug(px: number, pz: number): boolean {
+  return Math.hypot(px - RUG_POS.x, pz - RUG_POS.z) < RUG_RADIUS;
+}
+/** Rug vertical squash when stepped on. */
+export function rugDipScale(onRug: boolean): number { return onRug ? 0.95 : 1; }
+/** Footstep volume multiplier on the rug (hook for when footstep audio lands). */
+export function rugDampening(onRug: boolean): number { return onRug ? 0.5 : 1; }
+
+/** Mini-parcels shown on the shelf: one per delivery, capped at 10. */
+export function shelfParcelCount(deliveries: number): number {
+  return Math.min(10, Math.max(0, Math.floor(deliveries)));
+}
+
+/** Lamp glow multiplier: a warm, subtle flicker around 1. */
+export function lampFlicker(t: number): number {
+  return 1 + Math.sin(t * 13) * .05 + Math.sin(t * 7) * .03;
+}
+
+/** Moth opacity around the lamp: invisible in daylight, ramping with dusk. */
+export function mothOpacity(duskFactor: number): number {
+  return duskFactor < .15 ? 0 : Math.min(1, (duskFactor - .15) * 2.5);
+}
+
+/** Heart sprite opacity after a pet: full for 1.2s, then fades over 0.8s. */
+export function heartOpacity(age: number): number {
+  if (age < 0) return 0;
+  if (age < 1.2) return 1;
+  return Math.max(0, 1 - (age - 1.2) / 0.8);
+}
 
 const mat = (color: THREE.ColorRepresentation) => new THREE.MeshToonMaterial({ color });
 const wood = mat(0x8d5436), darkWood = mat(0x4f3027), cream = mat(0xffefcf), plaster = mat(0xf5d9ae);
@@ -17,17 +65,26 @@ function add(g: THREE.Object3D, obj: THREE.Object3D, x: number, y: number, z: nu
 /** A self-contained, deliberately cosy cut-away attic for home mode. */
 export class RoomView {
   readonly group = new THREE.Group();
-  private meg = new THREE.Group(); private pip = new THREE.Group(); private tail = new THREE.Group();
+  private meg = new THREE.Group(); private pumpkin: Pumpkin;
   private clock = 0; private disposed = false; private furniture = new Map<string, THREE.Object3D>();
   private facing = 0; private lastHome = false;
+  private leaves: THREE.Object3D[] = [];
+  private lampLight?: THREE.PointLight;
+  private moths: THREE.Mesh[] = [];
+  private mothMat?: THREE.MeshBasicMaterial;
+  private lastParcelCount = -1;
+  private heart?: THREE.Sprite;
+  private heartAge = Infinity;
+  private lastPetCount = 0;
 
   constructor() {
+    this.pumpkin = createPumpkin();
     this.group.name = 'Meg attic room';
     this.makeRoom(); this.makeBasics(); this.makeStations(); this.makeMeg(); this.makePumpkin(); this.makeFurniture();
     this.group.visible = false;
   }
 
-  update(state: GameState, dt: number): void {
+  update(state: GameState, dt: number, duskFactor = 0): void {
     if (this.disposed) return;
     const s = state as HomeState, isHome = s.mode === 'home'; this.group.visible = isHome;
     if (!isHome) { this.lastHome = false; return; }
@@ -45,11 +102,80 @@ export class RoomView {
     this.meg.position.y = moving ? Math.abs(Math.sin(this.clock * 11)) * .045 : Math.sin(this.clock * 2) * .018;
     const desired = this.meg.position.clone().add(new THREE.Vector3(-Math.sin(this.facing) * 1.25, 0, -Math.cos(this.facing) * 1.25));
     desired.x = THREE.MathUtils.clamp(desired.x, -7.3, 7.3); desired.z = THREE.MathUtils.clamp(desired.z, -5.3, 5.3);
-    this.pip.position.lerp(desired, 1 - Math.exp(-step * 4)); this.pip.lookAt(this.meg.position.x, 0, this.meg.position.z);
     const nearCat = this.meg.position.distanceToSquared(new THREE.Vector3(4, 0, 3)) < 2.7;
-    this.pip.position.y = nearCat ? Math.sin(this.clock * 6) * .075 : 0;
-    this.tail.rotation.z = Math.sin(this.clock * (nearCat ? 5 : 2)) * .34;
+    // Sitting: Pumpkin pads over to the cushion perch; otherwise follows Meg.
+    const sitting = !!s.homeSitting;
+    const pumpkinTarget = sitting ? PUMPKIN_PERCHES.cushion : { x: desired.x, z: desired.z };
+    this.pumpkin.update(step, pumpkinTarget, nearCat ? 5 : 2);
+    this.pumpkin.group.lookAt(this.meg.position.x, 0, this.meg.position.z);
+    if (nearCat) this.pumpkin.group.position.y = Math.sin(this.clock * 6) * .075;
+    else this.pumpkin.group.position.y = 0;
+    // Heart sprite on pet: appears above Pumpkin's head, fades after 2s.
+    const pets = s.petCount ?? 0;
+    if (pets > this.lastPetCount) { this.lastPetCount = pets; this.heartAge = 0; this.ensureHeart(); }
+    if (this.heart) {
+      this.heartAge += step;
+      const op = heartOpacity(this.heartAge);
+      this.heart.visible = op > 0;
+      (this.heart.material as THREE.SpriteMaterial).opacity = op;
+      this.heart.position.set(
+        this.pumpkin.group.position.x,
+        1.6 + Math.sin(this.clock * 3) * .05,
+        this.pumpkin.group.position.z,
+      );
+    }
     this.furniture.forEach((object, id) => object.visible = s.profile.furniture.includes(id));
+    this.updateLiveliness(s, step, duskFactor);
+  }
+
+  /** Ambient furniture life: plant sway, rug dip, shelf parcels, lamp flicker + moths. */
+  private updateLiveliness(s: HomeState, step: number, duskFactor: number): void {
+    const px = this.meg.position.x, pz = this.meg.position.z;
+    // Plant: leaves rustle as Meg walks by.
+    const prox = plantProximity(px, pz);
+    this.leaves.forEach((l, i) => {
+      l.rotation.z = plantSway(this.clock, i * 1.7, prox) * .3;
+      l.rotation.x = plantSway(this.clock * .8, i * 2.3 + 1, prox) * .2;
+    });
+    // Rug: soft dip underfoot.
+    const rug = this.furniture.get('rug');
+    if (rug) {
+      const target = rugDipScale(isOnRug(px, pz));
+      rug.scale.y += (target - rug.scale.y) * (1 - Math.exp(-step * 8));
+    }
+    // Shelf: a souvenir parcel per delivery, capped at 10.
+    const n = shelfParcelCount(s.profile.deliveries);
+    if (n !== this.lastParcelCount) { this.lastParcelCount = n; this.refreshShelfParcels(n); }
+    // Lamp: warm flicker + moths at dusk.
+    if (this.lampLight) this.lampLight.intensity = 2 * lampFlicker(this.clock);
+    const opacity = mothOpacity(duskFactor);
+    if (this.mothMat) this.mothMat.opacity = opacity;
+    this.moths.forEach((m, i) => {
+      const a = this.clock * (1.2 + i * .5) + i * Math.PI;
+      m.position.set(Math.cos(a) * .55, 2.1 + Math.sin(this.clock * 2 + i) * .15, Math.sin(a) * .55);
+      m.visible = opacity > .01;
+    });
+  }
+
+  /** Rebuild the mini-parcels on the shelf (only called when the count changes). */
+  private refreshShelfParcels(n: number): void {
+    const shelf = this.furniture.get('shelf');
+    if (!shelf) return;
+    const old = shelf.getObjectByName('parcels');
+    if (old) shelf.remove(old);
+    if (n === 0) return;
+    const holder = new THREE.Group(); holder.name = 'parcels';
+    const geo = new THREE.BoxGeometry(.22, .16, .2);
+    const colors = [0xc96e37, 0x197b78, 0xffefcf, 0x8e432b];
+    const boardY = [.6, 1.35, 2.1];
+    for (let i = 0; i < n; i++) {
+      const board = i % 3, slot = Math.floor(i / 3);
+      const m = new THREE.Mesh(geo, new THREE.MeshToonMaterial({ color: colors[i % colors.length] }));
+      m.castShadow = true;
+      m.position.set(-.21 + slot * .14, boardY[board] + .13, (i % 2 === 0 ? -.45 : .45));
+      holder.add(m);
+    }
+    shelf.add(holder);
   }
 
   dispose(): void {
@@ -97,7 +223,7 @@ export class RoomView {
     const rack = new THREE.Group(); add(this.group, rack, 5, 0, -3); add(rack, box(2.2,.16,.46,darkWood),0,2.55,0); [-.75,0,.75].forEach(x => { const broom = cyl(.06,2.35,wood); broom.rotation.z = -.16 + x*.1; add(rack,broom,x,1.25,0); add(rack,new THREE.Mesh(new THREE.ConeGeometry(.29,.52,7),ginger),x-.14,.28,0); });
     const catalogue = new THREE.Group(); add(this.group,catalogue,-5,0,3); add(catalogue,cyl(.48,1.15,darkWood),0,.58,0); add(catalogue,box(1.25,.14,.9,mat(0x5c8e86)),0,1.2,0); catalogue.rotation.y=-.25;
     const spot = new THREE.Mesh(new THREE.CylinderGeometry(1.15,1.3,.16,16),mat(0xd9a17f)); add(this.group,spot,4,.08,3);
-    HOME_STATIONS.forEach(s => this.group.add(this.label(s.id === 'jobs' ? 'POST' : s.id === 'decor' ? 'HOME' : s.id.toUpperCase(), s.x, 3.3, s.z)));
+    HOME_STATIONS.forEach(s => this.group.add(this.label(s.id === 'jobs' ? 'Job Board' : s.id === 'brooms' ? 'Broom Workshop' : s.id === 'decor' ? 'Decor Corner' : 'Pumpkin', s.x, 3.3, s.z)));
   }
 
   private makeMeg(): void {
@@ -110,18 +236,33 @@ export class RoomView {
   }
 
   private makePumpkin(): void {
-    const g=this.pip; g.name='Pumpkin'; this.group.add(g); add(g,new THREE.Mesh(new THREE.SphereGeometry(.43,12,9),cream),0,.48,0); add(g,new THREE.Mesh(new THREE.SphereGeometry(.34,12,9),cream),0,.76,.28);
-    for(const x of [-.2,.2]) { const ear=new THREE.Mesh(new THREE.ConeGeometry(.16,.36,4),ginger); add(g,ear,x,1.12,.26); const eye=new THREE.Mesh(new THREE.SphereGeometry(.045,8,6),mat(0x2c2730)); add(g,eye,x*.72,.8,.59); }
-    const stripe=box(.18,.42,.08,ginger); stripe.rotation.z=Math.PI/2; add(g,stripe,0,.86,.58);
-    const tailRoot=new THREE.Group(); this.tail=tailRoot; add(g,tailRoot,0,.51,-.38); const tail=new THREE.Mesh(new THREE.TorusGeometry(.34,.07,6,12,Math.PI*1.4),ginger); tail.rotation.x=Math.PI/2; add(tailRoot,tail,0,.36,-.22);
+    this.group.add(this.pumpkin.group);
+  }
+
+  /** Lazily creates the heart sprite shown above Pumpkin when petted. */
+  private ensureHeart(): void {
+    if (this.heart || typeof document === 'undefined') return;
+    const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+    const c = canvas.getContext('2d')!;
+    c.font = '48px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('♥', 32, 36);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(canvas), transparent: true, color: 0xff6b8a, depthWrite: false,
+    }));
+    sprite.scale.set(.5, .5, 1); sprite.visible = false;
+    this.group.add(sprite); this.heart = sprite;
   }
 
   private makeFurniture(): void {
     const put=(id:string,x:number,z:number, build:()=>THREE.Object3D) => { const o=build(); o.position.set(x,0,z); o.visible=false; this.group.add(o); this.furniture.set(id,o); };
     put('rug',0,-.2,()=>{ const m=new THREE.Mesh(new THREE.CylinderGeometry(2.1,2.1,.05,20),mat(0x72918d)); m.position.y=.035; return m; });
-    put('plant',-7,4.6,()=>{ const g=new THREE.Group(); add(g,cyl(.38,.7,mat(0xca8b55)),0,.35,0); for(let i=0;i<6;i++){const l=new THREE.Mesh(new THREE.SphereGeometry(.35,8,6),leaf); add(g,l,Math.sin(i)*.28,1+Math.abs(Math.cos(i))*.25,Math.cos(i)*.28);} return g; });
+    put('plant',-7,4.6,()=>{ const g=new THREE.Group(); add(g,cyl(.38,.7,mat(0xca8b55)),0,.35,0); for(let i=0;i<6;i++){const l=new THREE.Mesh(new THREE.SphereGeometry(.35,8,6),leaf); l.name='leaf'; this.leaves.push(l); add(g,l,Math.sin(i)*.28,1+Math.abs(Math.cos(i))*.25,Math.cos(i)*.28);} return g; });
     put('shelf',-7.7,-2.2,()=>{const g=new THREE.Group(); add(g,box(.55,3.1,2.2,darkWood),0,1.55,0); for(let y=.6;y<3;y+=.75)add(g,box(.7,.1,2.1,wood),0,y,0); return g;});
-    put('lamp',1.8,-4.8,()=>{const g=new THREE.Group(); add(g,cyl(.1,2.2,brass),0,1.1,0); const shade=new THREE.Mesh(new THREE.ConeGeometry(.52,.48,12,1,true),cream); add(g,shade,0,2.1,0); return g;});
+    put('lamp',1.8,-4.8,()=>{const g=new THREE.Group(); add(g,cyl(.1,2.2,brass),0,1.1,0); const shade=new THREE.Mesh(new THREE.ConeGeometry(.52,.48,12,1,true),cream); add(g,shade,0,2.1,0);
+      this.lampLight=new THREE.PointLight(0xffc978,2,9); this.lampLight.position.set(0,2.0,0); g.add(this.lampLight);
+      this.mothMat=new THREE.MeshBasicMaterial({color:0xfff3cf,transparent:true,opacity:0});
+      for(let i=0;i<2;i++){const moth=new THREE.Mesh(new THREE.SphereGeometry(.035,6,5),this.mothMat); moth.visible=false; g.add(moth); this.moths.push(moth);}
+      return g;});
     put('cushion',1.4,3.5,()=>{const m=new THREE.Mesh(new THREE.SphereGeometry(.6,12,7),mat(0xd37586)); m.scale.y=.32; m.position.y=.18; return m;});
     put('cat-tree',7,2.5,()=>{const g=new THREE.Group(); add(g,cyl(.17,2.5,mat(0xcfae79)),0,1.25,0); add(g,cyl(.72,.16,mat(0xcf9c67)),0,2.45,0); return g;});
     void FURNITURE;

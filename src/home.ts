@@ -20,14 +20,53 @@ export const BROOM_TRACKS = [
   { id: 'speed', name: 'Swift Bristles', description: 'Raises top speed by 10% per level.' },
   { id: 'handling', name: 'Responsive Handle', description: 'Raises turn rate by 20% per level.' },
   { id: 'braking', name: 'Cloud Brake', description: 'Raises hover braking by 20% per level.' },
+  { id: 'capacity', name: 'Parcel Satchel', description: '+1 job offer slot per level.' },
+  { id: 'glide', name: 'Glide Feathers', description: '+10% turn rate at cruising speed per level.' },
 ] as const;
 
+/** Branching capstone choices per upgrade track, chosen at max level (2). */
+export const CAPSTONES = {
+  speed: [
+    { id: 'tailwind', name: 'Tailwind', description: '+15% top speed.' },
+    { id: 'quickstart', name: 'Quickstart', description: '+30% acceleration.' },
+  ],
+  handling: [
+    { id: 'tight-turns', name: 'Tight Turns', description: '+25% turn rate.' },
+    { id: 'stable-hover', name: 'Stable Hover', description: 'Hover engages 30% faster.' },
+  ],
+  braking: [
+    { id: 'feather-touch', name: 'Feather Touch', description: 'No speed penalty on bumpy landings.' },
+    { id: 'quick-stop', name: 'Quick Stop', description: '+30% brake deceleration.' },
+  ],
+  capacity: [
+    { id: 'deep-satchel', name: 'Deep Satchel', description: '+1 job offer slot.' },
+    { id: 'careful-packer', name: 'Careful Packer', description: 'No speed penalty on bumpy landings.' },
+  ],
+  glide: [
+    { id: 'dive-bomber', name: 'Dive Bomber', description: '+30% speed on steep dives.' },
+    { id: 'cloud-surfer', name: 'Cloud Surfer', description: '+25% turn rate above 60m.' },
+  ],
+} as const;
+
 type Station = typeof HOME_STATIONS[number];
-type UpgradeTrack = typeof BROOM_TRACKS[number]['id'];
+export type UpgradeTrack = typeof BROOM_TRACKS[number]['id'];
+
+/** Cost of a capstone choice (or respec switch): same as the max-level upgrade cost. */
+export const CAPSTONE_COST = 120;
 
 export const ROOM_X = 7.5;
 export const ROOM_Z = 5.5;
 const STATION_RADIUS = 2.4;
+/** Proximity radius for furniture interactions (tighter than stations). */
+export const FURNITURE_INTERACT_RADIUS = 1.5;
+/** Furniture positions (match room.ts layout). */
+export const CUSHION_POS = { x: 1.4, z: 3.5 };
+export const CAT_TREE_POS = { x: 7, z: 2.5 };
+/** Cooldown between Pumpkin pets (ms) to prevent spam. */
+export const PET_COOLDOWN_MS = 2000;
+let lastPetAt = -Infinity;
+/** For tests: reset the pet cooldown. */
+export function resetPetCooldown(): void { lastPetAt = -Infinity; }
 const WALK_SPEED = 3.5;
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -39,6 +78,7 @@ export function enterHome(state: GameState): void {
   state.homePosition = { x: 0, z: 3 };
   state.homeFacing = 0;
   state.homePanel = 'none';
+  state.homeSitting = false;
   state.message = 'Back at Meg\'s room.';
   state.revision++;
 }
@@ -56,6 +96,11 @@ export function nearbyStation(state: GameState): Station | undefined {
 
 export function interactHome(state: GameState): void {
   if (state.mode !== 'home' || state.paused) return;
+  // Sitting: E always stands Meg up.
+  if (state.homeSitting) { toggleSit(state); return; }
+  // Furniture interactions take priority over stations (tighter radius).
+  if (toggleSit(state)) return;
+  if (petPumpkin(state)) return;
   const station = nearbyStation(state);
   if (!station) return;
   state.homePanel = station.id;
@@ -63,9 +108,42 @@ export function interactHome(state: GameState): void {
   state.revision++;
 }
 
+/** Toggle sitting on the window cushion. Requires owning the cushion and
+ * standing within FURNITURE_INTERACT_RADIUS. Returns whether it toggled. */
+export function toggleSit(state: GameState): boolean {
+  if (state.mode !== 'home' || state.paused) return false;
+  if (!state.profile.furniture.includes('cushion')) return false;
+  // Standing up works from anywhere (Meg can't move while sitting, so she's
+  // always near the cushion); sitting down needs proximity.
+  if (!state.homeSitting) {
+    const d = Math.hypot(state.homePosition.x - CUSHION_POS.x, state.homePosition.z - CUSHION_POS.z);
+    if (d > FURNITURE_INTERACT_RADIUS) return false;
+  }
+  state.homeSitting = !state.homeSitting;
+  state.message = state.homeSitting ? 'A well-earned rest.' : 'Back on your feet.';
+  state.revision++;
+  return true;
+}
+
+/** Pet Pumpkin at the cat tree. Requires owning the cat tree, proximity, and
+ * the cooldown to have elapsed. Increments petCount (audio plays the purr).
+ * `now` is injectable for tests; defaults to Date.now(). */
+export function petPumpkin(state: GameState, now: number = Date.now()): boolean {
+  if (state.mode !== 'home' || state.paused) return false;
+  if (!state.profile.furniture.includes('cat-tree')) return false;
+  const d = Math.hypot(state.homePosition.x - CAT_TREE_POS.x, state.homePosition.z - CAT_TREE_POS.z);
+  if (d > FURNITURE_INTERACT_RADIUS) return false;
+  if (now - lastPetAt < PET_COOLDOWN_MS) return false;
+  lastPetAt = now;
+  state.petCount++;
+  state.message = 'Pumpkin purrs.';
+  state.revision++;
+  return true;
+}
+
 /** Moves Meg around the 18×14 room. Menus and pause intentionally freeze walking. */
 export function stepHome(state: GameState, input: FlightInput, dt: number): void {
-  if (state.mode !== 'home' || state.paused || state.homePanel !== 'none' || !Number.isFinite(dt) || dt <= 0) return;
+  if (state.mode !== 'home' || state.paused || state.homePanel !== 'none' || state.homeSitting || !Number.isFinite(dt) || dt <= 0) return;
   const x = clamp(input.turn, -1, 1);
   const z = -clamp(input.climb, -1, 1);
   const magnitude = Math.hypot(x, z);
@@ -90,6 +168,41 @@ export function buyUpgrade(state: GameState, track: string): boolean {
   state.message = `${BROOM_TRACKS.find((item) => item.id === track)!.name} upgraded.`;
   state.revision++;
   return true;
+}
+
+/** Returns whether a capstone was bought (or switched). Capstones unlock at max level (2). */
+export function buyCapstone(state: GameState, track: string, capstoneId: string): boolean {
+  if (state.paused || state.mode !== 'home' || state.homePanel !== 'brooms' || !isTrack(track)) return false;
+  const options = CAPSTONES[track];
+  const option = options.find((o) => o.id === capstoneId);
+  if (!option) return false;
+  if (state.profile.upgrades[track] < 2) return false;
+  if (state.profile.upgrades.capstones[track] === capstoneId) return false; // already active
+  if (state.profile.coins < CAPSTONE_COST) return false;
+  state.profile.coins -= CAPSTONE_COST;
+  state.profile.upgrades.capstones[track] = capstoneId;
+  state.message = `${option.name} chosen.`;
+  state.revision++;
+  return true;
+}
+
+export interface CapstoneCard {
+  id: string; name: string; description: string;
+  cost: number; active: boolean; affordable: boolean;
+}
+
+/** Card data for the capstone choice UI. Null when the track isn't at max level. */
+export function capstoneOptions(profile: Profile, track: UpgradeTrack): CapstoneCard[] | null {
+  if (profile.upgrades[track] < 2) return null;
+  const active = profile.upgrades.capstones[track];
+  return CAPSTONES[track].map((o) => ({
+    id: o.id,
+    name: o.name,
+    description: o.description,
+    cost: CAPSTONE_COST,
+    active: active === o.id,
+    affordable: profile.coins >= CAPSTONE_COST,
+  }));
 }
 
 /** Returns whether a decor item was bought. */

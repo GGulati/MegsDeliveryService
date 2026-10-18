@@ -14,6 +14,7 @@ async function startFlightMobile(page: import('@playwright/test').Page) {
   await page.goto('/');
   await expect(page.locator('.menu-screen')).toBeVisible({ timeout: 10_000 });
   await page.locator('button:has-text("New Game")').first().click();
+  await expect(page.locator('.loading-screen')).toBeVisible();
   await expectUnhidden(page, '.meg-ui', 30_000);
   await expect(page.locator('.loading-screen')).toBeHidden({ timeout: 30_000 });
   await domClick(page, '#start-btn');
@@ -63,9 +64,10 @@ test('joystick drag steers the player', async ({ page }) => {
   const cx = box!.x + box!.width / 2, cy = box!.y + box!.height / 2;
 
   // Record speed before
-  const speedBefore = await page.evaluate(() =>
-    parseFloat(document.querySelector('#speed-value')?.textContent ?? '0')
-  );
+  const speedBefore = await page.evaluate(() => {
+    const gs = (window as unknown as { __gameState?: () => { player: { speed: number } } }).__gameState?.();
+    return gs ? gs.player.speed : 0;
+  });
 
   // Touch down and drag right (steer)
   await page.evaluate(([x, y]) => {
@@ -85,9 +87,10 @@ test('joystick drag steers the player', async ({ page }) => {
   expect(stickX, 'joystick should show rightward deflection').toBeTruthy();
 
   // The player should be moving (speed increased from drag)
-  const speedAfter = await page.evaluate(() =>
-    parseFloat(document.querySelector('#speed-value')?.textContent ?? '0')
-  );
+  const speedAfter = await page.evaluate(() => {
+    const gs = (window as unknown as { __gameState?: () => { player: { speed: number } } }).__gameState?.();
+    return gs ? gs.player.speed : 0;
+  });
   expect(speedAfter, `player should be moving (was ${speedBefore}, now ${speedAfter})`)
     .toBeGreaterThan(speedBefore);
 

@@ -8,7 +8,7 @@ export interface FlightInput {
   cutThrottle?: boolean;
 }
 export interface Player { position: Vec3; yaw: number; pitch: number; speed: number; throttle: number; hover: boolean; velocity: Vec3; brakeHold: boolean }
-export interface Profile { coins: number; upgrades: { speed: number; handling: number; braking: number }; furniture: string[]; tutorialDone: boolean; runs: number; deliveries: number }
+export interface Profile { coins: number; upgrades: { speed: number; handling: number; braking: number; capacity: number; glide: number; capstones: Record<string, string> }; furniture: string[]; tutorialDone: boolean; runs: number; deliveries: number }
 export interface Job { from: string; to: string; payout: number; label: string; parcel: string }
 /** A parcel drop committed by pressing interact: it lands during a short
  * animation before the delivery resolves. `parcel` is false for home banking,
@@ -39,4 +39,4 @@ export type HomePanel = 'none' | 'jobs' | 'brooms' | 'decor' | 'cat';
 /** Seconds left on the pre-drop halo fade-out; 0 when no auto-drop is pending.
  * While fading, the run clock and flight physics freeze, and the landing is
  * committed: control inputs are ignored until the drop resolves. */
-export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; drop: DeliveryDrop | null; descent: DeliveryDescent | null; haloFade: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number; coarsePointer: boolean; seed: number }
+export interface GameState { mode: Mode; player: Player; profile: Profile; run: Run | null; paused: boolean; pauseReason: string; message: string; tutorialStage: number; drop: DeliveryDrop | null; descent: DeliveryDescent | null; haloFade: number; homePosition: { x: number; z: number }; homeFacing: number; homePanel: HomePanel; homeSitting: boolean; petCount: number; summary: { success: boolean; earnings: number; deliveries: number } | null; revision: number; coarsePointer: boolean; seed: number }
